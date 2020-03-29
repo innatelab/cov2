@@ -1,3 +1,4 @@
+Sys.setenv(TZ='Etc/GMT+1') # issue#612@rstan
 #job.args <- c("cov2", "ast_cov2_msglm", "mq_apms_20200329", "20200329", "20200329", "0", "1235")
 if (!exists('job.args')) {
   job.args <- commandArgs(trailingOnly = TRUE)
@@ -16,8 +17,8 @@ job_chunk <- as.integer(job.args[[7]])
 message('Job ', job_name, '(id=', job_id, '_', job_chunk,
         " data_version=", data_version, " fit_version=", fit_version, ")")
 
-source("~/R/config.R")
-#source("/projects/R/config.R")
+#source("~/R/config.R")
+source("/projects/R/config.R")
 source(file.path(base_scripts_path, 'R/misc/setup_base_paths.R'))
 source(file.path(base_scripts_path, 'R/misc/setup_project_paths.R'))
 
