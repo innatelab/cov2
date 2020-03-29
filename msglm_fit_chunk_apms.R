@@ -1,4 +1,4 @@
-job.args <- c("cov2", "ast_cov2_msglm", "mq_apms_20200329", "20200329", "20200329", "0", "1235")
+#job.args <- c("cov2", "ast_cov2_msglm", "mq_apms_20200329", "20200329", "20200329", "0", "1235")
 if (!exists('job.args')) {
   job.args <- commandArgs(trailingOnly = TRUE)
 }
