@@ -37,6 +37,7 @@ require(dplyr)
 require(msglm)
 require(rstan)
 require(tidyr)
+require(stringr)
 
 modelobj <- "protgroup"
 #modelobj <- "protregroup"
@@ -165,7 +166,13 @@ dims_info <- msglm.prepare_dims_info(model_data, object_cols=c('object_id', mode
                                                                #"protein_names",
                                                                ))
 
-msglm_results <- process.stan_fit(msglm.stan_fit, dims_info)
+background_contrasts <- unique(as.character(filter(contrastXmetacondition.df,
+                                                   str_detect(contrast, "_vs_others") & weight < 0)$contrast))
+background_contrasts.quantiles_rhs <- lapply(background_contrasts, function(contr) c(0.25, 0.9))
+names(background_contrasts.quantiles_rhs) <- background_contrasts
+
+msglm_results <- process.stan_fit(msglm.stan_fit, dims_info,
+                                  condition.quantiles_rhs = background_contrasts.quantiles_rhs)
 
 res_prefix <- paste0(project_id, "_msglm", chunk_suffix)
 if (!dir.exists(file.path(scratch_path, res_prefix))) {
