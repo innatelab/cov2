@@ -1,0 +1,66 @@
+# Loading and preparing PCP data
+# 
+# Author: Alexey Stukalov
+###############################################################################
+
+source('~/R/config.R')
+
+project_id <- 'cov2'
+version <- "20200326"
+
+source(file.path(base_scripts_path, 'R/misc/setup_base_paths.R'))
+source(file.path(misc_scripts_path, 'setup_project_paths.R'))
+source(file.path(misc_scripts_path, 'fasta_utils.R'))
+
+require(Biostrings)
+require(readxl)
+require(readr)
+require(stringr)
+require(dplyr)
+require(tidyr)
+
+#baits_info.df <- read_xls(file.path(analysis_path, "data", "baits_info.xlsx"))
+baits_info.df <- read_tsv(file.path(analysis_path, "data", "baits_info.txt"))
+baits_info.df <- mutate(baits_info.df,
+                        used_uniprot_ac = ifelse(!is.na(uniprot_ac), uniprot_ac, bait_id),
+                        organism_code = case_when(virus == "SARS-CoV-2" ~ "CVHSA2",
+                                                  virus == "SARS-CoV" ~ "CVHSA",
+                                                  virus == "SARS-CoV-GZ02" ~ "CVHSA",
+                                                  virus == "HCoV-NL63" ~ "CVHNL",
+                                                  virus == "HCoV-229E" ~ "CVH22",
+                                                  virus == "ZIKV" ~ "ZIKV",
+                                                  virus == "Gaussia" ~ "9MAXI",
+                                                  virus == "HCV" ~ "9HEPC",
+                                                  TRUE ~ "UNKNOWN"),
+                        protein_name = str_c(if_else(is.na(uniprot_ac), short_name, uniprot_ac), "_", organism_code),
+                        fasta_header = str_c("sp|", used_uniprot_ac, "|", protein_name,
+                                             if_else(is.na(Description), "", str_c(" ", Description)),
+                                             " GN=", bait_id, " OS=", virus)
+)
+aaseqs <- baits_info.df$aa_sequence
+names(aaseqs) <- baits_info.df$fasta_header
+
+bait_aaseqset <- AAStringSet(aaseqs[!is.na(aaseqs)])
+Biostrings::writeXStringSet(bait_aaseqset, file.path(analysis_path, "data", "baits_20200326.fasta"))
+
+exp_design_template.df <- read_tsv(file.path(analysis_path, "data", "experimentalDesignTemplate.txt"))
+
+exp_design.df <- extract(exp_design_template.df, 
+                         Name, c("prefix", "bait_code", "replicate"), "(.+)_(.+)_(.+)$", remove=FALSE) %>%
+    left_join(select(baits_info.df, bait_code, bait_id)) %>%
+    mutate(Experiment = str_c("APMS_", bait_id, "_", replicate)) %>%
+    select(Name, Fraction, Experiment, PTM)
+
+write_tsv(exp_design.df, path = file.path(analysis_path, "data", "experimentalDesign.txt"), na = "")
+
+bait_mapping.df <- read_tsv(file.path(analysis_path, "data", "BaitsIDMapping.txt"))
+
+zikv_path = "/pool/scratch/astukalov/scaturro_zika"
+fasta.dfs <- list(
+    human = read_innate_uniprot_fasta(file.path(zikv_path, "fasta/UP000005640_9606.fasta")),
+    human_additional = read_innate_uniprot_fasta(file.path(zikv_path, "fasta/UP000005640_9606_additional.fasta")),
+    viruses = read_innate_uniprot_fasta(file.path(zikv_path, "fasta/KJ776791.2(ZIKV-HPF2013)_HCV_DV.fasta"))
+)
+
+ms_data$proteins <- bind_rows(fasta.dfs)
+save(ms_data, file = file.path(zikv_path, "zikv_apms2_msglm_data_20171001_with_proteins.RData"))
