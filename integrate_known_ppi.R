@@ -61,7 +61,7 @@ special_bait_ids <- c()
 # fix bait mapping to protgroup_id
 bait2protgroup.df <- arrange(bait_checks.df, bait_id, bait_full_id, protgroup_id) %>%
     group_by(protgroup_id) %>%
-    mutate(new_protgroup_id = if_else(row_number() == 1, protgroup_id, NA_real_)) %>%
+    mutate(new_protgroup_id = if_else(row_number() == 1, protgroup_id, NA_integer_)) %>%
     ungroup() %>%
     mutate(protgroup_id = new_protgroup_id, new_protgroup_id = NULL)
 
