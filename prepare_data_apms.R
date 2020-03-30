@@ -410,6 +410,20 @@ msrunXbatchEffect.mtx <- zero_matrix(msrun = rownames(msrunXreplEffect.mtx),
 batch_effects.df <- tibble(batch_effect=character(0),
                            is_positive=logical(0))
 
+bait_checks.df <- dplyr::left_join(dplyr::select(baits_info.df, bait_full_id, bait_id, orgcode, protein_ac = used_uniprot_ac),
+                                   dplyr::select(msdata_full$proteins, protein_ac, protgroup_id)) %>%
+  dplyr::left_join(dplyr::select(dplyr::filter(msdata$protgroup_idents, ident_type=="By MS/MS"), protgroup_id, msrun)) %>%
+  dplyr::left_join(dplyr::select(msdata$msruns, msrun, observing_bait_full_id = bait_full_id)) %>%
+  dplyr::arrange(bait_full_id, protgroup_id, msrun) %>%
+  dplyr::group_by(bait_full_id, protgroup_id) %>%
+  dplyr::mutate(idented_in_msruns = str_c(unique(msrun), collapse=";"),
+                idented_in_AP_of = str_c(unique(observing_bait_full_id), collapse=";")) %>%
+  dplyr::filter(row_number()==1L) %>%
+  dplyr::select(-msrun, -observing_bait_full_id) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(idented_in_msruns = if_else(idented_in_msruns == "", NA_character_, idented_in_msruns),
+                idented_in_AP_of = if_else(idented_in_AP_of == "", NA_character_, idented_in_AP_of))
+
 rdata_filepath <- file.path(scratch_path, str_c(project_id, '_msglm_data_', mq_folder, '_', data_version, '.RData'))
 message('Saving MS data for MSGLM to ', rdata_filepath, '...')
 save(data_info, msdata,
@@ -421,6 +435,7 @@ save(data_info, msdata,
      msruns_hnorm, total_msrun_shifts.df,
      msrunXreplEffect.mtx,
      batch_effects.df, msrunXbatchEffect.mtx,
+     bait_checks.df,
      file = rdata_filepath)
 
 rdata_filepath <- file.path(scratch_path, str_c(project_id, '_msdata_full_', mq_folder, '_', data_version, '.RData'))
