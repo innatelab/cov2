@@ -46,8 +46,18 @@ iactions_4graphml.df <- iactions_4graphml.df %>%
 
 special_bait_ids <- c('Ctrl_NT')
 
+special_bait_ids <- c()
+
+# fix bait mapping to protgroup_id
+bait2protgroup.df <- arrange(bait_checks.df, bait_id, bait_full_id, protgroup_id) %>%
+    group_by(protgroup_id) %>%
+    mutate(new_protgroup_id = if_else(row_number() == 1, protgroup_id, NA_real_)) %>%
+    ungroup() %>%
+    mutate(protgroup_id = new_protgroup_id, new_protgroup_id = NULL)
+
 # assign negative protgroup_ids to undetected/special bait ORFs
-missed_bait_protgroups.df <- dplyr::filter(bait_checks.df, is.na(protgroup_id) | bait_full_id %in% special_bait_ids) %>%
+missed_bait_protgroups.df <- dplyr::filter(bait2protgroup.df, (is.na(protgroup_id) | bait_full_id %in% special_bait_ids) & !str_detect(bait_full_id, "Ctrl_") &
+                                           bait_full_id %in% msdata$msruns$bait_full_id) %>%
     dplyr::arrange(bait_id, bait_full_id) %>%
     dplyr::mutate(protgroup_id = -row_number()) %>%
     dplyr::transmute(bait_full_id, bait_id,
@@ -58,11 +68,14 @@ missed_bait_protgroups.df <- dplyr::filter(bait_checks.df, is.na(protgroup_id) |
         seqlen=NA_integer_, seqlens = NA_character_, mol_weight_kDA = NA_real_,
         seqcov = 0, unique_razor_seqcov = 0,
         is_contaminant = FALSE, is_reverse = FALSE, is_viral = TRUE, is_full_quant = FALSE, is_top_quant = FALSE,
-        is_comp2 = FALSE, protgroup_label = bait_id)
+        is_comp2 = FALSE, protgroup_label = bait_full_id)
 
-bait_protgroup_ids.df <- dplyr::bind_rows(dplyr::inner_join(dplyr::select(dplyr::filter(bait_checks.df, !(bait_full_id %in% special_bait_ids)), bait_full_id, protgroup_id),
+bait_protgroup_ids.df <- dplyr::bind_rows(dplyr::inner_join(dplyr::select(dplyr::filter(bait2protgroup.df, !(bait_full_id %in% special_bait_ids) &
+                                                                                                        !str_detect(bait_full_id, "Ctrl_")),
+                                                                          bait_full_id, protgroup_id),
                                                             msdata$protgroups),
-                                          missed_bait_protgroups.df)
+                                          missed_bait_protgroups.df) %>%
+    mutate(gene_names = bait_id, protgroup_label = bait_full_id)
 
 iactions_4graphml.df <- iactions_4graphml.df %>%
     #dplyr::left_join(comparisons_4graphml.df) %>%
@@ -78,9 +91,9 @@ iactions_4graphml.df <- iactions_4graphml.df %>%
                   dest_protgroup_id = protgroup_id)
 
 protgroups_4graphml.df <- dplyr::bind_rows(semi_join(msdata$protgroups,
-                                                     bind_rows(dplyr::select(iactions_4graphml.df, protgroup_id = dest_protgroup_id),
-                                                               dplyr::select(iactions_4graphml.df, protgroup_id = src_protgroup_id))),
-                                           dplyr::select(missed_bait_protgroups.df, -bait_full_id)) %>%
+                                                     dplyr::select(iactions_4graphml.df, protgroup_id = dest_protgroup_id)) %>%
+                                           anti_join(dplyr::select(bait_protgroup_ids.df, protgroup_id)),
+                                           dplyr::select(bait_protgroup_ids.df, -bait_full_id, -bait_id)) %>%
     #dplyr::left_join(dplyr::select(protgroup_batch_effects.df, protgroup_id, batch_effect_p_value = p_value, batch_effect_median_log2 = median_log2)) %>%
     dplyr::mutate(is_bait = protgroup_id %in% iactions_4graphml.df$src_protgroup_id,
                   is_detected = protgroup_id %in% iactions_4graphml.df$dest_protgroup_id,
@@ -190,7 +203,7 @@ known_ppi_pairs.df <- dplyr::inner_join(observed_ppi_participants.df, observed_p
                                        !is.na(confidence_class_max) ~ paste0("ppi_", as.character(confidence_class_max)),
                                        TRUE ~ NA_character_))
 
-iactions_ex_4graphml.df <- dplyr::full_join(iactions_4graphml.df$type,
+iactions_ex_4graphml.df <- dplyr::full_join(iactions_4graphml.df,
                                             mutate(known_ppi_pairs.df,
                                                    weight = case_when(str_detect(ppi_type, "complex|virhost") ~ 40.0,
                                                                       str_detect(ppi_type, "ppi") ~ 30.0,
