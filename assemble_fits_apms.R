@@ -130,8 +130,8 @@ object_effects.df <- pre_object_effects.df %>% dplyr::inner_join(fit_stats$objec
   dplyr::group_by(std_type, var, effect) %>%
   dplyr::mutate(p_value_adj = p.adjust(p_value, method = "BY")) %>%
   dplyr::ungroup() %>%
-  dplyr::mutate(is_signif = p_value <= 5E-2,
-                is_hit = (n_idented_max>0) & (n_quanted_max>0) & is_signif & abs(median_log2 - prior_mean_log2) >= 0.1,
+  dplyr::mutate(is_signif = p_value <= 1E-2,
+                is_hit = (n_idented_max>0) & (n_quanted_max>0) & is_signif & abs(median_log2 - prior_mean_log2) >= 1.0,
                 change = if_else(is_signif, if_else(mean_log2 < prior_mean_log2, "-", "+"), "."))
 
 object_contrasts.df <- dplyr::inner_join(pre_object_contrasts.df, fit_contrasts$iactions) %>%
@@ -145,9 +145,11 @@ object_contrasts.df <- dplyr::inner_join(pre_object_contrasts.df, fit_contrasts$
   dplyr::group_by(std_type, var, contrast) %>%
   dplyr::mutate(p_value_adj = pmin(p.adjust(c(prob_nonpos, prob_nonneg), method = "BY")[1:n()],
                                    p.adjust(c(prob_nonneg, prob_nonpos), method = "BY")[1:n()])) %>%
-  dplyr::ungroup() %>%
-  dplyr::mutate(is_signif = p_value <= 1E-2 & case_when(contrast_type == "filter" ~ median_log2 >= 1.0,
-                                                        contrast_type == "comparison" ~ abs(median_log2) >= 1.0,
+  dplyr::ungroup()
+
+object_contrasts.df <- object_contrasts.df %>%
+  dplyr::mutate(is_signif = p_value <= 1E-3 & case_when(contrast_type == "filter" ~ median_log2 >= 2.0,
+                                                        contrast_type == "comparison" ~ abs(median_log2) >= 2.0,
                                                         TRUE ~ FALSE),
                 is_hit = is_signif & (n_quanted_max>0) & (n_idented_max>0),
                 change = if_else(is_hit, if_else(median_log2 < 0, "-", "+"), "."))
