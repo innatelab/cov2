@@ -286,7 +286,7 @@ for (i in 1:nrow(contrasts.df)) {
                                contrasts.df$metacondition_rhs[[i]])] <- c(1, -1)
 }
 cairo_pdf(filename = file.path(data_path, paste0(project_id, "_contrasts_APMS_B1_", fit_version, ".pdf")),
-          width = 8, height = 10)
+          width = 8, height = 8)
 pheatmap(contrastXmetacondition.mtx, cluster_rows=FALSE, cluster_cols=FALSE)
 dev.off()
 
@@ -394,11 +394,14 @@ msrun_intensities_pca.df <- dplyr::mutate(msrun_intensities_pca.df,
     dplyr::inner_join(msdata$msruns)
 
 require(ggrepel)
+cairo_pdf(filename = file.path(data_path, paste0(project_id, "_msruns_pca_APMS_B1_", fit_version, ".pdf")),
+          width = 14, height = 14)
 ggplot(msrun_intensities_pca.df,
        aes(x=comp_1, y=comp_2, color=bait_id)) +
     geom_point() +
     geom_text_repel(aes(label=str_remove(str_remove(msrun, "APMS_SARS_"), "APMS_")), vjust=-1.1) +
     theme_bw_ast(base_family = "", base_size = 10) #+
+dev.off()
 
 # no batch effects so far
 msrunXbatchEffect.mtx <- zero_matrix(msrun = rownames(msrunXreplEffect.mtx),
