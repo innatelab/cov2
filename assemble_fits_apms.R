@@ -147,11 +147,35 @@ object_contrasts.df <- dplyr::inner_join(pre_object_contrasts.df, fit_contrasts$
                                    p.adjust(c(prob_nonneg, prob_nonpos), method = "BY")[1:n()])) %>%
   dplyr::ungroup()
 
+weak_bait_ids <- c("SARS_CoV_ORF6",
+                   "SARS_CoV2_ORF6",
+                   "SARS_CoV2_ORF7a",
+                   "SARS_CoV_ORF8",
+                   "SARS_CoV_ORF9b",
+                   "SARS_CoV2_N",
+                   "SARS_CoV2_E",
+                   "SARS_CoV2_NSP3_macroD",
+                   "SARS_CoV2_NSP4",
+                   "SARS_CoV2_NSP7",
+                   "SARS_CoV2_NSP15",
+                   "SARS_CoV2_NSP16")
+
+object_contrasts_thresholds.df <- select(object_contrasts.df, contrast, contrast_type, std_type) %>%
+  distinct() %>%
+  mutate(bait_full_id = str_remove(contrast, "_vs_.+"),
+         p_value_threshold = case_when(bait_full_id %in% weak_bait_ids ~ 0.01,
+                                       TRUE ~ 0.001),
+         median_log2_threshold = case_when(bait_full_id %in% weak_bait_ids ~ 1,
+                                           TRUE ~ 2))
+
+
 object_contrasts.df <- object_contrasts.df %>%
-  dplyr::mutate(is_signif = p_value <= 1E-3 & case_when(contrast_type == "filter" ~ median_log2 >= 2.0,
-                                                        contrast_type == "comparison" ~ abs(median_log2) >= 2.0,
-                                                        TRUE ~ FALSE),
-                is_hit = is_signif & (n_quanted_max>0) & (n_idented_max>0),
+  select(-any_of(c("p_value_threshold", "median_log2_threshold"))) %>%
+  left_join(object_contrasts_thresholds.df) %>%
+  dplyr::mutate(is_signif = p_value <= p_value_threshold & abs(median_log2) >= median_log2_threshold,
+                is_hit = is_signif & !is_contaminant & !is_reverse &
+                  ((contrast_type == "comparison") | (median_log2 >= 0.0)) &
+                  (n_quanted_max>0) & (n_idented_max>0),
                 change = if_else(is_hit, if_else(median_log2 < 0, "-", "+"), "."))
 
 object_effects_wide.df <- pivot_wider(object_effects.df,
@@ -172,5 +196,6 @@ message('Saving full analysis results to ', rfit_filepath, '...')
 save(results_info, fit_stats, fit_contrasts,
      object_effects.df, object_contrasts.df,
      object_effects_wide.df, object_contrasts_wide.df,
+     object_contrasts_thresholds.df,
      file = rfit_filepath)
 message('Done.')
