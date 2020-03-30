@@ -23,6 +23,17 @@ load(file.path(scratch_path, paste0(project_id, '_msglm_data_', mq_folder, '_', 
 load(file.path(scratch_path, paste0(project_id, '_msdata_full_', mq_folder, '_',data_version, '.RData')))
 load(file.path(scratch_path, paste0(project_id, '_msglm_fit_', mq_folder, '_', fit_version, '.RData')))
 
+krogan_apms.df <- read_tsv(file.path(data_path, "krogan", "interactorsAll-Krogan-mapped.txt")) %>%
+    rename(protein_ac = Preys, bait_full_id = Bait, is_hit = significant)
+
+krogan_apms_pg.df <- left_join(krogan_apms.df, msdata$protein2protgroup) %>%
+    filter(!is.na(protgroup_id)) %>%
+    group_by(bait_full_id, protgroup_id) %>%
+    summarise(krogan_is_hit = any(is_hit),
+              krogan_MIST = min(MIST),
+              krogan_avg_spec = max(AvgSpec),
+              krogan_fold_change = max(FoldChange))
+
 iactions_4graphml.df <- filter(object_contrasts.df, str_detect(contrast, "_vs_others") & is_hit & std_type == "replicate")
 
 bait_labels.df <- distinct(select(iactions_4graphml.df, contrast)) %>%
@@ -42,9 +53,8 @@ iactions_4graphml.df <- iactions_4graphml.df %>%
                      prob_nonpos_min.vs_background = prob_nonpos[1],
                      median_log2.vs_background = median_log2[1],
                      sd_log2.vs_background = sd_log2[1]) %>%
-    dplyr::ungroup()
-
-special_bait_ids <- c('Ctrl_NT')
+    dplyr::ungroup() %>%
+    left_join(krogan_apms_pg.df)
 
 special_bait_ids <- c()
 
@@ -232,7 +242,11 @@ iactions.graphml <- GraphML.generate(protgroups_4graphml.df,
                                                     `Weight` = 'weight',
                                                     `type` = "type",
                                                      #`Known types` = "known_types",
-                                                    `Known Interaction IDs` = "iaction_ids")
+                                                    `Known Interaction IDs` = "iaction_ids",
+                                                    `Krogan hit` = "krogan_is_hit",
+                                                    `Krogan MIST score` = "krogan_MIST",
+                                                    `Krogan Average SC` = "krogan_avg_spec",
+                                                    `Krogan Fold Change` = "krogan_fold_change")
                                      #edge.attrs = c( `P-value (vs Background)` = 'p_value_min.vs_background',
                                      #                 `P-value (WT vs Mock)` = 'p_value.SC35MWT',
                                      #                 `P-value (delNS1 vs Mock)` = 'p_value.SC35MdelNS1',
