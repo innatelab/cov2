@@ -34,14 +34,14 @@ baits_info.df <- mutate(baits_info.df,
                                                   TRUE ~ "UNKNOWN"),
                         protein_name = str_c(if_else(is.na(uniprot_ac), short_name, uniprot_ac), "_", organism_code),
                         fasta_header = str_c("sp|", used_uniprot_ac, "|", protein_name,
-                                             if_else(is.na(Description), "", str_c(" ", Description)),
-                                             " GN=", bait_id, " OS=", virus)
+                                             if_else(is.na(Description), " NO DESCRIPTION", str_c(" ", Description)),
+                                             " OS=", virus, " GN=", short_name)
 )
 aaseqs <- baits_info.df$aa_sequence
 names(aaseqs) <- baits_info.df$fasta_header
 
 bait_aaseqset <- AAStringSet(aaseqs[!is.na(aaseqs)])
-Biostrings::writeXStringSet(bait_aaseqset, file.path(analysis_path, "data", "baits_20200326.fasta"))
+Biostrings::writeXStringSet(bait_aaseqset, file.path(analysis_path, "data", "cov_baits_20200331.fasta"))
 
 exp_design_template.df <- read_tsv(file.path(analysis_path, "data", "experimentalDesignTemplate.txt"))
 
