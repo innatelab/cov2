@@ -165,9 +165,7 @@ object_contrasts.df <- dplyr::inner_join(pre_object_contrasts.df, fit_contrasts$
   dplyr::filter(var %in% c('iaction_labu', 'iaction_labu_replCI')) %>%
   dplyr::mutate(std_type = if_else(str_detect(var, "_replCI$"), "replicate", "median")) %>%
   dplyr::inner_join(dplyr::select(contrastXmetacondition.df, contrast, metacondition, contrast_type, condition_role)) %>%
-  dplyr::mutate(trunc_mean = pmax(-10, pmin(10, mean)),
-                trunc_median_log2 = pmax(-10, pmin(10, median_log2)),
-                p_value = pmin(prob_nonpos, prob_nonneg)) %>%
+  dplyr::mutate(p_value = pmin(prob_nonpos, prob_nonneg) * if_else(contrast_type == "comparison", 2, 1)) %>%
   dplyr::group_by(std_type, var, contrast) %>%
   dplyr::mutate(p_value_adj = pmin(p.adjust(c(prob_nonpos, prob_nonneg), method = "BY")[1:n()],
                                    p.adjust(c(prob_nonneg, prob_nonpos), method = "BY")[1:n()])) %>%
@@ -186,19 +184,29 @@ weak_bait_ids <- c("SARS_CoV_ORF6",
                    "SARS_CoV2_NSP15",
                    "SARS_CoV2_NSP16")
 
+strong_bait_ids <- c(
+                   "SARS_CoV_ORF7b",
+                   "SARS_CoV2_ORF7b",
+                   "HCoV_ORF3",
+                   "SARS_CoV2_ORF3",
+                   "SARS_CoV2_M")
+
 object_contrasts_thresholds.df <- select(object_contrasts.df, contrast, contrast_type, std_type) %>%
   distinct() %>%
   mutate(bait_full_id = str_remove(contrast, "_vs_.+"),
          p_value_threshold = case_when(bait_full_id %in% weak_bait_ids ~ 0.01,
                                        TRUE ~ 0.001),
          median_log2_threshold = case_when(bait_full_id %in% weak_bait_ids ~ 1,
-                                           TRUE ~ 2))
-
+                                           TRUE ~ 2),
+         median_log2_max = case_when(bait_full_id %in% strong_bait_ids ~ 8,
+                                       TRUE ~ 5))
 
 object_contrasts.df <- object_contrasts.df %>%
-  select(-any_of(c("p_value_threshold", "median_log2_threshold"))) %>%
+  select(-any_of(c("p_value_threshold", "median_log2_threshold", "median_log2_max"))) %>%
   left_join(object_contrasts_thresholds.df) %>%
-  dplyr::mutate(is_signif = p_value <= p_value_threshold & abs(median_log2) >= median_log2_threshold,
+  dplyr::mutate(mean_log2_trunc = pmax(-median_log2_max, pmin(median_log2_max, mean_log2)),
+                median_log2_trunc = pmax(-median_log2_max, pmin(median_log2_max, median_log2)),
+                is_signif = p_value <= p_value_threshold & abs(median_log2) >= median_log2_threshold,
                 is_hit_nomschecks = is_signif & !is_contaminant & !is_reverse &
                   ((contrast_type == "comparison") | (median_log2 >= 0.0)),
                 is_hit = is_hit_nomschecks &
