@@ -81,13 +81,14 @@ rm(fit_reports)
 
 if (modelobj == "protgroup") {
 # FIXME stats should be quantobj-dependent
-iactions.df <- tidyr::expand(msdata_full$protgroup_intensities, msrun, protgroup_id) %>%
-  dplyr::left_join(msdata_full$protgroup_intensities) %>%
-  dplyr::left_join(msdata_full$protgroup_idents) %>%
+iactions.df <- msdata$protgroup_intensities %>%
+  dplyr::left_join(msdata$protgroup_idents) %>%
   dplyr::inner_join(msdata$msruns) %>%
+  dplyr::mutate(is_quanted = !is.na(intensity),
+                is_idented = replace_na(ident_type == "By MS/MS", FALSE)) %>%
   dplyr::group_by(condition, protgroup_id) %>%
-  dplyr::summarize(n_quanted = n_distinct(msrun[!is.na(intensity)]),
-                   n_idented = n_distinct(msrun[ident_type == "By MS/MS"])) %>%
+  dplyr::summarize(nmsruns_quanted = n_distinct(msrun[is_quanted]),
+                   nmsruns_idented = n_distinct(msrun[is_idented])) %>%
   dplyr::ungroup() %>%
   dplyr::mutate(object_id = protgroup_id)
 } else if (modelobj == "protregroup") {
@@ -105,24 +106,46 @@ iactions.df <- msdata_full$pepmodstate_intensities %>%
   dplyr::mutate(object_id = protregroup_id)
 }
 
+safe_imin <- function(x, def) {
+  if_else(any(!is.na(x)), as_integer(min(x, na.rm=TRUE)), def)
+}
+safe_imax <- function(x, def) {
+  if_else(any(!is.na(x)), as_integer(max(x, na.rm=TRUE)), def)
+}
+
 pre_object_effects.df <- dplyr::inner_join(iactions.df, conditionXeffect.df) %>%
   dplyr::group_by(object_id, effect) %>%
-  dplyr::summarise(n_quanted_min = min(n_quanted),
-                   n_quanted_max = max(n_quanted),
-                   n_idented_min = min(n_idented),
-                   n_idented_max = max(n_idented)) %>%
+  dplyr::summarise(nmsruns_quanted_min = safe_imin(nmsruns_quanted),
+                   nmsruns_quanted_max = safe_imax(nmsruns_quanted),
+                   nmsruns_idented_min = safe_imin(nmsruns_idented),
+                   nmsruns_idented_max = safe_imax(nmsruns_idented)) %>%
   dplyr::ungroup()
 
 pre_object_contrasts.df <- dplyr::inner_join(iactions.df, conditionXmetacondition.df) %>%
   dplyr::inner_join(contrastXmetacondition.df) %>%
+  dplyr::mutate(is_lhs = weight > 0) %>%
   dplyr::group_by(object_id, contrast) %>%
-  dplyr::summarise(n_quanted_min = replace_na(min(n_quanted[condition_role == "signal"]), 0L),
-                   n_quanted_max = replace_na(max(n_quanted[condition_role == "signal"]), 0L),
-                   n_idented_min = replace_na(min(n_idented[condition_role == "signal"]), 0L),
-                   n_idented_max = replace_na(max(n_idented[condition_role == "signal"]), 0L)) %>%
+  dplyr::summarise(nmsruns_quanted_lhs_min = safe_imin(nmsruns_quanted[is_lhs], 0L),
+                   nmsruns_quanted_lhs_max = safe_imax(nmsruns_quanted[is_lhs], 0L),
+                   nmsruns_idented_lhs_min = safe_imin(nmsruns_idented[is_lhs], 0L),
+                   nmsruns_idented_lhs_max = safe_imax(nmsruns_idented[is_lhs], 0L),
+                   #nmsruns_spec_quanted_lhs_min = safe_imin(nmsruns_spec_quanted[is_lhs], 0L),
+                   #nmsruns_spec_quanted_lhs_max = safe_imax(nmsruns_spec_quanted[is_lhs], 0L),
+                   #nmsruns_spec_idented_lhs_min = safe_imin(nmsruns_spec_idented[is_lhs], 0L),
+                   #nmsruns_spec_idented_lhs_max = safe_imax(nmsruns_spec_idented[is_lhs], 0L),
+                   nmsruns_quanted_rhs_min = safe_imin(nmsruns_quanted[!is_lhs], 0L),
+                   nmsruns_quanted_rhs_max = safe_imax(nmsruns_quanted[!is_lhs], 0L),
+                   nmsruns_idented_rhs_min = safe_imin(nmsruns_idented[!is_lhs], 0L),
+                   nmsruns_idented_rhs_max = safe_imax(nmsruns_idented[!is_lhs], 0L)#,
+                   #nmsruns_spec_quanted_rhs_min = safe_imin(nmsruns_spec_quanted[!is_lhs], 0L),
+                   #nmsruns_spec_quanted_rhs_max = safe_imax(nmsruns_spec_quanted[!is_lhs], 0L),
+                   #nmsruns_spec_idented_rhs_min = safe_imin(nmsruns_spec_idented[!is_lhs], 0L),
+                   #nmsruns_spec_idented_rhs_max = safe_imax(nmsruns_spec_idented[!is_lhs], 0L)
+                   ) %>%
   dplyr::ungroup()
 
 object_effects.df <- pre_object_effects.df %>% dplyr::inner_join(fit_stats$object_effects) %>%
+  dplyr::left_join(select(msdata$protgroups, protgroup_id, nprotgroups_sharing_proteins, nproteins_have_razor)) %>%
   dplyr::filter(var %in% c('obj_effect', 'obj_effect_replCI')) %>%
   dplyr::mutate(std_type = if_else(str_detect(var, "_replCI$"), "replicate", "median")) %>%
   dplyr::mutate(trunc_mean_log2 = pmax(-5, pmin(5, mean_log2 - prior_mean_log2)) + prior_mean_log2,
@@ -130,12 +153,15 @@ object_effects.df <- pre_object_effects.df %>% dplyr::inner_join(fit_stats$objec
   dplyr::group_by(std_type, var, effect) %>%
   dplyr::mutate(p_value_adj = p.adjust(p_value, method = "BY")) %>%
   dplyr::ungroup() %>%
-  dplyr::mutate(is_signif = p_value <= 1E-2,
-                is_hit = (n_idented_max>0) & (n_quanted_max>0) & is_signif & abs(median_log2 - prior_mean_log2) >= 1.0,
+  dplyr::mutate(is_signif = (p_value <= 1E-2) & (abs(median_log2 - prior_mean_log2) >= 1.0),
+                is_hit_nomschecks = is_signif & !is_contaminant & !is_reverse, 
+                is_hit = is_hit_nomschecks &
+                         (nmsruns_idented_max>2) & (nmsruns_quanted_max>2) &
+                         (nprotgroups_sharing_proteins == 1 || nproteins_have_razor > 0),
                 change = if_else(is_signif, if_else(mean_log2 < prior_mean_log2, "-", "+"), "."))
 
 object_contrasts.df <- dplyr::inner_join(pre_object_contrasts.df, fit_contrasts$iactions) %>%
-  dplyr::ungroup() %>%
+  dplyr::left_join(select(msdata$protgroups, protgroup_id, nprotgroups_sharing_proteins, nproteins_have_razor)) %>%
   dplyr::filter(var %in% c('iaction_labu', 'iaction_labu_replCI')) %>%
   dplyr::mutate(std_type = if_else(str_detect(var, "_replCI$"), "replicate", "median")) %>%
   dplyr::inner_join(dplyr::select(contrastXmetacondition.df, contrast, metacondition, contrast_type, condition_role)) %>%
@@ -173,10 +199,14 @@ object_contrasts.df <- object_contrasts.df %>%
   select(-any_of(c("p_value_threshold", "median_log2_threshold"))) %>%
   left_join(object_contrasts_thresholds.df) %>%
   dplyr::mutate(is_signif = p_value <= p_value_threshold & abs(median_log2) >= median_log2_threshold,
-                is_hit = is_signif & !is_contaminant & !is_reverse &
-                  ((contrast_type == "comparison") | (median_log2 >= 0.0)) &
-                  (n_quanted_max>0) & (n_idented_max>0),
-                change = if_else(is_hit, if_else(median_log2 < 0, "-", "+"), "."))
+                is_hit_nomschecks = is_signif & !is_contaminant & !is_reverse &
+                  ((contrast_type == "comparison") | (median_log2 >= 0.0)),
+                is_hit = is_hit_nomschecks &
+                  if_else(median_log2 > 0,
+                          (nmsruns_idented_lhs_max>2) & (nmsruns_quanted_lhs_max>2),
+                          (nmsruns_idented_rhs_max>2) & (nmsruns_quanted_rhs_max>2)) &
+                  (nprotgroups_sharing_proteins == 1 | nproteins_have_razor > 0),
+                change = if_else(is_signif, if_else(median_log2 < 0, "-", "+"), "."))
 
 object_effects_wide.df <- pivot_wider(object_effects.df,
                                       id_cols = c("std_type", "object_id", "object_label", "majority_protein_acs", "gene_names"),
