@@ -5,7 +5,7 @@
 
 project_id <- 'cov2'
 message('Project ID=', project_id)
-data_version <- "20200329"
+data_version <- "20200331"
 fit_version <- "20200329"
 mq_folder <- 'mq_apms_20200329'
 message('Dataset version is ', data_version)
@@ -74,7 +74,7 @@ mqevidence <- read.MaxQuant.Evidence(file.path(mqdata_path, 'combined/txt'),
                                      evidence.pepobj = "pepmodstate", correct_ratios = FALSE)
 mqevidence$peptides <- read.MaxQuant.Peptides(file.path(mqdata_path, 'combined/txt'),
                                               file_name = "peptides.txt",
-                                              import_data = c(data_info$pep_quant_type, "ident_type"))
+                                              import_data = c("ident_type"))
 mqevidence$peaks <- NULL # exclude big data frame
 
 mqrdata_filepath <- file.path(data_path, str_c(project_id, '_mqdata_APMS_', mq_folder, '.RData'))
@@ -131,6 +131,29 @@ msdata_full <- append_protgroups_info(msdata_full, msdata.wide,
                                    dplyr::mutate(fasta.dfs$CoV, is_viral = TRUE),
                                    dplyr::mutate(fasta.dfs$human, is_viral = FALSE)),
                                  import_columns = "is_viral")
+
+msdata_full$proteins <- mutate(msdata_full$proteins,
+                               protein_ac_noiso = str_remove(protein_ac, "-\\d+$"))
+
+pacnoiso_stats.df <- left_join(msdata_full$protein2protgroup,
+          select(msdata_full$proteins, protein_ac, protein_ac_noiso)) %>%
+  #filter(is_majority) %>%
+  group_by(protein_ac_noiso) %>%
+  summarise(n_noiso_pgs_have_razor = sum(npeptides_razor > 0),
+            n_noiso_pgs = n_distinct(protgroup_id)) %>%
+  ungroup()
+
+msdata_full$proteins <- left_join(msdata_full$proteins, pacnoiso_stats.df)
+
+pg_razor_stats.df <- filter(msdata_full$protein2protgroup, is_majority) %>%
+  left_join(select(msdata_full$proteins, protein_ac, n_noiso_pgs, n_noiso_pgs_have_razor)) %>%
+  group_by(protgroup_id) %>%
+  summarise(nproteins_have_razor = sum(npeptides_razor > 0),
+            nprotgroups_sharing_proteins = max(n_noiso_pgs)) %>%
+  dplyr::ungroup()
+
+msdata_full$protgroups <- left_join(msdata_full$protgroups, pg_razor_stats.df)
+
 msdata_full$protgroups <- dplyr::mutate(msdata_full$protgroups,
     gene_label = strlist_label2(gene_names),
     protac_label = strlist_label2(protein_acs),
@@ -142,7 +165,7 @@ msdata_full$pepmodstate_intensities <- mqevidence$pepmodstate_intensities %>%
   select(pepmod_id, pepmodstate_id, msrun, intensity = intensity.Sum, starts_with("ident_type")) %>%
   mutate(is_idented = replace_na(ident_type.MSMS, FALSE) | replace_na(`ident_type.MULTI-MATCH-MSMS`, FALSE) |
                       replace_na(`ident_type.MULTI-MSMS`, FALSE))
-  
+
 # condition = bait
 conditions.df <- dplyr::select(msdata_full$msruns, bait_full_id, bait_id, bait_type, orgcode) %>%
   dplyr::distinct() %>%
