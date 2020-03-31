@@ -34,7 +34,9 @@ krogan_apms_pg.df <- left_join(krogan_apms.df, msdata$protein2protgroup) %>%
               krogan_avg_spec = max(AvgSpec),
               krogan_fold_change = max(FoldChange))
 
-iactions_4graphml.df <- filter(object_contrasts.df, str_detect(contrast, "_vs_others") & is_hit & std_type == "replicate")
+# contrasts-based interactions filter
+iactions_4graphml.df <- filter(object_contrasts.df, str_detect(contrast, "_vs_others") & is_hit & std_type == "replicate" &
+                               !(protgroup_id %in% bait_checks.df$protgroup_id))
 
 bait_labels.df <- distinct(select(iactions_4graphml.df, contrast)) %>%
     dplyr::inner_join(select(filter(contrastXmetacondition.df, condition_role == "signal"), contrast, metacondition)) %>%
@@ -42,10 +44,8 @@ bait_labels.df <- distinct(select(iactions_4graphml.df, contrast)) %>%
     dplyr::inner_join(select(conditions.df, condition, bait_full_id, bait_id, orgcode)) %>%
     dplyr::select(-metacondition, -condition)
 
-# contrasts-based interactions filter
 iactions_4graphml.df <- iactions_4graphml.df %>%
     dplyr::select(-prob_nonneg) %>%
-    dplyr::semi_join(dplyr::select(dplyr::filter(msdata$protgroups, !is_reverse), protgroup_id)) %>%
     dplyr::inner_join(bait_labels.df) %>%
     dplyr::arrange(bait_full_id, bait_id, protgroup_id, prob_nonpos) %>%
     dplyr::group_by(bait_full_id, bait_id, gene_names, protgroup_id) %>%
@@ -72,7 +72,8 @@ missed_bait_protgroups.df <- dplyr::filter(bait2protgroup.df, (is.na(protgroup_i
     dplyr::mutate(protgroup_id = -row_number()) %>%
     dplyr::transmute(bait_full_id, bait_id,
         protgroup_id, protein_acs=protein_ac, majority_protein_acs=protein_ac,
-        gene_names=bait_id, protein_names=str_c(bait_id, '_', orgcode),
+        gene_names=bait_id, gene_label=bait_id, 
+        protein_names=str_c(bait_id, '_', orgcode), protac_label=protein_ac,
         fasta_headers = NA_character_, n_proteins=1L,
         score = NA_real_, q_value = NA_real_,
         seqlen=NA_integer_, seqlens = NA_character_, mol_weight_kDA = NA_real_,
@@ -85,7 +86,8 @@ bait_protgroup_ids.df <- dplyr::bind_rows(dplyr::inner_join(dplyr::select(dplyr:
                                                                           bait_full_id, protgroup_id),
                                                             msdata$protgroups),
                                           missed_bait_protgroups.df) %>%
-    mutate(gene_names = bait_id, protgroup_label = bait_full_id)
+    mutate(protgroup_label = bait_full_id) %>%
+    dplyr::filter(bait_full_id %in% msdata$msruns$bait_full_id)
 
 iactions_4graphml.df <- iactions_4graphml.df %>%
     #dplyr::left_join(comparisons_4graphml.df) %>%
@@ -105,7 +107,7 @@ protgroups_4graphml.df <- dplyr::bind_rows(semi_join(msdata$protgroups,
                                            anti_join(dplyr::select(bait_protgroup_ids.df, protgroup_id)),
                                            dplyr::select(bait_protgroup_ids.df, -bait_full_id, -bait_id)) %>%
     #dplyr::left_join(dplyr::select(protgroup_batch_effects.df, protgroup_id, batch_effect_p_value = p_value, batch_effect_median_log2 = median_log2)) %>%
-    dplyr::mutate(is_bait = protgroup_id %in% iactions_4graphml.df$src_protgroup_id,
+    dplyr::mutate(is_bait = protgroup_id %in% bait_protgroup_ids.df$protgroup_id,
                   is_detected = protgroup_id %in% iactions_4graphml.df$dest_protgroup_id,
                   #is_transient_contaminant = !is.na(batch_effect_p_value) & batch_effect_p_value <= 1E-5 & batch_effect_median_log2 > 2.5,
                   is_manual_contaminant = FALSE) %>%
