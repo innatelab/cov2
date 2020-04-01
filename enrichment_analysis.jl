@@ -49,14 +49,6 @@ for df in [obj_effs_df, obj_contrasts_df]
     df |> MSGLMUtils.fix_quantile_columns! |> MSGLMUtils.fix_object_id!
 end
 
-alleffects_df = vcat(
-    let effs_df = select(effects_df, :effect, :effect_label)
-        eff_families = string.(unique(obj_effs_df.std_type), "_std")
-        effsXfamily_df = repeat(effs_df, inner=length(eff_families))
-        effsXfamily_df.effect_family = repeat(eff_families, outer=size(effs_df, 1))
-        effsXfamily_df
-    end)
-
 Revise.includet(joinpath(misc_scripts_path, "gmt_reader.jl"));
 Revise.includet(joinpath(misc_scripts_path, "optcover_utils.jl"));
 Revise.includet(joinpath(misc_scripts_path, "omics_collections.jl"));
@@ -111,7 +103,7 @@ obj_mosaics = OptCoverUtils.collections2mosaics(obj_colls, protac_colls, observe
                                       verbose=true);
 
 obj_contrast_mosaics = Dict(begin
-    @info "Masking $mosaic_name dataset by effects..."
+    @info "Masking $mosaic_name dataset by contrasts..."
     mosaic_name => OptCoverUtils.automask(mosaic, obj_contrast_selsets,
                                           max_sets=2000, min_nmasked=2, max_setsize=2000)
     end for (mosaic_name, mosaic) in pairs(obj_mosaics));
@@ -125,7 +117,7 @@ obj_contrast_covers = Dict(begin
     @info "Covering $mosaic_name by effects..."
     mosaic_name => collect(masked_mosaic, cover_params,
             CoverEnumerationParams(max_set_score=0.0, max_covers=1),
-            MultiobjOptimizerParams(ϵ=[0.02, 0.2], MaxSteps=5_000_0, WeightDigits=2, NWorkers=Threads.nthreads()-1, MaxRestarts=200),
+            MultiobjOptimizerParams(ϵ=[0.02, 0.2], MaxSteps=3_000_000, WeightDigits=2, NWorkers=Threads.nthreads()-1, MaxRestarts=200),
             true)
     end for (mosaic_name, masked_mosaic) in pairs(obj_contrast_mosaics))
 
