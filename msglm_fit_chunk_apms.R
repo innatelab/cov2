@@ -1,5 +1,5 @@
 Sys.setenv(TZ='Etc/GMT+1') # issue#612@rstan
-#job.args <- c("cov2", "ast_cov2_msglm", "mq_apms_20200329", "20200329", "20200329", "0", "1235")
+#job.args <- c("cov2", "ast_cov2_msglm", "mq_apms_20200329", "20200331", "20200402", "0", "1235")
 if (!exists('job.args')) {
   job.args <- commandArgs(trailingOnly = TRUE)
 }
@@ -40,8 +40,8 @@ require(rstan)
 require(tidyr)
 require(stringr)
 
-modelobj <- "protgroup"
-#modelobj <- "protregroup"
+#modelobj <- "protgroup"
+modelobj <- "protregroup"
 
 modelobj_df <- msdata[[paste0(modelobj, "s")]]
 modelobj_idcol <- paste0(modelobj, "_id")
@@ -52,7 +52,7 @@ chunk_suffix <- case_when(modelobj == "protgroup" ~ "_pg",
 quantobj <- case_when(modelobj == "protgroup" ~ "protgroup",
                       modelobj == "protregroup" ~ "pepmodstate",
                       TRUE ~ NA_character_) 
-global_labu_shift <- case_when(quantobj == "pepmodstate" ~ NaN,#global_pepmodstate_labu_shift,
+global_labu_shift <- case_when(quantobj == "pepmodstate" ~ global_pepmodstate_labu_shift,
                                quantobj == "protgroup" ~ global_protgroup_labu_shift,
                                TRUE ~ NA_real_)
 
@@ -62,13 +62,13 @@ message(sel_object_ids, " ", modelobj, " ID(s): ",
 if (modelobj == "protregroup") {
 msdata.df <- dplyr::filter(msdata$protregroup2pepmod, protregroup_id %in% sel_object_ids & is_specific) %>%
   dplyr::inner_join(dplyr::select(msdata$pepmodstates, pepmod_id, pepmodstate_id)) %>%
-  dplyr::inner_join(dplyr::select(msdata$pepmodstate_tagintensities, pepmodstate_id, mschannel, intensity)) %>%
-  dplyr::inner_join(msdata$mschannels %>% dplyr::select(mschannel, msrun, supcondition) %>% dplyr::distinct()) %>%
+  dplyr::inner_join(dplyr::select(msdata$pepmodstate_intensities, pepmodstate_id, msrun, intensity)) %>%
+  dplyr::inner_join(dplyr::select(msdata$msruns, msrun, condition) %>% dplyr::distinct()) %>%
   dplyr::mutate(object_id = protregroup_id)
 } else if (modelobj == "protgroup") {
 msdata.df <- dplyr::filter(msdata$protgroups, protgroup_id %in% sel_object_ids) %>%
   dplyr::inner_join(dplyr::select(msdata$protgroup_intensities, protgroup_id, msrun, intensity)) %>%
-  dplyr::inner_join(msdata$msruns %>% dplyr::select(msrun, condition) %>% dplyr::distinct()) %>%
+  dplyr::inner_join(dplyr::select(msdata$msruns, msrun, condition) %>% dplyr::distinct()) %>%
   dplyr::mutate(object_id = protgroup_id)
 }
 #msdata.df <- dplyr::select(msdata.df, -one_of("intensity")) %>% dplyr::rename(intensity = intensity_corr.F)
@@ -119,7 +119,7 @@ model_data$subobjects <- msdata.df %>%
     dplyr::arrange(glm_object_ix, desc(is_specific), desc(n_quant), desc(intensity_med),
                    pepmod_id, charge) %>%
     dplyr::mutate(glm_subobject_ix = row_number()) %>%
-    dplyr::filter(glm_subobject_ix <= 80) # remove less abundant subobjects of rich objects
+    dplyr::filter(glm_subobject_ix <= 30) # remove less abundant subobjects of rich objects
 } else if (modelobj == "protgroup") {
 model_data$objects <- dplyr::mutate(model_data$objects, protgroup_id = object_id) %>%
                       dplyr::inner_join(dplyr::select(modelobj_df, protgroup_id, protgroup_label, object_label,
@@ -155,7 +155,7 @@ msglm.stan_data <- stan.prepare_data(instr_calib, model_data,
 
 message('Running STAN in NUTS mode...')
 options(mc.cores=mcmc_nchains)
-msglm.stan_fit <- stan.sampling(msglm.stan_data, adapt_delta=0.9, max_treedepth=12L, iter=4000L, chains=mcmc_nchains)
+msglm.stan_fit <- stan.sampling(msglm.stan_data, adapt_delta=0.9, max_treedepth=12L, iter=100L, chains=mcmc_nchains)
 
 #require(shinystan)
 #launch_shinystan(shinystan::as.shinystan(msglm.stan_fit))
@@ -163,8 +163,8 @@ msglm.stan_fit <- stan.sampling(msglm.stan_data, adapt_delta=0.9, max_treedepth=
 min.iteration <- as.integer(1.5 * msglm.stan_fit@sim$warmup)
 dims_info <- msglm.prepare_dims_info(model_data, object_cols=c('object_id', modelobj_idcol, "object_label",
                                                                "majority_protein_acs", "gene_names",
-                                                               "is_viral", "is_contaminant", "is_reverse"#,
-                                                               #"protein_names",
+                                                               "is_viral", "is_contaminant", "is_reverse",
+                                                               "protein_names"
                                                                ))
 
 background_contrasts <- unique(as.character(filter(contrastXmetacondition.df,
