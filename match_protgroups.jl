@@ -41,13 +41,7 @@ for noiso_group_df in groupby(proteins_df, :protein_ac_noiso)
     end
 end
 # calculate AC ranks - the more canonical proptein is, the better
-proteins_df[!, :ac_rank] .= [
-    ifelse(ismissing(r.gene_name), 10, 0) +
-    ifelse(r.protein_ac == r.protein_ac_noiso, 0, 1) +
-    ifelse(r.src_db == "sp", 0, 3) +
-    coalesce(r.protein_existence, 7) - 1
-    for r in eachrow(proteins_df)]
-protein_ac_ranks = Dict(r.protein_ac => r.ac_rank for r in eachrow(proteins_df))
+protein_ac_ranks = Dict(r.protein_ac => ProtgroupXMatch.rank_uniprot(r) for r in eachrow(proteins_df))
 
 # save the matches
 pg_matches_df = ProtgroupXMatch.match_protgroups(protgroups_dfs, protein_ac_ranks);
