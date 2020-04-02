@@ -6,7 +6,7 @@
 project_id <- 'cov2'
 message('Project ID=', project_id)
 data_version <- "20200331"
-fit_version <- "20200329"
+fit_version <- "20200331"
 mq_folder <- 'mq_apms_20200329'
 message('Dataset version is ', data_version)
 
@@ -40,6 +40,13 @@ instr_calib <- fromJSON(file = file.path(data_path, data_info$instr_calib_filena
 
 source(file.path(project_scripts_path, 'prepare_data_common.R'))
 
+strlist_label <- function(strs) {
+  str_c(strs[[1]], if_else(n_distinct(strs) > 1, '...', ''))
+}
+strlist_label2 <- function(strs, delim=fixed(';')) {
+  sapply(str_split(strs, delim), strlist_label)
+}
+
 msruns.df <- read_tsv(file.path(mqdata_path, "combined", "experimentalDesign.txt"),
                       col_names=TRUE, col_types = list(Fraction="i")) %>%
   rename(raw_file=Name, msfraction=Fraction, msrun=Experiment, is_ptm=PTM) %>%
@@ -47,7 +54,8 @@ msruns.df <- read_tsv(file.path(mqdata_path, "combined", "experimentalDesign.txt
   left_join(select(baits_info.df, bait_full_id, bait_id, bait_type, orgcode))
 
 fasta.dfs <- list(
-  CoV = read_innate_uniprot_fasta(file.path(mqdata_path, "fasta/cov_baits_20200326.fasta")),
+  #CoV = read_innate_uniprot_fasta(file.path(mqdata_path, "fasta/cov_baits_20200326.fasta")),
+  CoV = read_innate_uniprot_fasta(file.path(data_path, "cov_baits_20200331.fasta")),
   human = read_innate_uniprot_fasta(file.path(mqdata_path, "fasta/uniprot-9606_proteome_human_reviewed_canonical_isoforms_191008.fasta"))
 )
 
@@ -74,6 +82,93 @@ msdata_full <- list()
 
 msruns.df <- mutate(msruns.df, is_used = msrun %in% mqevidence$mschannels$msrun)
 msdata_full$msruns <- filter(msruns.df, is_used)
+
+msdata_full <- append_protgroups_info(msdata_full, msdata.wide,
+                                      proteins_info = dplyr::bind_rows(
+                                        dplyr::mutate(fasta.dfs$CoV, is_viral = TRUE),
+                                        dplyr::mutate(fasta.dfs$human, is_viral = FALSE)),
+                                      import_columns = "is_viral")
+
+msdata_full$proteins <- mutate(msdata_full$proteins,
+                               protein_ac_noiso = str_remove(protein_ac, "-\\d+$"))
+
+pacnoiso_stats.df <- left_join(msdata_full$protein2protgroup,
+                               select(msdata_full$proteins, protein_ac, protein_ac_noiso)) %>%
+  #filter(is_majority) %>%
+  group_by(protein_ac_noiso) %>%
+  summarise(n_noiso_pgs_have_razor = sum(npeptides_razor > 0),
+            n_noiso_pgs = n_distinct(protgroup_id)) %>%
+  ungroup()
+
+msdata_full$proteins <- left_join(msdata_full$proteins, pacnoiso_stats.df)
+
+pg_razor_stats.df <- filter(msdata_full$protein2protgroup, is_majority) %>%
+  left_join(select(msdata_full$proteins, protein_ac, n_noiso_pgs, n_noiso_pgs_have_razor)) %>%
+  group_by(protgroup_id) %>%
+  summarise(nproteins_have_razor = sum(npeptides_razor > 0),
+            nprotgroups_sharing_proteins = max(n_noiso_pgs)) %>%
+  dplyr::ungroup()
+
+msdata_full$protgroups <- left_join(msdata_full$protgroups, pg_razor_stats.df)
+msdata_full$protgroups <- dplyr::mutate(msdata_full$protgroups,
+                                        gene_label = strlist_label2(gene_names),
+                                        protac_label = strlist_label2(protein_acs),
+                                        protgroup_label = case_when(!is.na(gene_label) ~ gene_label,
+                                                                    !is.na(protac_label) ~ protac_label,
+                                                                    TRUE ~ str_c('#', protgroup_id)))
+
+msdata_full$peptides <- mqevidence$peptides %>%
+  dplyr::left_join(select(msdata_full$proteins, lead_razor_protein_ac = protein_ac, is_viral)) %>%
+  mutate(is_viral=replace_na(is_viral, FALSE))
+msdata_full$pepmods <- mqevidence$pepmods %>%
+  dplyr::left_join(select(msdata_full$peptides, peptide_id, is_viral)) %>%
+  dplyr::mutate(is_used = TRUE) # TODO update if proteome would be co-quanted 
+msdata_full$pepmodstates <- mqevidence$pepmodstates
+
+# redefine protein groups (protregroups) considering only peptides that are clicked
+pepmods.df <- dplyr::select(msdata_full$pepmods, pepmod_id, protgroup_ids, protein_acs, lead_protein_acs, seq, modifs, charges, is_reverse, is_used)
+proteins.df <- msdata_full$proteins
+save(file = file.path(mqdata_path, str_c(project_id, "_", mq_folder, '_', data_version, "_pepmods.RData")),
+     pepmods.df, proteins.df)
+# .. run protregroup_apms.jl
+msdata_full$protregroups <- read_tsv(file.path(data_path, mq_folder,
+                                               str_c(project_id, "_", mq_folder, '_', data_version, "_protregroups_acs.txt"))) %>%
+  dplyr::mutate(is_contaminant = str_detect(majority_protein_acs, "(;|^)CON__"),
+                is_reverse = str_detect(majority_protein_acs, "(;|^)REV__"))
+
+msdata_full$protein2protregroup <- dplyr::select(msdata_full$protregroups, protregroup_id, protein_ac=majority_protein_acs) %>%
+  separate_rows(protein_ac, sep=fixed(";"), convert=TRUE) %>%
+  dplyr::mutate(is_majority = TRUE) %>%
+  dplyr::group_by(protregroup_id) %>%
+  dplyr::mutate(protein_ac_rank = row_number()) %>%
+  dplyr::ungroup()
+
+msdata_full$protregroup2pepmod <- bind_rows(
+  select(msdata_full$protregroups, protregroup_id, pepmod_id=spec_pepmod_ids) %>%
+    separate_rows(pepmod_id, sep=fixed(";"), convert=TRUE) %>%
+    mutate(is_specific = TRUE),
+  select(msdata_full$protregroups, protregroup_id, pepmod_id=pepmod_ids) %>%
+    separate_rows(pepmod_id, sep=fixed(";"), convert=TRUE) %>%
+    mutate(is_specific = FALSE)) %>%
+  dplyr::group_by(protregroup_id, pepmod_id) %>%
+  dplyr::summarise(is_specific = any(is_specific)) %>%
+  dplyr::ungroup()
+
+msdata_full$protregroups <- dplyr::inner_join(msdata_full$protregroups,
+  dplyr::inner_join(msdata_full$protregroups, msdata_full$protein2protregroup) %>%
+  dplyr::inner_join(msdata_full$proteins) %>%
+  dplyr::arrange(protregroup_id, protein_ac_rank) %>%
+  dplyr::group_by(protregroup_id) %>%
+  dplyr::summarise(gene_names = str_c(gene_name, collapse=';'),
+                   gene_label = strlist_label(gene_name),
+                   protein_names = str_c(protein_name, collapse=';'),
+                   protein_label = strlist_label(protein_name),
+                   is_viral = any(coalesce(is_viral, FALSE))) %>%
+  dplyr::ungroup()) %>%
+  dplyr::mutate(protac_label = sapply(str_split(majority_protein_acs, fixed(";")), strlist_label),
+                protregroup_label = case_when(!is.na(gene_label) ~ gene_label,
+                                              !is.na(protac_label) ~ protac_label,
+                                              TRUE ~ str_c('#', protregroup_id)))
 
 # prepare protgroup intensities (wider format: all mstags in one row)
 intensity_prespec_df <- tibble(.name = msdata_colgroups$LFQ) %>%
@@ -103,52 +198,13 @@ msdata_full$protgroup_idents <- protgroup_idents_all.df %>%
   dplyr::semi_join(select(msdata_full$msruns, msrun)) %>%
   dplyr::filter(!is.na(ident_type))
 
-strlist_label <- function(strs) {
-  str_c(strs[[1]], if_else(n_distinct(strs) > 1, '...', ''))
-}
-strlist_label2 <- function(strs, delim=fixed(';')) {
-  sapply(str_split(strs, delim), strlist_label)
-}
-
-msdata_full <- append_protgroups_info(msdata_full, msdata.wide,
-                                 proteins_info = dplyr::bind_rows(
-                                   dplyr::mutate(fasta.dfs$CoV, is_viral = TRUE),
-                                   dplyr::mutate(fasta.dfs$human, is_viral = FALSE)),
-                                 import_columns = "is_viral")
-
-msdata_full$proteins <- mutate(msdata_full$proteins,
-                               protein_ac_noiso = str_remove(protein_ac, "-\\d+$"))
-
-pacnoiso_stats.df <- left_join(msdata_full$protein2protgroup,
-          select(msdata_full$proteins, protein_ac, protein_ac_noiso)) %>%
-  #filter(is_majority) %>%
-  group_by(protein_ac_noiso) %>%
-  summarise(n_noiso_pgs_have_razor = sum(npeptides_razor > 0),
-            n_noiso_pgs = n_distinct(protgroup_id)) %>%
-  ungroup()
-
-msdata_full$proteins <- left_join(msdata_full$proteins, pacnoiso_stats.df)
-
-pg_razor_stats.df <- filter(msdata_full$protein2protgroup, is_majority) %>%
-  left_join(select(msdata_full$proteins, protein_ac, n_noiso_pgs, n_noiso_pgs_have_razor)) %>%
-  group_by(protgroup_id) %>%
-  summarise(nproteins_have_razor = sum(npeptides_razor > 0),
-            nprotgroups_sharing_proteins = max(n_noiso_pgs)) %>%
-  dplyr::ungroup()
-
-msdata_full$protgroups <- left_join(msdata_full$protgroups, pg_razor_stats.df)
-
-msdata_full$protgroups <- dplyr::mutate(msdata_full$protgroups,
-    gene_label = strlist_label2(gene_names),
-    protac_label = strlist_label2(protein_acs),
-    protgroup_label = case_when(!is.na(gene_label) ~ gene_label,
-                                !is.na(protac_label) ~ protac_label,
-                                TRUE ~ str_c('#', protgroup_id)))
-
 msdata_full$pepmodstate_intensities <- mqevidence$pepmodstate_intensities %>%
   select(pepmod_id, pepmodstate_id, msrun, intensity = intensity.Sum, starts_with("ident_type")) %>%
   mutate(is_idented = replace_na(ident_type.MSMS, FALSE) | replace_na(`ident_type.MULTI-MATCH-MSMS`, FALSE) |
                       replace_na(`ident_type.MULTI-MSMS`, FALSE))
+
+msdata_full$pepmodstate_tagintensities <- dplyr::select(
+  msdata_full$pepmodstate_intensities, pepmodstate_id, pepmod_id, msrun, is_idented, intensity)
 
 # condition = bait
 conditions.df <- dplyr::select(msdata_full$msruns, bait_full_id, bait_id, bait_type, orgcode) %>%
@@ -156,16 +212,6 @@ conditions.df <- dplyr::select(msdata_full$msruns, bait_full_id, bait_id, bait_t
   dplyr::arrange(bait_type, bait_id, orgcode) %>%
   dplyr::mutate(condition = factor(bait_full_id, levels=bait_full_id))
 msdata_full$msruns <- left_join(msdata_full$msruns, select(conditions.df, bait_full_id, condition))
-
-msdata_full$peptides <- mqevidence$peptides %>%
-  dplyr::left_join(select(msdata_full$proteins, lead_razor_protein_ac = protein_ac, is_viral)) %>%
-  mutate(is_viral=replace_na(is_viral, FALSE))
-msdata_full$pepmods <- mqevidence$pepmods %>%
-  dplyr::left_join(select(msdata_full$peptides, peptide_id, is_viral))
-msdata_full$pepmodstates <- mqevidence$pepmodstates
-
-msdata_full$pepmodstate_tagintensities <- dplyr::select(
-  msdata_full$pepmodstate_intensities, pepmodstate_id, pepmod_id, msrun, is_idented, intensity)
 
 #msdata$protgroup_idents_wide <- select(msdata.wide, protgroup_id, !!msdata_colgroups$ident_type)
 #msdata$protgroup_idents <- reshape(msdata_full$protgroup_idents_wide, idvar = 'protgroup_id',
@@ -186,7 +232,10 @@ msdata_full$pepmodstate_tagintensities <- dplyr::select(
 #                                  is_top_quant = protgroup_id %in% (dplyr::filter(msdata$protgroup_stats, percent_rank(-median_intensity) <= 0.01) %>% .$protgroup_id))
 
 msdata <- msdata_full[c('protgroup_intensities', 'protgroup_idents',
-                        'msruns', 'protgroups', 'protein2protgroup')]#, 'pepmodstate_intensities', 'pepmodstates', 'pepmods')]
+                        'msruns', 'protgroups', 'protein2protgroup',
+                        'pepmodstate_intensities',
+                        'pepmodstates', 'pepmods',
+                        'protregroups', 'protein2protregroup', 'protregroup2pepmod')]
 
 # setup experimental design matrices
 conditionXeffect_orig.mtx <- model.matrix(
@@ -205,7 +254,8 @@ dev.off()
 effects.df <- tibble(effect=colnames(conditionXeffect.mtx)) %>%
   dplyr::mutate(orgcode = effect_factor(effect, "orgcode", levels(conditions.df$orgcode), NA),
                 bait_id = effect_factor(effect, "bait_id", levels(conditions.df$bait_id), NA),
-                is_positive = !is.na(bait_id) & is.na(orgcode))
+                is_positive = FALSE,#!is.na(bait_id) & is.na(orgcode),
+                prior_mean = 0.0)
 effects.df$effect_label <- sapply(1:nrow(effects.df), function(i) {
   comps <- c()
   org <- as.character(effects.df$orgcode[[i]])
@@ -356,6 +406,9 @@ msdata_full$protgroup_intensities <- dplyr::left_join(msdata_full$protgroup_inte
 global_protgroup_labu_shift <- 0.95*median(log(dplyr::filter(msdata$msruns) %>%
                                                dplyr::select(msrun) %>% dplyr::distinct() %>%
                                                dplyr::inner_join(msdata_full$protgroup_intensities) %>% pull(intensity)), na.rm=TRUE)
+global_pepmodstate_labu_shift <- 0.95*median(log(dplyr::filter(msdata$msruns) %>%
+                                                 dplyr::select(msrun) %>% dplyr::distinct() %>%
+                                                 dplyr::inner_join(msdata_full$pepmodstate_intensities) %>% pull(intensity)), na.rm=TRUE)
 
 #msdata$msruns <- dplyr::arrange(msdata$msruns, bait_type, bait_id, orgcode) %>%
 #  mutate(msrun_ix = row_number())
@@ -413,8 +466,12 @@ dev.off()
 # no batch effects so far
 msrunXbatchEffect.mtx <- zero_matrix(msrun = rownames(msrunXreplEffect.mtx),
                                      batch_effect = c())
+msrunXsubbatchEffect.mtx <- zero_matrix(msrun = rownames(msrunXreplEffect.mtx),
+                                     subbatch_effect = c())
 
 batch_effects.df <- tibble(batch_effect=character(0),
+                           is_positive=logical(0))
+subbatch_effects.df <- tibble(subbatch_effect=character(0),
                            is_positive=logical(0))
 
 bait_checks.df <- dplyr::left_join(dplyr::select(baits_info.df, bait_full_id, bait_id, orgcode, protein_ac = used_uniprot_ac),
@@ -438,10 +495,11 @@ save(data_info, msdata,
      conditionXeffect.mtx, inv_conditionXeffect.mtx, conditionXeffect.df,
      conditionXmetacondition.mtx, conditionXmetacondition.df,
      contrastXmetacondition.mtx, contrastXmetacondition.df, contrastXcondition.df,
-     instr_calib, global_protgroup_labu_shift,
+     instr_calib, global_protgroup_labu_shift, global_pepmodstate_labu_shift,
      msruns_hnorm, total_msrun_shifts.df,
      msrunXreplEffect.mtx,
      batch_effects.df, msrunXbatchEffect.mtx,
+     subbatch_effects.df, msrunXsubbatchEffect.mtx,
      bait_checks.df,
      file = rdata_filepath)
 
