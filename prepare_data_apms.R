@@ -200,7 +200,16 @@ msdata_full$protgroup_idents <- protgroup_idents_all.df %>%
 
 msdata_full$pepmodstate_intensities <- mqevidence$pepmodstate_intensities %>%
   select(pepmod_id, pepmodstate_id, msrun, intensity = intensity.Sum, starts_with("ident_type")) %>%
-  mutate(is_idented = replace_na(ident_type.MSMS, FALSE) | replace_na(`ident_type.MULTI-MATCH-MSMS`, FALSE) |
+  dplyr::mutate(ident_type = factor(case_when(
+      #`ident_type.ISO-MSMS` ~ "ISO-MSMS",
+      `ident_type.MULTI-MSMS` ~ "MULTI-MSMS",
+      `ident_type.MSMS` ~ "MSMS",
+      `ident_type.MULTI-MATCH-MSMS` ~ "MULTI-MATCH-MSMS",
+      `ident_type.MULTI-MATCH` ~ "MULTI-MATCH",
+      `ident_type.MULTI-SECPEP` ~ "MULTI-SECPEP",
+      TRUE ~ NA_character_),
+      levels = c("ISO-MSMS", "MULTI-MSMS", "MSMS","MULTI-MATCH-MSMS", "MULTI-SECPEP", "MULTI-MATCH")),
+      is_idented = replace_na(ident_type.MSMS, FALSE) | replace_na(`ident_type.MULTI-MATCH-MSMS`, FALSE) |
                       replace_na(`ident_type.MULTI-MSMS`, FALSE))
 
 msdata_full$pepmodstate_tagintensities <- dplyr::select(
