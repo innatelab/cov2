@@ -47,7 +47,7 @@ modelobj_df <- msdata[[paste0(modelobj, "s")]]
 modelobj_idcol <- paste0(modelobj, "_id")
 modelobj_df$object_label = modelobj_df[[paste0(modelobj, "_label")]]
 chunk_suffix <- case_when(modelobj == "protgroup" ~ "_pg",
-                          modelobj == "protregroup" ~ "",
+                          modelobj == "protregroup" ~ "_prg",
                           TRUE ~ NA_character_)
 quantobj <- case_when(modelobj == "protgroup" ~ "protgroup",
                       modelobj == "protregroup" ~ "pepmodstate",
@@ -175,7 +175,7 @@ names(background_contrasts.quantiles_rhs) <- background_contrasts
 msglm_results <- process.stan_fit(msglm.stan_fit, dims_info,
                                   condition.quantiles_rhs = background_contrasts.quantiles_rhs)
 
-res_prefix <- paste0(project_id, "_msglm", chunk_suffix)
+res_prefix <- paste0(project_id, "_", mq_folder, "_msglm", chunk_suffix)
 if (!dir.exists(file.path(scratch_path, res_prefix))) {
   dir.create(file.path(scratch_path, res_prefix))
 }

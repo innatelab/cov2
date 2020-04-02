@@ -5,8 +5,8 @@
 
 project_id <- 'cov2'
 message('Project ID=', project_id)
-data_version <- "20200329"
-fit_version <- "20200329"
+data_version <- "20200331"
+fit_version <- "20200402"
 mq_folder <- 'mq_apms_20200329'
 message("Assembling fit results for project ", project_id,
         " (dataset v", data_version, ", fit v", fit_version, ")")
@@ -31,8 +31,10 @@ load(file.path(scratch_path, str_c(project_id, '_msdata_full_', mq_folder, '_', 
 message('Loading MSGLM model fit results...')
 strip_samples <- TRUE
 
-modelobj <- "protgroup"
-quantobj <- "protgroup"# "pepmodstate"
+#modelobj <- "protgroup"
+#quantobj <- "protgroup"
+modelobj <- "protregroup"
+quantobj <- "pepmodstate"
 modelobjs_df <- msdata[[str_c(modelobj, "s")]]
 modelobj_idcol <- str_c(modelobj, "_id")
 # FIXME should be done in prepare_data
@@ -43,8 +45,9 @@ chunk_suffix <- case_when(modelobj == "protgroup" ~ "_pg",
                           modelobj == "protregroup" ~ "_prg",
                           TRUE ~ NA_character_)
 
-fit_path <- file.path(scratch_path, paste0(project_id, '_msglm_', mq_folder, chunk_suffix))
-fit_files <- list.files(fit_path, paste0(project_id, '_msglm', chunk_suffix, '_', fit_version, '_\\d+\\.RData'))
+fit_path <- file.path(scratch_path, str_c(project_id, '_', mq_folder, '_msglm', chunk_suffix))
+fit_files <- list.files(fit_path, str_c(project_id, '_msglm', #chunk_suffix, 
+                                        '_', fit_version, '_\\d+\\.RData'))
 message('Found ', length(fit_files), ' model file(s)')
 fit_files.df <- tibble(filename = as.character(fit_files)) %>%
     mutate(chunk_id = as.integer(str_split_fixed(str_remove(filename, ".RData$"), fixed('_'), 5)[, 5])) %>%
@@ -91,19 +94,23 @@ iactions.df <- msdata$protgroup_intensities %>%
                    nmsruns_idented = n_distinct(msrun[is_idented])) %>%
   dplyr::ungroup() %>%
   dplyr::mutate(object_id = protgroup_id)
+
+modelobjs_df <- dplyr::mutate(modelobjs_df,
+                              is_msvalid_object = (nprotgroups_sharing_proteins == 1 || nproteins_have_razor > 0))
 } else if (modelobj == "protregroup") {
 iactions.df <- msdata_full$pepmodstate_intensities %>%
-  dplyr::mutate(is_quanted = !is.na(intensity.L) | !is.na(intensity.M) | !is.na(intensity.H)) %>%
-  dplyr::inner_join(msdata$mschannels) %>%
+  dplyr::mutate(is_quanted = !is.na(intensity)) %>%
+  dplyr::inner_join(msdata$msruns) %>%
   dplyr::left_join(msdata$pepmodstates) %>%
   dplyr::left_join(msdata$protregroup2pepmod) %>%
-  dplyr::left_join(msdata$protregroup2protgroup) %>%
-  dplyr::left_join(supXcond.df) %>%
   dplyr::group_by(condition, protregroup_id) %>%
-  dplyr::summarize(n_quanted = n_distinct(msrun[is_idented]), # count msruns
-                   n_idented = n_distinct(msrun[is_quanted])) %>%
+  dplyr::summarize(nmsruns_quanted = n_distinct(msrun[is_idented]), # count msruns
+                   nmsruns_idented = n_distinct(msrun[is_quanted])) %>%
   dplyr::ungroup() %>%
   dplyr::mutate(object_id = protregroup_id)
+
+modelobjs_df <- dplyr::mutate(modelobjs_df,
+                              is_msvalid_object = TRUE)
 }
 
 safe_imin <- function(x, def) {
@@ -115,10 +122,10 @@ safe_imax <- function(x, def) {
 
 pre_object_effects.df <- dplyr::inner_join(iactions.df, conditionXeffect.df) %>%
   dplyr::group_by(object_id, effect) %>%
-  dplyr::summarise(nmsruns_quanted_min = safe_imin(nmsruns_quanted),
-                   nmsruns_quanted_max = safe_imax(nmsruns_quanted),
-                   nmsruns_idented_min = safe_imin(nmsruns_idented),
-                   nmsruns_idented_max = safe_imax(nmsruns_idented)) %>%
+  dplyr::summarise(nmsruns_quanted_min = safe_imin(nmsruns_quanted, 0L),
+                   nmsruns_quanted_max = safe_imax(nmsruns_quanted, 0L),
+                   nmsruns_idented_min = safe_imin(nmsruns_idented, 0L),
+                   nmsruns_idented_max = safe_imax(nmsruns_idented, 0L)) %>%
   dplyr::ungroup()
 
 pre_object_contrasts.df <- dplyr::inner_join(iactions.df, conditionXmetacondition.df) %>%
@@ -145,7 +152,7 @@ pre_object_contrasts.df <- dplyr::inner_join(iactions.df, conditionXmetaconditio
   dplyr::ungroup()
 
 object_effects.df <- pre_object_effects.df %>% dplyr::inner_join(fit_stats$object_effects) %>%
-  dplyr::left_join(select(msdata$protgroups, protgroup_id, nprotgroups_sharing_proteins, nproteins_have_razor)) %>%
+  dplyr::left_join(select(modelobjs_df, object_id, is_msvalid_object)) %>%
   dplyr::filter(var %in% c('obj_effect', 'obj_effect_replCI')) %>%
   dplyr::mutate(std_type = if_else(str_detect(var, "_replCI$"), "replicate", "median")) %>%
   dplyr::mutate(trunc_mean_log2 = pmax(-5, pmin(5, mean_log2 - prior_mean_log2)) + prior_mean_log2,
@@ -156,12 +163,11 @@ object_effects.df <- pre_object_effects.df %>% dplyr::inner_join(fit_stats$objec
   dplyr::mutate(is_signif = (p_value <= 1E-2) & (abs(median_log2 - prior_mean_log2) >= 1.0),
                 is_hit_nomschecks = is_signif & !is_contaminant & !is_reverse, 
                 is_hit = is_hit_nomschecks &
-                         (nmsruns_idented_max>2) & (nmsruns_quanted_max>2) &
-                         (nprotgroups_sharing_proteins == 1 || nproteins_have_razor > 0),
+                         (nmsruns_idented_max>2) & (nmsruns_quanted_max>2) & (is_msvalid_object),
                 change = if_else(is_signif, if_else(mean_log2 < prior_mean_log2, "-", "+"), "."))
 
 object_contrasts.df <- dplyr::inner_join(pre_object_contrasts.df, fit_contrasts$iactions) %>%
-  dplyr::left_join(select(msdata$protgroups, protgroup_id, nprotgroups_sharing_proteins, nproteins_have_razor)) %>%
+  dplyr::left_join(select(modelobjs_df, object_id, is_msvalid_object)) %>%
   dplyr::filter(var %in% c('iaction_labu', 'iaction_labu_replCI')) %>%
   dplyr::mutate(std_type = if_else(str_detect(var, "_replCI$"), "replicate", "median")) %>%
   dplyr::inner_join(dplyr::select(contrastXmetacondition.df, contrast, metacondition, contrast_type, condition_role)) %>%
@@ -213,7 +219,7 @@ object_contrasts.df <- object_contrasts.df %>%
                   if_else(median_log2 > 0,
                           (nmsruns_idented_lhs_max>2) & (nmsruns_quanted_lhs_max>2),
                           (nmsruns_idented_rhs_max>2) & (nmsruns_quanted_rhs_max>2)) &
-                  (nprotgroups_sharing_proteins == 1 | nproteins_have_razor > 0),
+                  is_msvalid_object,
                 change = if_else(is_signif, if_else(median_log2 < 0, "-", "+"), "."))
 
 object_effects_wide.df <- pivot_wider(object_effects.df,
