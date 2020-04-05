@@ -72,13 +72,6 @@ msdata_full <- append_protgroups_info(msdata_full, msdata.wide,
 msdata_full$proteins <- mutate(msdata_full$proteins,
                                protein_ac_noiso = str_remove(protein_ac, "-\\d+$"))
 
-strlist_label <- function(strs) {
-  str_c(strs[[1]], if_else(n_distinct(strs) > 1, '...', ''))
-}
-strlist_label2 <- function(strs, delim=fixed(';')) {
-  sapply(str_split(strs, delim), strlist_label)
-}
-
 msdata_full$protgroups <- dplyr::mutate(msdata_full$protgroups,
     is_reverse = FALSE,
     gene_label = strlist_label2(gene_names),

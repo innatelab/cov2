@@ -40,13 +40,6 @@ instr_calib <- fromJSON(file = file.path(data_path, data_info$instr_calib_filena
 
 source(file.path(project_scripts_path, 'prepare_data_common.R'))
 
-strlist_label <- function(strs) {
-  str_c(strs[[1]], if_else(n_distinct(strs) > 1, '...', ''))
-}
-strlist_label2 <- function(strs, delim=fixed(';')) {
-  sapply(str_split(strs, delim), strlist_label)
-}
-
 msruns.df <- read_tsv(file.path(mqdata_path, "combined", "experimentalDesign.txt"),
                       col_names=TRUE, col_types = list(Fraction="i")) %>%
   rename(raw_file=Name, msfraction=Fraction, msrun=Experiment, is_ptm=PTM) %>%

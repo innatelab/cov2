@@ -1,3 +1,10 @@
+strlist_label <- function(strs) {
+    str_c(strs[[1]], if_else(n_distinct(strs) > 1, '...', ''))
+}
+strlist_label2 <- function(strs, delim=fixed(';')) {
+    sapply(str_split(strs, delim), strlist_label)
+}
+
 orgcodes = list("SARS-CoV-2" = "CVHSA2",
                 "SARS-CoV" = "CVHSA",
                 "SARS-CoV-GZ02" = "CVHSA",
