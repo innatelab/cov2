@@ -1,7 +1,7 @@
 project_id <- 'cov2'
 message('Project ID=', project_id)
-data_version <- "20200329"
-fit_version <- "20200329"
+data_version <- "20200331"
+fit_version <- "20200402"
 mq_folder <- 'mq_apms_20200329'
 message("Assembling fit results for project ", project_id,
         " (dataset v", data_version, ", fit v", fit_version, ")")
@@ -40,6 +40,20 @@ krogan_apms_obj.df <- left_join(krogan_apms.df, modelobj2protein.df) %>%
               krogan_avg_spec = max(AvgSpec),
               krogan_fold_change = max(FoldChange))
 
+virhostnet_confidences = c(low_confidence = "low", literature_mining = "pub", virhost = "virhostnet", high_confidence = "high")
+
+virhostnet_ppi.df <- read_tsv(file.path(data_path, "published_ppi", "SARSCoV2011_VirhostNet_combined_interactions_all.txt")) %>%
+    transmute(bait_full_id = bait_id, bait_protein_ac = uniprot_ac, protein_ac = Uniprot_Prey,
+              virhostnet_confidence = factor(virhostnet_confidences[confidence],
+                                             levels = set_names(virhostnet_confidences, NULL), ordered = TRUE),
+              virhostnet_references = Reference)
+
+virhostnet_ppi_obj.df <- left_join(virhostnet_ppi.df, modelobj2protein.df) %>%
+    filter(!is.na(object_id)) %>%
+    group_by(bait_full_id, object_id) %>%
+    summarise(virhostnet_confidence = max(virhostnet_confidence),
+              virhostnet_references = str_c(sort(unique(virhostnet_references)), collapse=' '))
+
 # contrasts-based interactions filter
 iactions_4graphml.df <- filter(object_contrasts.df, str_detect(contrast, "_vs_others") & is_hit & std_type == "replicate" &
                                !(object_id %in% bait_checks.df$object_id))
@@ -60,7 +74,8 @@ iactions_4graphml.df <- iactions_4graphml.df %>%
                      median_log2.vs_background = median_log2[1],
                      sd_log2.vs_background = sd_log2[1]) %>%
     dplyr::ungroup() %>%
-    left_join(krogan_apms_obj.df)
+    left_join(krogan_apms_obj.df) %>%
+    left_join(virhostnet_ppi_obj.df)
 
 special_bait_ids <- c()
 
