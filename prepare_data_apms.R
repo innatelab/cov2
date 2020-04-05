@@ -125,7 +125,8 @@ save(file = file.path(mqdata_path, str_c(project_id, "_", mq_folder, '_', data_v
      pepmods.df, proteins.df)
 # .. run protregroup_apms.jl
 msdata_full$protregroups <- read_tsv(file.path(data_path, mq_folder,
-                                               str_c(project_id, "_", mq_folder, '_', data_version, "_protregroups_acs.txt"))) %>%
+                                               str_c(project_id, "_", mq_folder, '_', data_version, "_protregroups_acs.txt")),
+                                     col_types = list(protregroup_id = "i")) %>%
   dplyr::mutate(is_contaminant = str_detect(majority_protein_acs, "(;|^)CON__"),
                 is_reverse = str_detect(majority_protein_acs, "(;|^)REV__"))
 
@@ -156,6 +157,8 @@ msdata_full$protregroups <- dplyr::inner_join(msdata_full$protregroups,
                    gene_label = strlist_label(gene_name),
                    protein_names = str_c(protein_name, collapse=';'),
                    protein_label = strlist_label(protein_name),
+                   protein_descriptions = str_c(protein_description, collapse=';'),
+                   protein_description = strlist_label(protein_description),
                    is_viral = any(coalesce(is_viral, FALSE))) %>%
   dplyr::ungroup()) %>%
   dplyr::mutate(protac_label = sapply(str_split(majority_protein_acs, fixed(";")), strlist_label),
@@ -205,6 +208,15 @@ msdata_full$pepmodstate_intensities <- mqevidence$pepmodstate_intensities %>%
       is_idented = replace_na(ident_type.MSMS, FALSE) | #replace_na(`ident_type.ISO-MSMS`, FALSE) |
                       replace_na(`ident_type.MULTI-MSMS`, FALSE))
 
+msdata_full$protregroup_idents <- dplyr::inner_join(msdata_full$protregroup2pepmod, msdata_full$pepmodstate_intensities) %>%
+  dplyr::group_by(msrun, protregroup_id) %>%
+  dplyr::summarise(npepmods_quanted = sum(!is.na(intensity)),
+                   nspecpepmods_quanted = sum(!is.na(intensity) & is_specific),
+                   npepmods_idented = sum(is_idented),
+                   nspecpepmods_idented = sum(is_idented & is_specific)) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(ident_type = factor(if_else(nspecpepmods_idented > 0, "By MS/MS", "By matching")))
+
 msdata_full$pepmodstate_tagintensities <- dplyr::select(
   msdata_full$pepmodstate_intensities, pepmodstate_id, pepmod_id, msrun, is_idented, intensity)
 
@@ -233,7 +245,7 @@ msdata_full$msruns <- left_join(msdata_full$msruns, select(conditions.df, bait_f
 #                                  is_full_quant = protgroup_id %in% (dplyr::filter(msdata$protgroup_stats, n_quanted==n) %>% .$protgroup_id),
 #                                  is_top_quant = protgroup_id %in% (dplyr::filter(msdata$protgroup_stats, percent_rank(-median_intensity) <= 0.01) %>% .$protgroup_id))
 
-msdata <- msdata_full[c('protgroup_intensities', 'protgroup_idents',
+msdata <- msdata_full[c('protgroup_intensities', 'protgroup_idents', 'protregroup_idents',
                         'msruns', 'protgroups', 'protein2protgroup',
                         'pepmodstate_intensities',
                         'pepmodstates', 'pepmods',
@@ -476,12 +488,26 @@ batch_effects.df <- tibble(batch_effect=character(0),
 subbatch_effects.df <- tibble(subbatch_effect=character(0),
                            is_positive=logical(0))
 
-bait_checks.df <- dplyr::left_join(dplyr::select(baits_info.df, bait_full_id, bait_id, orgcode, protein_ac = used_uniprot_ac),
-                                   dplyr::select(msdata_full$proteins, protein_ac, protgroup_id)) %>%
+bait_checks_protgroup.df <- dplyr::left_join(dplyr::select(baits_info.df, bait_full_id, bait_id, orgcode, protein_ac = used_uniprot_ac),
+                                             dplyr::select(msdata_full$proteins, protein_ac, protgroup_id)) %>%
   dplyr::left_join(dplyr::select(dplyr::filter(msdata$protgroup_idents, ident_type=="By MS/MS"), protgroup_id, msrun)) %>%
   dplyr::left_join(dplyr::select(msdata$msruns, msrun, observing_bait_full_id = bait_full_id)) %>%
   dplyr::arrange(bait_full_id, protgroup_id, msrun) %>%
   dplyr::group_by(bait_full_id, protgroup_id) %>%
+  dplyr::mutate(idented_in_msruns = str_c(unique(msrun), collapse=";"),
+                idented_in_AP_of = str_c(unique(observing_bait_full_id), collapse=";")) %>%
+  dplyr::filter(row_number()==1L) %>%
+  dplyr::select(-msrun, -observing_bait_full_id) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(idented_in_msruns = if_else(idented_in_msruns == "", NA_character_, idented_in_msruns),
+                idented_in_AP_of = if_else(idented_in_AP_of == "", NA_character_, idented_in_AP_of))
+
+bait_checks_protregroup.df <- dplyr::left_join(dplyr::select(baits_info.df, bait_full_id, bait_id, orgcode, protein_ac = used_uniprot_ac),
+                                               dplyr::select(filter(msdata_full$protein2protregroup, is_majority), protein_ac, protregroup_id)) %>%
+  dplyr::left_join(dplyr::select(dplyr::filter(msdata$protregroup_idents, ident_type=="By MS/MS"), protregroup_id, msrun)) %>%
+  dplyr::left_join(dplyr::select(msdata$msruns, msrun, observing_bait_full_id = bait_full_id)) %>%
+  dplyr::arrange(bait_full_id, protregroup_id, msrun) %>%
+  dplyr::group_by(bait_full_id, protregroup_id) %>%
   dplyr::mutate(idented_in_msruns = str_c(unique(msrun), collapse=";"),
                 idented_in_AP_of = str_c(unique(observing_bait_full_id), collapse=";")) %>%
   dplyr::filter(row_number()==1L) %>%
@@ -502,7 +528,7 @@ save(data_info, msdata,
      msrunXreplEffect.mtx,
      batch_effects.df, msrunXbatchEffect.mtx,
      subbatch_effects.df, msrunXsubbatchEffect.mtx,
-     bait_checks.df,
+     bait_checks_protgroup.df, bait_checks_protregroup.df,
      file = rdata_filepath)
 
 rdata_filepath <- file.path(scratch_path, str_c(project_id, '_msdata_full_', mq_folder, '_', data_version, '.RData'))
