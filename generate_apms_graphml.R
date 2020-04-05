@@ -14,6 +14,7 @@ party3rd_data_path <- file.path(bioinfo_pool_path, "pub3rdparty")
 
 require(rstan)
 require(dplyr)
+require(tidyselect)
 require(stringr)
 require(msglm)
 require(maxquantUtils)
@@ -23,12 +24,17 @@ load(file.path(scratch_path, paste0(project_id, '_msglm_data_', mq_folder, '_', 
 load(file.path(scratch_path, paste0(project_id, '_msdata_full_', mq_folder, '_',data_version, '.RData')))
 load(file.path(scratch_path, paste0(project_id, '_msglm_fit_', mq_folder, '_', fit_version, '.RData')))
 
-krogan_apms.df <- read_tsv(file.path(data_path, "krogan", "interactorsAll-Krogan-mapped.txt")) %>%
+source(file.path(project_scripts_path, 'setup_modelobj.R'))
+
+bait_checks.df <- get(str_c("bait_checks_", modelobj, ".df"))
+bait_checks.df$object_id <- bait_checks.df[[modelobj_idcol]]
+
+krogan_apms.df <- read_tsv(file.path(data_path, "published_ppi", "interactorsAll-Krogan-mapped.txt")) %>%
     rename(protein_ac = Preys, bait_full_id = Bait, is_hit = significant)
 
-krogan_apms_pg.df <- left_join(krogan_apms.df, msdata$protein2protgroup) %>%
-    filter(!is.na(protgroup_id)) %>%
-    group_by(bait_full_id, protgroup_id) %>%
+krogan_apms_obj.df <- left_join(krogan_apms.df, modelobj2protein.df) %>%
+    dplyr::filter(!is.na(object_id)) %>%
+    group_by(bait_full_id, object_id) %>%
     summarise(krogan_is_hit = any(is_hit),
               krogan_MIST = min(MIST),
               krogan_avg_spec = max(AvgSpec),
@@ -36,7 +42,7 @@ krogan_apms_pg.df <- left_join(krogan_apms.df, msdata$protein2protgroup) %>%
 
 # contrasts-based interactions filter
 iactions_4graphml.df <- filter(object_contrasts.df, str_detect(contrast, "_vs_others") & is_hit & std_type == "replicate" &
-                               !(protgroup_id %in% bait_checks.df$protgroup_id))
+                               !(object_id %in% bait_checks.df$object_id))
 
 bait_labels.df <- distinct(select(iactions_4graphml.df, contrast)) %>%
     dplyr::inner_join(select(filter(contrastXmetacondition.df, condition_role == "signal"), contrast, metacondition)) %>%
@@ -47,31 +53,31 @@ bait_labels.df <- distinct(select(iactions_4graphml.df, contrast)) %>%
 iactions_4graphml.df <- iactions_4graphml.df %>%
     dplyr::select(-prob_nonneg) %>%
     dplyr::inner_join(bait_labels.df) %>%
-    dplyr::arrange(bait_full_id, bait_id, protgroup_id, prob_nonpos) %>%
-    dplyr::group_by(bait_full_id, bait_id, gene_names, protgroup_id) %>%
+    dplyr::arrange(bait_full_id, bait_id, object_id, prob_nonpos) %>%
+    dplyr::group_by(bait_full_id, bait_id, object_label, object_id) %>%
     dplyr::summarize(#conditions.vs_background = paste0(condition, collapse=' '),
                      prob_nonpos_min.vs_background = prob_nonpos[1],
                      median_log2.vs_background = median_log2[1],
                      sd_log2.vs_background = sd_log2[1]) %>%
     dplyr::ungroup() %>%
-    left_join(krogan_apms_pg.df)
+    left_join(krogan_apms_obj.df)
 
 special_bait_ids <- c()
 
-# fix bait mapping to protgroup_id
-bait2protgroup.df <- arrange(bait_checks.df, bait_id, bait_full_id, protgroup_id) %>%
-    group_by(protgroup_id) %>%
-    mutate(new_protgroup_id = if_else(row_number() == 1, protgroup_id, NA_integer_)) %>%
+# fix bait mapping to object_id
+bait2object.df <- arrange(bait_checks.df, bait_id, bait_full_id, object_id) %>%
+    group_by(object_id) %>%
+    mutate(new_object_id = if_else(row_number() == 1, object_id, NA_integer_)) %>%
     ungroup() %>%
-    mutate(protgroup_id = new_protgroup_id, new_protgroup_id = NULL)
+    mutate(object_id = new_object_id, new_object_id = NULL)
 
-# assign negative protgroup_ids to undetected/special bait ORFs
-missed_bait_protgroups.df <- dplyr::filter(bait2protgroup.df, (is.na(protgroup_id) | bait_full_id %in% special_bait_ids) & !str_detect(bait_full_id, "Ctrl_") &
-                                           bait_full_id %in% msdata$msruns$bait_full_id) %>%
+# assign negative object_ids to undetected/special bait ORFs
+missed_bait_objects.df <- dplyr::filter(bait2object.df, (is.na(object_id) | bait_full_id %in% special_bait_ids) & !str_detect(bait_full_id, "Ctrl_") &
+                                        bait_full_id %in% msdata$msruns$bait_full_id) %>%
     dplyr::arrange(bait_id, bait_full_id) %>%
-    dplyr::mutate(protgroup_id = -row_number()) %>%
+    dplyr::mutate(object_id = -row_number()) %>%
     dplyr::transmute(bait_full_id, bait_id,
-        protgroup_id, protein_acs=protein_ac, majority_protein_acs=protein_ac,
+        object_id, protein_acs=protein_ac, majority_protein_acs=protein_ac,
         gene_names=bait_id, gene_label=bait_id, 
         protein_names=str_c(bait_id, '_', orgcode), protac_label=protein_ac,
         fasta_headers = NA_character_, n_proteins=1L,
@@ -79,36 +85,35 @@ missed_bait_protgroups.df <- dplyr::filter(bait2protgroup.df, (is.na(protgroup_i
         seqlen=NA_integer_, seqlens = NA_character_, mol_weight_kDA = NA_real_,
         seqcov = 0, unique_razor_seqcov = 0,
         is_contaminant = FALSE, is_reverse = FALSE, is_viral = TRUE, is_full_quant = FALSE, is_top_quant = FALSE,
-        is_comp2 = FALSE, protgroup_label = bait_full_id)
+        is_comp2 = FALSE, object_label = bait_full_id)
 
-bait_protgroup_ids.df <- dplyr::bind_rows(dplyr::inner_join(dplyr::select(dplyr::filter(bait2protgroup.df, !(bait_full_id %in% special_bait_ids) &
-                                                                                                        !str_detect(bait_full_id, "Ctrl_")),
-                                                                          bait_full_id, protgroup_id),
-                                                            msdata$protgroups),
-                                          missed_bait_protgroups.df) %>%
-    mutate(protgroup_label = bait_full_id) %>%
+bait_object_ids.df <- dplyr::bind_rows(dplyr::inner_join(
+        dplyr::select(dplyr::filter(bait2object.df, !(bait_full_id %in% special_bait_ids) &
+                                                    !str_detect(bait_full_id, "Ctrl_")),
+                      bait_full_id, object_id),
+        modelobjs_df),
+        missed_bait_objects.df) %>%
+    mutate(object_label = bait_full_id) %>%
     dplyr::filter(bait_full_id %in% msdata$msruns$bait_full_id)
 
 iactions_4graphml.df <- iactions_4graphml.df %>%
     #dplyr::left_join(comparisons_4graphml.df) %>%
     #dplyr::left_join(effects_4graphml.df) %>%
-    dplyr::inner_join(msdata$protgroups %>% dplyr::select(protgroup_id, protein_names)) %>%
+    dplyr::inner_join(dplyr::select(modelobjs_df, object_id, object_label)) %>%
     dplyr::mutate(type = 'experiment',
                   weight = sqrt(pmin(100, -log10(prob_nonpos_min.vs_background))) *
                            sqrt(pmax(0, median_log2.vs_background))) %>%
-    dplyr::inner_join(dplyr::select(bait_protgroup_ids.df, src_protgroup_id=protgroup_id, bait_full_id)) %>%
-    dplyr::mutate(src_gene_names = bait_id) %>%
-    dplyr::rename(dest_gene_names = gene_names,
-                  dest_protein_names = protein_names,
-                  dest_protgroup_id = protgroup_id)
+    dplyr::inner_join(dplyr::select(bait_object_ids.df, src_object_id=object_id, bait_full_id)) %>%
+    dplyr::mutate(src_object_label = bait_id) %>%
+    dplyr::rename(dest_object_id = object_id, dest_object_label = object_label)
 
-protgroups_4graphml.df <- dplyr::bind_rows(semi_join(msdata$protgroups,
-                                                     dplyr::select(iactions_4graphml.df, protgroup_id = dest_protgroup_id)) %>%
-                                           anti_join(dplyr::select(bait_protgroup_ids.df, protgroup_id)),
-                                           dplyr::select(bait_protgroup_ids.df, -bait_full_id, -bait_id)) %>%
-    #dplyr::left_join(dplyr::select(protgroup_batch_effects.df, protgroup_id, batch_effect_p_value = p_value, batch_effect_median_log2 = median_log2)) %>%
-    dplyr::mutate(is_bait = protgroup_id %in% bait_protgroup_ids.df$protgroup_id,
-                  is_detected = protgroup_id %in% iactions_4graphml.df$dest_protgroup_id,
+objects_4graphml.df <- dplyr::bind_rows(semi_join(modelobjs_df,
+                                                  dplyr::select(iactions_4graphml.df, object_id = dest_object_id)) %>%
+                                           anti_join(dplyr::select(bait_object_ids.df, object_id)),
+                                           dplyr::select(bait_object_ids.df, -bait_full_id, -bait_id)) %>%
+    #dplyr::left_join(dplyr::select(object_batch_effects.df, object_id, batch_effect_p_value = p_value, batch_effect_median_log2 = median_log2)) %>%
+    dplyr::mutate(is_bait = object_id %in% bait_object_ids.df$object_id,
+                  is_detected = object_id %in% iactions_4graphml.df$dest_object_id,
                   #is_transient_contaminant = !is.na(batch_effect_p_value) & batch_effect_p_value <= 1E-5 & batch_effect_median_log2 > 2.5,
                   is_manual_contaminant = FALSE) %>%
     dplyr::mutate(protein_class = case_when(replace_na(is_viral, FALSE) ~ "viral",
@@ -139,8 +144,9 @@ all_participants.df <- bind_rows(
 
 # map protein groups of the AP-MS networks onto the UniProt AC nodes of the known PPI
 ppi_participants.df <- bind_rows(
-    expand_protgroup_acs(protgroups_4graphml.df, "majority_protein_acs", id_col="protgroup_id", ac_col="protein_ac") %>% dplyr::mutate(ac_match_rank = 1L),
-    expand_protgroup_acs(protgroups_4graphml.df, "majority_protein_acs", id_col="protgroup_id", ac_col="protein_ac") %>%
+    expand_protgroup_acs(objects_4graphml.df, "majority_protein_acs", id_col="object_id", ac_col="protein_ac") %>%
+        dplyr::mutate(ac_match_rank = 1L),
+    expand_protgroup_acs(objects_4graphml.df, "majority_protein_acs", id_col="object_id", ac_col="protein_ac") %>%
         dplyr::mutate(protein_ac = str_remove(protein_ac, "-(?:PRO_)?\\d+$"), ac_match_rank = 2L)
 ) %>% dplyr::group_by(protein_ac) %>% dplyr::filter(row_number(ac_match_rank) == 1L) %>% dplyr::ungroup() %>%
     dplyr::select(-row_ix, -prot_ix) %>%
@@ -163,19 +169,19 @@ ppi_confidence_classes.df <- read_tsv(file.path(data_path, "../../vgirault_vzvap
 
 observed_ppi_participants.df <- ppi_participants.df %>%
     dplyr::inner_join(bind_rows(
-        dplyr::select(iactions_4graphml.df, protgroup_id = dest_protgroup_id, bait_full_id) %>%
+        dplyr::select(iactions_4graphml.df, object_id = dest_object_id, bait_full_id) %>%
             mutate(bait_full_id=as.character(bait_full_id)),
-        dplyr::select(filter(bait_checks.df, !is.na(bait_full_id)), protgroup_id, bait_full_id) %>%
+        dplyr::select(filter(bait_checks.df, !is.na(bait_full_id)), object_id, bait_full_id) %>%
             distinct()) %>% distinct()) %>%
-    dplyr::left_join(select(bait_checks.df, bait_protgroup_id = protgroup_id, bait_full_id, bait_id)) %>%
-    dplyr::mutate(is_bait = bait_protgroup_id == protgroup_id) %>%
-    dplyr::select(-bait_protgroup_id) %>% distinct()
+    dplyr::left_join(select(bait_checks.df, bait_object_id = object_id, bait_full_id, bait_id)) %>%
+    dplyr::mutate(is_bait = bait_object_id == object_id) %>%
+    dplyr::select(-bait_object_id) %>% distinct()
 
 # matrix expand PPIs (pairs should be visible by the same bait)
 # leave only confident interactions
 known_ppi_pairs.df <- dplyr::inner_join(observed_ppi_participants.df, observed_ppi_participants.df,
                                         by=c("interaction_id", "bait_id", 'ppi_type')) %>%
-    dplyr::filter(((is_bait.x & !is_bait.y) | ((is_bait.x == is_bait.y) & (protgroup_id.x < protgroup_id.y)))
+    dplyr::filter(((is_bait.x & !is_bait.y) | ((is_bait.x == is_bait.y) & (object_id.x < object_id.y)))
                   & (protein_ac.x != protein_ac.y)) %>%
     dplyr::left_join(select(ppi.env$interaction_info.df, interaction_ix, pubmed_id, is_negative,
                             interaction_type, interaction_detection_method) %>%
@@ -192,7 +198,7 @@ known_ppi_pairs.df <- dplyr::inner_join(observed_ppi_participants.df, observed_p
                   is_valid_iaction = (!replace_na(is_negative, TRUE) & (is_baitprey | is_neutneut | is_fluorescence | is_luminescence)) |
                       (ppi_type == "complex")) %>%
     dplyr::filter(is_valid_iaction) %>%
-    dplyr::group_by(src_protgroup_id = protgroup_id.x, dest_protgroup_id = protgroup_id.y) %>%
+    dplyr::group_by(src_object_id = object_id.x, dest_object_id = object_id.y) %>%
     dplyr::summarise(bait_ids = paste0(sort(unique(bait_id)), collapse = ' '),
                      iaction_ids = paste0(unique(interaction_id), collapse = ' '),
                      pubmed_ids = paste0(unique(pubmed_id[!is.na(pubmed_id)]), collapse = ' '),
@@ -226,15 +232,16 @@ iactions_ex_4graphml.df <- dplyr::full_join(iactions_4graphml.df,
 
 require(RGraphML)
 
-iactions.graphml <- GraphML.generate(protgroups_4graphml.df,
+iactions.graphml <- GraphML.generate(objects_4graphml.df,
                                      iactions_ex_4graphml.df,
-                                     node_id.column = 'protgroup_id', parent_id.column = NA,
-                                     source.column = 'src_protgroup_id', target.column = 'dest_protgroup_id',
-                                     node.attrs = c(`Protein Group ID` = 'protgroup_id',
+                                     node_id.column = 'object_id', parent_id.column = NA,
+                                     source.column = 'src_object_id', target.column = 'dest_object_id',
+                                     node.attrs = c(`Protein Group ID` = 'object_id',
                                                     `Majority ACs` = 'majority_protein_acs',
                                                     `Gene Names` = 'gene_names',
                                                     `Experimental Role` = 'exp_role',
-                                                    `Protein Name` = 'protein_names',
+                                                    `Protein Name` = 'protein_label',
+                                                    `Protein Description` = 'protein_description',
                                                     `Protein Class` = "protein_class",
                                                     `Seq Length` = "seqlen",
                                                     `Detected` = "is_detected"
@@ -265,6 +272,6 @@ rgraph_filepath <- file.path(analysis_path, 'networks', paste0(project_id, '_4gr
 results_info <- list(project_id = project_id, mq_folder=mq_folder,
                      data_version = data_version, fit_version = fit_version,
                      modelobj = modelobj, quantobj = quantobj)
-message('Saving full analysis results to ', rfit_filepath, '...')
-save(results_info, iactions_ex_4graphml.df, protgroups_4graphml.df,
+message('Saving full analysis results to ', rgraph_filepath, '...')
+save(results_info, iactions_ex_4graphml.df, objects_4graphml.df,
      file = rgraph_filepath)
