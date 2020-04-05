@@ -330,7 +330,8 @@ pheatmap(ifelse(conditionXmetacondition.mtx, 1.0, 0.0), cluster_rows=FALSE, clus
 dev.off()
 
 conditionXmetacondition.df <- as_tibble(as.table(conditionXmetacondition.mtx)) %>%
-  dplyr::filter(n != 0) %>% dplyr::select(-n)
+  dplyr::filter(n != 0) %>% dplyr::select(-n) %>%
+  dplyr::mutate(is_preserved_condition = str_detect(condition, "^Ctrl_"))
 
 contrasts.df <- bind_rows(
   transmute(filter(conditions.df, bait_type == "sample"),
@@ -366,8 +367,7 @@ contrastXmetacondition.df <- as_tibble(as.table(contrastXmetacondition.mtx)) %>%
   dplyr::left_join(select(contrasts.df, contrast, contrast_type)) %>%
   dplyr::mutate(condition_role = if_else(contrast_type == "filter" & weight < 0, "background", "signal"))
 
-contrastXcondition.df <- as_tibble(as.table(conditionXmetacondition.mtx)) %>% dplyr::filter(n != 0) %>%
-  dplyr::select(-n) %>%
+contrastXcondition.df <- conditionXmetacondition.df %>%
   dplyr::inner_join(contrastXmetacondition.df) %>%
   dplyr::arrange(contrast, contrast_type, metacondition, condition)
 
