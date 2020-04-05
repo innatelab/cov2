@@ -28,25 +28,13 @@ message('Loading data...')
 load(file.path(scratch_path, str_c(project_id, '_msglm_data_', mq_folder, '_', data_version, '.RData')))
 load(file.path(scratch_path, str_c(project_id, '_msdata_full_', mq_folder, '_', data_version, '.RData')))
 
+source(file.path(project_scripts_path, 'setup_modelobj.R'))
+
 message('Loading MSGLM model fit results...')
 strip_samples <- TRUE
 
-#modelobj <- "protgroup"
-#quantobj <- "protgroup"
-modelobj <- "protregroup"
-quantobj <- "pepmodstate"
-modelobjs_df <- msdata[[str_c(modelobj, "s")]]
-modelobj_idcol <- str_c(modelobj, "_id")
-# FIXME should be done in prepare_data
-modelobjs_df$object_id <- modelobjs_df[[modelobj_idcol]]
-modelobjs_df$object_label <- modelobjs_df[[str_c(modelobj, "_label")]]
-
-chunk_suffix <- case_when(modelobj == "protgroup" ~ "_pg",
-                          modelobj == "protregroup" ~ "_prg",
-                          TRUE ~ NA_character_)
-
-fit_path <- file.path(scratch_path, str_c(project_id, '_', mq_folder, '_msglm', chunk_suffix))
-fit_files <- list.files(fit_path, str_c(project_id, '_msglm', #chunk_suffix, 
+fit_path <- file.path(scratch_path, str_c(project_id, '_', mq_folder, '_msglm', modelobj_suffix))
+fit_files <- list.files(fit_path, str_c(project_id, '_msglm', #modelobj_suffix, 
                                         '_', fit_version, '_\\d+\\.RData'))
 message('Found ', length(fit_files), ' model file(s)')
 fit_files.df <- tibble(filename = as.character(fit_files)) %>%

@@ -40,21 +40,7 @@ require(rstan)
 require(tidyr)
 require(stringr)
 
-#modelobj <- "protgroup"
-modelobj <- "protregroup"
-
-modelobj_df <- msdata[[paste0(modelobj, "s")]]
-modelobj_idcol <- paste0(modelobj, "_id")
-modelobj_df$object_label = modelobj_df[[paste0(modelobj, "_label")]]
-chunk_suffix <- case_when(modelobj == "protgroup" ~ "_pg",
-                          modelobj == "protregroup" ~ "_prg",
-                          TRUE ~ NA_character_)
-quantobj <- case_when(modelobj == "protgroup" ~ "protgroup",
-                      modelobj == "protregroup" ~ "pepmodstate",
-                      TRUE ~ NA_character_) 
-global_labu_shift <- case_when(quantobj == "pepmodstate" ~ global_pepmodstate_labu_shift,
-                               quantobj == "protgroup" ~ global_protgroup_labu_shift,
-                               TRUE ~ NA_real_)
+source(file.path(project_scripts_path, 'setup_modelobj.R'))
 
 sel_object_ids <- modelobj_df[[modelobj_idcol]][[job_chunk]]
 message(sel_object_ids, " ", modelobj, " ID(s): ",
@@ -175,7 +161,7 @@ names(background_contrasts.quantiles_rhs) <- background_contrasts
 msglm_results <- process.stan_fit(msglm.stan_fit, dims_info,
                                   condition.quantiles_rhs = background_contrasts.quantiles_rhs)
 
-res_prefix <- paste0(project_id, "_", mq_folder, "_msglm", chunk_suffix)
+res_prefix <- paste0(project_id, "_", mq_folder, "_msglm", modelobj_suffix)
 if (!dir.exists(file.path(scratch_path, res_prefix))) {
   dir.create(file.path(scratch_path, res_prefix))
 }

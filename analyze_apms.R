@@ -62,7 +62,7 @@ group_by(contrast, std_type) %>% do({
                 subtitle=str_c("std_type=", sel_object_contrast_thresholds.df$std_type[[1]])) +
         theme_bw_ast()
     ggsave(filename = file.path(analysis_path, 'plots', mq_folder,
-                                str_c("volcanos_", sel_object_contrast_thresholds.df$std_type[[1]]),
+                                str_c("volcanos_", sel_object_contrast_thresholds.df$std_type[[1]], modelobj_suffix),
                                 paste0(project_id, '_', fit_version, '_volcano_',
                                        sel_object_contrast_thresholds.df$contrast[[1]], '.pdf')),
            plot = p, width=15, height=18, device=cairo_pdf, family="Arial")
