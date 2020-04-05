@@ -201,8 +201,8 @@ msdata_full$pepmodstate_intensities <- mqevidence$pepmodstate_intensities %>%
       `ident_type.MULTI-MATCH` ~ "MULTI-MATCH",
       `ident_type.MULTI-SECPEP` ~ "MULTI-SECPEP",
       TRUE ~ NA_character_),
-      levels = c("ISO-MSMS", "MULTI-MSMS", "MSMS","MULTI-MATCH-MSMS", "MULTI-SECPEP", "MULTI-MATCH")),
-      is_idented = replace_na(ident_type.MSMS, FALSE) | replace_na(`ident_type.MULTI-MATCH-MSMS`, FALSE) |
+      levels = c("ISO-MSMS", "MULTI-MSMS", "MSMS", "MULTI-SECPEP", "MULTI-MATCH", "MULTI-MATCH-MSMS")),
+      is_idented = replace_na(ident_type.MSMS, FALSE) | #replace_na(`ident_type.ISO-MSMS`, FALSE) |
                       replace_na(`ident_type.MULTI-MSMS`, FALSE))
 
 msdata_full$pepmodstate_tagintensities <- dplyr::select(
