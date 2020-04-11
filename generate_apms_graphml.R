@@ -75,6 +75,25 @@ virhostnet_ppi_obj.df <- left_join(virhostnet_ppi.df, modelobj2protein.df) %>%
 iactions_4graphml.df <- filter(object_contrasts.df, str_detect(contrast, "_vs_others") & is_hit & std_type == "replicate" &
                                !(object_id %in% bait_checks.df$object_id))
 
+iactions_4table.df <- dplyr::inner_join(iactions_4graphml.df,
+                                        dplyr::select(baits_info.df, bait_full_id, bait_id, organism)) %>%
+    left_join(krogan_apms_obj.df) %>%
+    left_join(virhostnet_ppi_obj.df) %>%
+    left_join(crispr_plasmids_obj.df) %>%
+    left_join(dplyr::select(modelobjs_df, object_id, protein_description, any_of(c("npepmods_unique", "npeptides_unique")))) %>%
+    dplyr::arrange(bait_id, organism, bait_full_id, object_id, p_value) %>%
+    dplyr::select(organism, bait_id, bait_full_id, contrast,
+                  object_label, protein_description,
+                  median_log2, p_value, median_log2_threshold, p_value_threshold,
+                  majority_protein_acs, gene_names, protein_names, is_viral, is_contaminant, is_reverse,
+                  any_of(c("npepmods_unique", "npeptides_unique")),
+                  nmsruns_quanted = nmsruns_quanted_lhs_max,
+                  starts_with("krogan_"), starts_with("virhostnet_"),
+                  crispr_plasmid_ids)
+write_tsv(iactions_4table.df, file.path(analysis_path, 'networks',
+                                        str_c(project_id, '_interactions_', mq_folder, '_', fit_version, modelobj_suffix, '.txt')),
+          na = "")
+
 bait_labels.df <- distinct(select(iactions_4graphml.df, contrast)) %>%
     dplyr::inner_join(select(filter(contrastXmetacondition.df, condition_role == "signal"), contrast, metacondition)) %>%
     dplyr::inner_join(conditionXmetacondition.df) %>%
