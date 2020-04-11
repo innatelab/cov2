@@ -377,7 +377,7 @@ contrastXcondition.df <- conditionXmetacondition.df %>%
 msrun_stats.df <- left_join(msdata_full$protgroup_intensities,
                             msdata_full$protgroup_idents) %>%
   dplyr::group_by(msrun) %>%
-  dplyr::summarise(n_pg_idents = sum(replace_na(ident_type, "") == "By MS/MS"),
+  dplyr::summarise(n_pg_idents = sum(!is.na(ident_type) & ident_type == "By MS/MS"),
                    n_pg_quants = sum(!is.na(intensity))) %>%
   dplyr::ungroup() %>%
   dplyr::inner_join(msdata$msruns)
