@@ -1,9 +1,9 @@
 proj_info = (id = "cov2",
              data_ver = "20200329",
-             fit_ver = "20200329",
+             fit_ver = "20200402",
              modelobj = "protgroup",
              mq_folder = "mq_apms_20200329",
-             network_ver = "20200329")
+             network_ver = "20200402")
 using Pkg
 Pkg.activate(@__DIR__)
 using Revise
