@@ -262,10 +262,9 @@ conditionXeffect.mtx <- conditionXeffect_orig.mtx[, colSums(abs(conditionXeffect
 dimnames(conditionXeffect.mtx) <- list(condition = conditions.df$condition,
                                        effect = colnames(conditionXeffect.mtx))
 
-cairo_pdf(filename = file.path(data_path, paste0(project_id, "_exp_design_APMS_B1_", fit_version, ".pdf")),
-          width = 8, height = 6)
-pheatmap(conditionXeffect.mtx, cluster_rows=FALSE, cluster_cols=FALSE)
-dev.off()
+pheatmap(conditionXeffect.mtx, cluster_rows=FALSE, cluster_cols=FALSE, 
+         filename = file.path(data_path, paste0(project_id, "_exp_design_", mq_folder, "_", fit_version, ".pdf")),
+         width = 8, height = 6)
 
 effects.df <- tibble(effect=colnames(conditionXeffect.mtx)) %>%
   dplyr::mutate(orgcode = effect_factor(effect, "orgcode", levels(conditions.df$orgcode), NA),
@@ -295,18 +294,16 @@ inv_conditionXeffect.mtx <- frame2matrix(conditionXeffect.df,
                                          "condition", "effect", "cond_w",
                                          rows = rownames(conditionXeffect.mtx),
                                          cols = colnames(conditionXeffect.mtx))
-cairo_pdf(filename = file.path(data_path, paste0(project_id, "_exp_design_inv_APMS_B1_", fit_version, ".pdf")),
-          width = 8, height = 6)
-pheatmap(inv_conditionXeffect.mtx, cluster_rows=FALSE, cluster_cols=FALSE)
-dev.off()
+pheatmap(inv_conditionXeffect.mtx, cluster_rows=FALSE, cluster_cols=FALSE,
+         filename = file.path(data_path, paste0(project_id, "_exp_design_inv_", mq_folder, "_", fit_version, ".pdf")),
+         width = 8, height = 6)
 
 msrunXreplEffect.mtx <- replicate_effects_matrix(
   mutate(msdata$msruns, batch_condition=str_c("B", batch, "_", condition)),
   replicate_col = "replicate", condition_col = "condition")
-cairo_pdf(filename = file.path(data_path, paste0(project_id, "_exp_design_msruns_APMS_B1_", fit_version, ".pdf")),
-          width = 14, height = 12)
-pheatmap(msrunXreplEffect.mtx, cluster_rows=FALSE, cluster_cols=FALSE)
-dev.off()
+pheatmap(msrunXreplEffect.mtx, cluster_rows=FALSE, cluster_cols=FALSE,
+         filename = file.path(data_path, paste0(project_id, "_exp_design_msruns_", mq_folder, "_", fit_version, ".pdf")),
+         width = 16, height = 20)
 
 msrunXreplEffect.df <- as_tibble(as.table(msrunXreplEffect.mtx)) %>%
   dplyr::filter(n != 0) %>% dplyr::select(-n)
@@ -326,10 +323,9 @@ for (cname in allminus_metaconditions) {
   conditionXmetacondition.mtx[str_detect(rownames(conditionXmetacondition.mtx), str_c("_", bait, "$")), cname] <- FALSE
 }
 conditionXmetacondition.mtx[filter(conditions.df, bait_type == "control")$bait_full_id, "controls"] <- TRUE
-cairo_pdf(filename = file.path(data_path, paste0(project_id, "_metaconditions_APMS_B1_", fit_version, ".pdf")),
-          width = 8, height = 6)
-pheatmap(ifelse(conditionXmetacondition.mtx, 1.0, 0.0), cluster_rows=FALSE, cluster_cols=FALSE)
-dev.off()
+pheatmap(ifelse(conditionXmetacondition.mtx, 1.0, 0.0), cluster_rows=FALSE, cluster_cols=FALSE,
+         filename = file.path(data_path, paste0(project_id, "_metaconditions_", mq_folder, "_", fit_version, ".pdf")),
+         width = 8, height = 6)
 
 conditionXmetacondition.df <- as_tibble(as.table(conditionXmetacondition.mtx)) %>%
   dplyr::filter(n != 0) %>% dplyr::select(-n) %>%
@@ -359,10 +355,9 @@ for (i in 1:nrow(contrasts.df)) {
                              c(contrasts.df$metacondition_lhs[[i]],
                                contrasts.df$metacondition_rhs[[i]])] <- c(1, -1)
 }
-cairo_pdf(filename = file.path(data_path, paste0(project_id, "_contrasts_APMS_B1_", fit_version, ".pdf")),
-          width = 8, height = 8)
-pheatmap(contrastXmetacondition.mtx, cluster_rows=FALSE, cluster_cols=FALSE)
-dev.off()
+pheatmap(contrastXmetacondition.mtx, cluster_rows=FALSE, cluster_cols=FALSE,
+         filename = file.path(data_path, paste0(project_id, "_exp_design_contrasts_", mq_folder, "_", fit_version, ".pdf")),
+         width = 11, height = 12)
 
 contrastXmetacondition.df <- as_tibble(as.table(contrastXmetacondition.mtx)) %>% dplyr::filter(n != 0) %>%
   dplyr::rename(weight = n) %>%
@@ -478,8 +473,8 @@ msrun_intensities_pca.df <- dplyr::mutate(msrun_intensities_pca.df,
     dplyr::inner_join(msdata$msruns)
 
 require(ggrepel)
-cairo_pdf(filename = file.path(data_path, paste0(project_id, "_msruns_pca_APMS_B1_", fit_version, ".pdf")),
-          width = 14, height = 14)
+cairo_pdf(filename = file.path(data_path, paste0(project_id, "_msruns_pca_", mq_folder, "_", fit_version, ".pdf")),
+          width = 18, height = 18)
 ggplot(msrun_intensities_pca.df,
        aes(x=comp_1, y=comp_2, color=bait_id)) +
     geom_point() +
