@@ -5,9 +5,9 @@
 
 project_id <- 'cov2'
 message('Project ID=', project_id)
-data_version <- "20200331"
-fit_version <- "20200331"
-mq_folder <- 'mq_apms_20200329'
+data_version <- "20200410"
+fit_version <- "20200410"
+mq_folder <- 'mq_apms_20200409'
 message('Dataset version is ', data_version)
 
 source("~/R/config.R")
