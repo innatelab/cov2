@@ -166,8 +166,18 @@ msdata_full$protregroups <- dplyr::inner_join(msdata_full$protregroups,
   dplyr::mutate(protac_label = sapply(str_split(majority_protein_acs, fixed(";")), strlist_label),
                 protregroup_label = case_when(!is.na(gene_label) ~ gene_label,
                                               !is.na(protac_label) ~ protac_label,
-                                              TRUE ~ str_c('#', protregroup_id)))
-
+                                              TRUE ~ str_c('#', protregroup_id))) %>%
+  dplyr::left_join(dplyr::inner_join(msdata_full$protregroup2pepmod, msdata_full$pepmods) %>%
+                   dplyr::group_by(protregroup_id) %>%
+                   dplyr::summarise(npeptides = n_distinct(peptide_id),
+                                    npepmods = n_distinct(pepmod_id),
+                                    npeptides_unique = n_distinct(peptide_id[is_specific]),
+                                    npepmods_unique = n_distinct(pepmod_id[is_specific])) %>%
+                   dplyr::ungroup() %>%
+                   dplyr::mutate(npeptides_unique_razor = npeptides_unique,
+                                 npeptides_razor = 0L,
+                                 npepmods_unique_razor = npepmods_unique,
+                                 npepmods_razor = 0L))
 # prepare protgroup intensities (wider format: all mstags in one row)
 intensity_prespec_df <- tibble(.name = msdata_colgroups$LFQ) %>%
   extract(.name, c("mstag", "msrun"), remove=FALSE,
