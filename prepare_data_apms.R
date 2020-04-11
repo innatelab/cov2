@@ -518,7 +518,7 @@ bait_checks_protregroup.df <- dplyr::left_join(dplyr::select(baits_info.df, bait
   dplyr::mutate(idented_in_msruns = if_else(idented_in_msruns == "", NA_character_, idented_in_msruns),
                 idented_in_AP_of = if_else(idented_in_AP_of == "", NA_character_, idented_in_AP_of))
 
-rdata_filepath <- file.path(scratch_path, str_c(project_id, '_msglm_data_', mq_folder, '_', data_version, '.RData'))
+rmsglmdata_filepath <- file.path(scratch_path, str_c(project_id, '_msglm_data_', mq_folder, '_', data_version, '.RData'))
 message('Saving MS data for MSGLM to ', rdata_filepath, '...')
 save(data_info, msdata,
      conditions.df, effects.df,
@@ -532,12 +532,12 @@ save(data_info, msdata,
      batch_effects.df, msrunXbatchEffect.mtx,
      subbatch_effects.df, msrunXsubbatchEffect.mtx,
      bait_checks_protgroup.df, bait_checks_protregroup.df,
-     file = rdata_filepath)
+     file = rmsglmdata_filepath)
 
-rdata_filepath <- file.path(scratch_path, str_c(project_id, '_msdata_full_', mq_folder, '_', data_version, '.RData'))
+rfulldata_filepath <- file.path(scratch_path, str_c(project_id, '_msdata_full_', mq_folder, '_', data_version, '.RData'))
 message('Saving full MS data to ', rdata_filepath, '...')
 save(data_info, msdata_full,
      #protgroup_stats.df,
-     file = rdata_filepath)
+     file = rfulldata_filepath)
 
 message('Done.')
