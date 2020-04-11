@@ -42,9 +42,9 @@ require(stringr)
 
 source(file.path(project_scripts_path, 'setup_modelobj.R'))
 
-sel_object_ids <- modelobj_df[[modelobj_idcol]][[job_chunk]]
+sel_object_ids <- modelobjs_df[[modelobj_idcol]][[job_chunk]]
 message(sel_object_ids, " ", modelobj, " ID(s): ",
-        paste0(sort(unique(dplyr::pull(modelobj_df[modelobj_df[[modelobj_idcol]] %in% sel_object_ids, ], object_label))), collapse=' '))
+        paste0(sort(unique(dplyr::pull(modelobjs_df[modelobjs_df[[modelobj_idcol]] %in% sel_object_ids, ], object_label))), collapse=' '))
 if (modelobj == "protregroup") {
 msdata.df <- dplyr::filter(msdata$protregroup2pepmod, protregroup_id %in% sel_object_ids & is_specific) %>%
   dplyr::inner_join(dplyr::select(msdata$pepmodstates, pepmod_id, pepmodstate_id)) %>%
@@ -89,7 +89,7 @@ model_data$objects <- dplyr::select(model_data$interactions, glm_object_ix, obje
 
 if (modelobj == "protregroup") {
 model_data$objects <- dplyr::mutate(model_data$objects, protregroup_id = object_id) %>%
-                      dplyr::inner_join(dplyr::select(modelobj_df, protregroup_id, protregroup_label, object_label,
+                      dplyr::inner_join(dplyr::select(modelobjs_df, protregroup_id, protregroup_label, object_label,
                                                       majority_protein_acs, protein_acs, gene_names, protein_names, contains("is_"))) %>%
   #dplyr::select(-is_fit) %>%
   dplyr::arrange(glm_object_ix)
@@ -108,7 +108,7 @@ model_data$subobjects <- msdata.df %>%
     dplyr::filter(glm_subobject_ix <= 30) # remove less abundant subobjects of rich objects
 } else if (modelobj == "protgroup") {
 model_data$objects <- dplyr::mutate(model_data$objects, protgroup_id = object_id) %>%
-                      dplyr::inner_join(dplyr::select(modelobj_df, protgroup_id, protgroup_label, object_label,
+                      dplyr::inner_join(dplyr::select(modelobjs_df, protgroup_id, protgroup_label, object_label,
                                                       majority_protein_acs, protein_acs, gene_names, protein_names, contains("is_"))) %>%
   #dplyr::select(-is_fit) %>%
   dplyr::arrange(glm_object_ix)
