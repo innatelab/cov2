@@ -445,7 +445,7 @@ msdata_full$mschannel_stats <- mschannel_statistics(msdata_full)
 set.seed(1232)
 msdata_full$protgroup_intensities_all <- expand(msdata_full$protgroup_intensities,
                                                 protgroup_id, msrun) %>%
-  left_join(msdata_full$protgroup_intensities) %>%
+  left_join(dplyr::select(msdata_full$protgroup_intensities, -total_msrun_shift)) %>%
   dplyr::mutate(mstag = "Sum") %>%
   impute_intensities(msdata_full$mschannel_stats) %>%
   dplyr::left_join(dplyr::select(total_msrun_shifts.df, msrun, total_msrun_shift)) %>%
@@ -457,15 +457,16 @@ msdata_full$protgroup_intensities_all <- expand(msdata_full$protgroup_intensitie
 
 protgroup_intensities4pca.df <- msdata_full$protgroup_intensities_all %>%
   #filter(mstag == "L") %>%
+  dplyr::semi_join(dplyr::filter(msdata$protgroups, !is_reverse & !is_contaminant)) %>%
   dplyr::arrange(msrun, protgroup_id)
 
-protgroup_intensities.mtx <- matrix(log2(protgroup_intensities4pca.df$intensity_imputed_norm),
+protgroup_intensities_imp.mtx <- matrix(log2(protgroup_intensities4pca.df$intensity_imputed_norm),
                                     nrow = n_distinct(protgroup_intensities4pca.df$protgroup_id),
                                     dimnames = list(protgroup = unique(protgroup_intensities4pca.df$protgroup_id),
                                                     msrun = unique(protgroup_intensities4pca.df$msrun)))
 
 require(FactoMineR)
-msrun_intensities_pca <- PCA(protgroup_intensities.mtx, graph = FALSE)
+msrun_intensities_pca <- PCA(protgroup_intensities_imp.mtx, graph = FALSE)
 msrun_intensities_pca.df <- as.data.frame(msrun_intensities_pca$svd$V)
 colnames(msrun_intensities_pca.df) <- paste0("comp_", 1:ncol(msrun_intensities_pca.df))
 msrun_intensities_pca.df <- dplyr::mutate(msrun_intensities_pca.df,
