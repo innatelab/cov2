@@ -56,7 +56,7 @@ fasta.dfs <- list(
 
 msdata.wide <- read.MaxQuant.ProteinGroups(file.path(mqdata_path, 'combined/txt'),
                                            file_name = "proteinGroups.txt",
-                                           import_data = c(data_info$quant_type, "ident_type"))
+                                           import_data = c(data_info$quant_type, "ident_type", "ms2_count"))
 mqevidence <- read.MaxQuant.Evidence(file.path(mqdata_path, 'combined/txt'), 
                                      evidence.pepobj = "pepmodstate", correct_ratios = FALSE)
 mqevidence$peptides <- read.MaxQuant.Peptides(file.path(mqdata_path, 'combined/txt'),
@@ -192,12 +192,17 @@ protgroup_intensities_all.df <- tidyr::pivot_longer_spec(
   select(-mstag)
 
 protgroup_idents_all.df <- tidyr::pivot_longer(
-  dplyr::select(msdata.wide, protgroup_id, !!msdata_colgroups$ident_type),
-  cols = msdata_colgroups$ident_type,
-  values_to = "ident_type", names_to = c("msrun"),
-  names_prefix = "ident_type\\.") %>%
+  dplyr::select(msdata.wide, protgroup_id, !!msdata_colgroups$ident_type, !!msdata_colgroups$ms2_count),
+  cols = c(msdata_colgroups$ident_type, msdata_colgroups$ms2_count),
+  names_to = c(".value", "msrun"),
+  names_pattern = "(ident_type|ms2_count)\\.(.*)") %>%
   dplyr::left_join(select(msruns.df, msrun) %>% distinct())
-
+if (!has_name(protgroup_idents_all.df, "ident_type")) {
+  # when matching disabled no ident_type is written
+  protgroup_idents_all.df <- mutate(protgroup_idents_all.df,
+                                    ident_type = factor(if_else(ms2_count > 0, "By MS/MS", NA_character_),
+                                                        levels=c("By matching", "By MS/MS")))
+}
 msdata_full$protgroup_intensities <- protgroup_intensities_all.df %>%
   dplyr::semi_join(select(msdata_full$msruns, msrun, raw_file)) %>%
   dplyr::filter(!is.na(intensity)) %>%
@@ -238,11 +243,6 @@ conditions.df <- dplyr::select(msdata_full$msruns, bait_full_id, bait_id, bait_t
   dplyr::arrange(bait_type, bait_id, orgcode) %>%
   dplyr::mutate(condition = factor(bait_full_id, levels=bait_full_id))
 msdata_full$msruns <- left_join(msdata_full$msruns, select(conditions.df, bait_full_id, condition))
-
-#msdata$protgroup_idents_wide <- select(msdata.wide, protgroup_id, !!msdata_colgroups$ident_type)
-#msdata$protgroup_idents <- reshape(msdata_full$protgroup_idents_wide, idvar = 'protgroup_id',
-#                                        direction = "long", timevar="msrun_mq", v.names = "ident_type") %>%
-#  dplyr::filter(!is.na(ident_type))
 
 #msdata$protgroup_stats <- inner_join(msdata$protgroup_stats,
 #    msdata_full$protgroup_intensities %>%
