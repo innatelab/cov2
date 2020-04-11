@@ -141,7 +141,7 @@ msglm.stan_data <- stan.prepare_data(instr_calib, model_data,
 
 message('Running STAN in NUTS mode...')
 options(mc.cores=mcmc_nchains)
-msglm.stan_fit <- stan.sampling(msglm.stan_data, adapt_delta=0.9, max_treedepth=12L, iter=100L, chains=mcmc_nchains)
+msglm.stan_fit <- stan.sampling(msglm.stan_data, adapt_delta=0.9, max_treedepth=12L, iter=4000L, chains=mcmc_nchains)
 
 #require(shinystan)
 #launch_shinystan(shinystan::as.shinystan(msglm.stan_fit))
