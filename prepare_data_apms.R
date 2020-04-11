@@ -383,12 +383,12 @@ msrun_stats.df <- left_join(msdata_full$protgroup_intensities,
   dplyr::inner_join(msdata$msruns)
 
 # normalize using the intensities
-msdata4norm.df <- msdata$protgroup_intensities %>%
-  dplyr::left_join(msdata$protgroup_idents) %>%
-  dplyr::filter(replace_na(ident_type, "") == "By MS/MS" & !is.na(intensity)) %>%
-  dplyr::semi_join(dplyr::filter(msdata$protgroups, !is_reverse & !is_contaminant & !is_viral)) %>%
-  dplyr::select(protgroup_id) %>% dplyr::distinct() %>%
-  dplyr::inner_join(msdata$protgroup_intensities)
+msdata4norm.df <- msdata$pepmodstate_intensities %>%
+  dplyr::filter(is_idented & !is.na(intensity)) %>%
+  dplyr::semi_join(dplyr::filter(msdata$pepmods, !is_reverse & !is_contaminant & !is_viral) %>%
+                   dplyr::inner_join(dplyr::select(msdata$pepmodstates, pepmodstate_id, pepmod_id))) %>%
+  dplyr::select(pepmodstate_id) %>% dplyr::distinct() %>%
+  dplyr::inner_join(msdata$pepmodstate_intensities)
 
 options(mc.cores=8)
 
@@ -396,12 +396,12 @@ options(mc.cores=8)
 # 1) MS replicates for a given bait
 # 2) same viral protein of different strains
 # 3) all baits together
-msruns_hnorm <- multilevel_normalize_experiments(instr_calib,
+msruns_hnorm <- multilevel_normalize_experiments(instr_calib_pepmod,
     filter(msdata$msruns, is_used) %>%
     mutate(batch_bait_full_id = str_c("B", batch, "_", bait_full_id),
            batch_bait_id = str_c("B", batch, "_", bait_id)),
     msdata4norm.df,
-    quant_col = "intensity", obj_col = "protgroup_id", mschan_col = "msrun",
+    quant_col = "intensity", obj_col = "pepmodstate_id", mschan_col = "msrun",
     mcmc.iter = 2000L,
     #mcmc.chains = 6,
     verbose=TRUE,
