@@ -460,6 +460,10 @@ protgroup_intensities4pca.df <- msdata_full$protgroup_intensities_all %>%
   dplyr::semi_join(dplyr::filter(msdata$protgroups, !is_reverse & !is_contaminant)) %>%
   dplyr::arrange(msrun, protgroup_id)
 
+protgroup_intensities.mtx <- matrix(log2(protgroup_intensities4pca.df$intensity_norm),
+                                    nrow = n_distinct(protgroup_intensities4pca.df$protgroup_id),
+                                    dimnames = list(protgroup = unique(protgroup_intensities4pca.df$protgroup_id),
+                                                    msrun = unique(protgroup_intensities4pca.df$msrun)))
 protgroup_intensities_imp.mtx <- matrix(log2(protgroup_intensities4pca.df$intensity_imputed_norm),
                                     nrow = n_distinct(protgroup_intensities4pca.df$protgroup_id),
                                     dimnames = list(protgroup = unique(protgroup_intensities4pca.df$protgroup_id),
@@ -482,6 +486,13 @@ ggplot(msrun_intensities_pca.df,
     geom_text_repel(aes(label=str_remove(str_remove(msrun, "APMS_SARS_"), "APMS_")), vjust=-1.1) +
     theme_bw_ast(base_family = "", base_size = 10) #+
 dev.off()
+
+require(pheatmap)
+msruns_ordered <- filter(msruns.df, msrun %in% colnames(protgroup_intensities_imp.mtx)) %>%
+  dplyr::arrange(bait_type, bait_id, batch, bait_full_id, replicate) %>% pull(msrun)
+protgroup_hclu = hclust(dist(protgroup_intensities_imp.mtx))
+pheatmap(log2(protgroup_intensities.mtx[, msruns_ordered]), cluster_cols=FALSE, cluster_rows=protgroup_hclu,
+         file = file.path(analysis_path, "plots", paste0(project_id, "_", mq_folder, "_", data_version, "_heatmap_intensity.pdf")), width=30, height=100)
 
 # no batch effects so far
 msrunXbatchEffect_orig.mtx <- model.matrix(
