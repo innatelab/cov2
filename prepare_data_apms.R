@@ -45,7 +45,7 @@ source(file.path(project_scripts_path, 'prepare_data_common.R'))
 msruns.df <- read_tsv(file.path(mqdata_path, "combined", "experimentalDesign.txt"),
                       col_names=TRUE, col_types = list(Fraction="i")) %>%
   rename(raw_file=Name, msfraction=Fraction, msrun=Experiment, is_ptm=PTM) %>%
-  extract(msrun, c("bait_full_id", "replicate"), c("^APMS_(.+)_(\\d+)$"), remove = FALSE) %>%
+  extract(msrun, c("batch", "bait_full_id", "replicate"), c("^APMS_B(\\d+)_(.+)_(\\d+)$"), remove = FALSE) %>%
   left_join(select(baits_info.df, bait_full_id, bait_id, bait_type, orgcode))
 
 fasta.dfs <- list(
@@ -301,7 +301,7 @@ pheatmap(inv_conditionXeffect.mtx, cluster_rows=FALSE, cluster_cols=FALSE)
 dev.off()
 
 msrunXreplEffect.mtx <- replicate_effects_matrix(
-  msdata$msruns,
+  mutate(msdata$msruns, batch_condition=str_c("B", batch, "_", condition)),
   replicate_col = "replicate", condition_col = "condition")
 cairo_pdf(filename = file.path(data_path, paste0(project_id, "_exp_design_msruns_APMS_B1_", fit_version, ".pdf")),
           width = 14, height = 12)
@@ -397,15 +397,18 @@ options(mc.cores=8)
 # 2) same viral protein of different strains
 # 3) all baits together
 msruns_hnorm <- multilevel_normalize_experiments(instr_calib,
-    filter(msdata$msruns, is_used),
+    filter(msdata$msruns, is_used) %>%
+    mutate(batch_bait_full_id = str_c("B", batch, "_", bait_full_id),
+           batch_bait_id = str_c("B", batch, "_", bait_id)),
     msdata4norm.df,
     quant_col = "intensity", obj_col = "protgroup_id", mschan_col = "msrun",
     mcmc.iter = 2000L,
     #mcmc.chains = 6,
     verbose=TRUE,
     norm_levels = list(msrun = list(cond_col = "msrun", max_objs=500L, missing_exp.ratio=0.1),
-                       bait_full_id = list(cond_col="bait_full_id", max_objs=500L, missing_exp.ratio=0.1),
-                       bait_id = list(cond_col="bait_id", max_objs=200L, missing_exp.ratio=0.1)
+                       bait_full_id = list(cond_col="batch_bait_full_id", max_objs=500L, missing_exp.ratio=0.1),
+                       bait_id = list(cond_col="batch_bait_id", max_objs=200L, missing_exp.ratio=0.1),
+                       batch = list(cond_col="batch", max_objs=100L, missing_exp.ratio=0.1)
                        ))
 
 # ignore all higher levels of normalization
@@ -480,13 +483,21 @@ ggplot(msrun_intensities_pca.df,
 dev.off()
 
 # no batch effects so far
-msrunXbatchEffect.mtx <- zero_matrix(msrun = rownames(msrunXreplEffect.mtx),
-                                     batch_effect = c())
+msrunXbatchEffect_orig.mtx <- model.matrix(
+  ~ 1 + batch,
+  mutate(msdata$msruns, batch = factor(batch)))
+msrunXbatchEffect.mtx <- msrunXbatchEffect_orig.mtx[, colnames(msrunXbatchEffect_orig.mtx) != "(Intercept)", drop=FALSE]
+dimnames(msrunXbatchEffect.mtx) <- list(msrun = msdata$msruns$msrun,
+                                        batch_effect = colnames(msrunXbatchEffect_orig.mtx)[colnames(msrunXbatchEffect_orig.mtx) != "(Intercept)"])
+pheatmap(msrunXbatchEffect.mtx, cluster_rows=FALSE, cluster_cols=FALSE)
+
+batch_effects.df <- tibble(batch_effect=colnames(msrunXbatchEffect.mtx),
+                           is_positive=FALSE,
+                           prior_mean = 0.0)
+
 msrunXsubbatchEffect.mtx <- zero_matrix(msrun = rownames(msrunXreplEffect.mtx),
                                      subbatch_effect = c())
 
-batch_effects.df <- tibble(batch_effect=character(0),
-                           is_positive=logical(0))
 subbatch_effects.df <- tibble(subbatch_effect=character(0),
                            is_positive=logical(0))
 
