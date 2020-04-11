@@ -29,6 +29,23 @@ source(file.path(project_scripts_path, 'setup_modelobj.R'))
 bait_checks.df <- get(str_c("bait_checks_", modelobj, ".df"))
 bait_checks.df$object_id <- bait_checks.df[[modelobj_idcol]]
 
+
+crispr_plasmids.df <- read_tsv(file.path(data_path, "CRISPR_plasmids_20200410.txt")) %>%
+    mutate(organism = if_else(is.na(organism), "human", organism),
+           library_plasmid_number = if_else(is.na(library_plasmid_number),
+                                            str_c("undef#", cumsum(is.na(library_plasmid_number))), 
+                                            library_plasmid_number))
+
+crispr_plasmids_obj.df <- inner_join(filter(crispr_plasmids.df, organism == "human" & !str_detect(Gene_gRNA, "^neg_c")),
+                             dplyr::select(msdata_full$proteins, gene_name, protein_ac)) %>%
+    dplyr::inner_join(modelobj2protein.df) %>%
+    dplyr::select(object_id, library_plasmid_number) %>%
+    dplyr::distinct() %>%
+    dplyr::arrange(object_id, library_plasmid_number) %>%
+    dplyr::group_by(object_id) %>%
+    dplyr::summarise(crispr_plasmid_ids = str_c(library_plasmid_number, collapse=" ")) %>%
+    dplyr::ungroup()
+
 krogan_apms.df <- read_tsv(file.path(data_path, "published_ppi", "interactorsAll-Krogan-mapped.txt")) %>%
     rename(protein_ac = Preys, bait_full_id = Bait, is_hit = significant)
 
@@ -137,7 +154,8 @@ objects_4graphml.df <- dplyr::bind_rows(semi_join(modelobjs_df,
                                             replace_na(is_manual_contaminant, FALSE) ~ "manual_contaminant",
                                             is_reverse ~ "reverse",
                                             TRUE ~ NA_character_),
-                  exp_role = if_else(is_bait, 'bait', 'prey'))
+                  exp_role = if_else(is_bait, 'bait', 'prey')) %>%
+    left_join(crispr_plasmids_obj.df)
 
 # integrate known PPI
 ppi.env <- new.env(parent=baseenv())
@@ -259,7 +277,8 @@ iactions.graphml <- GraphML.generate(objects_4graphml.df,
                                                     `Protein Description` = 'protein_description',
                                                     `Protein Class` = "protein_class",
                                                     `Seq Length` = "seqlen",
-                                                    `Detected` = "is_detected"
+                                                    `Detected` = "is_detected",
+                                                    `CRISPR Plasmid IDs` = "crispr_plasmid_ids"
                                      ),
                                      edge.attrs = c(`P-value (vs Background)` = 'prob_nonpos_min.vs_background',
                                                     `Enrichment (vs Background)` = 'median_log2.vs_background',
