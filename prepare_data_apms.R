@@ -333,7 +333,7 @@ dev.off()
 
 conditionXmetacondition.df <- as_tibble(as.table(conditionXmetacondition.mtx)) %>%
   dplyr::filter(n != 0) %>% dplyr::select(-n) %>%
-  dplyr::mutate(is_preserved_condition = str_detect(condition, "^Ctrl_"))
+  dplyr::mutate(is_preserved_condition = condition %in% c("Ctrl_NT", "Ctrl_Gaussia_luci"))
 
 contrasts.df <- bind_rows(
   transmute(filter(conditions.df, bait_type == "sample"),
