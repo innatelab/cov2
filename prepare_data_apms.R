@@ -31,12 +31,14 @@ mqdata_path <- file.path(data_path, mq_folder)
 data_info <- list(project_id = project_id,
                   data_ver = data_version, fit_ver = fit_version,
                   mq_folder = mq_folder,
-                  instr_calib_filename = "instr_protgroup_LFQ_calib_scaturro_qep5calib_20161110_borg.json",
+                  instr_calib_protgroup_filename = "instr_protgroup_LFQ_calib_scaturro_qep5calib_20161110_borg.json",
+                  instr_calib_pepmodstate_filename = "instr_pepmod_intensity_raw_calib_laudenbach_pcp_20170128_borg.json",
                   quant_type = "LFQ", quant_col_prefix = "LFQ_Intensity",
                   pep_quant_type = "intensity")
 
 message('Loading MS instrument calibration data from ', data_info$instr_calib_filename, '...')
-instr_calib <- fromJSON(file = file.path(data_path, data_info$instr_calib_filename))$instr_calib
+instr_calib_protgroup <- fromJSON(file = file.path(data_path, data_info$instr_calib_protgroup_filename))$instr_calib
+instr_calib_pepmodstate <- fromJSON(file = file.path(data_path, data_info$instr_calib_pepmodstate_filename))$instr_calib
 
 source(file.path(project_scripts_path, 'prepare_data_common.R'))
 
@@ -523,7 +525,8 @@ save(data_info, msdata,
      conditionXeffect.mtx, inv_conditionXeffect.mtx, conditionXeffect.df,
      conditionXmetacondition.mtx, conditionXmetacondition.df,
      contrastXmetacondition.mtx, contrastXmetacondition.df, contrastXcondition.df,
-     instr_calib, global_protgroup_labu_shift, global_pepmodstate_labu_shift,
+     instr_calib_protgroup, instr_calib_pepmodstate,
+     global_protgroup_labu_shift, global_pepmodstate_labu_shift,
      msruns_hnorm, total_msrun_shifts.df,
      msrunXreplEffect.mtx,
      batch_effects.df, msrunXbatchEffect.mtx,
