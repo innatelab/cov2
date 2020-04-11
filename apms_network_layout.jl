@@ -133,6 +133,8 @@ apms_graph = GraphML.import_graph(objects_df, iactions_df,
                                            :krogan_MIST => "Krogan MIST score",
                                            :krogan_avg_spec => "Krogan Average SC",
                                            :krogan_fold_change => "Krogan Fold Change",
+                                           :virhostnet_confidence => "VirHostNet Confidence",
+                                           :virhostnet_references => "VirHostNet PubMeds",
                                            #`Known types` = "known_types",
                                            :iaction_ids => "Known Interaction IDs"])
  #edge.attrs = c( `P-value (vs Background)` = 'p_value_min.vs_background',

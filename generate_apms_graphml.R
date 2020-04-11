@@ -289,7 +289,9 @@ iactions.graphml <- GraphML.generate(objects_4graphml.df,
                                                     `Krogan hit` = "krogan_is_hit",
                                                     `Krogan MIST score` = "krogan_MIST",
                                                     `Krogan Average SC` = "krogan_avg_spec",
-                                                    `Krogan Fold Change` = "krogan_fold_change")
+                                                    `Krogan Fold Change` = "krogan_fold_change",
+                                                    `VirHostNet Confidence` = "virhostnet_confidence",
+                                                    `VirHostNet PubMeds` = "virhostnet_references")
                                      #edge.attrs = c( `P-value (vs Background)` = 'p_value_min.vs_background',
                                      #                 `P-value (WT vs Mock)` = 'p_value.SC35MWT',
                                      #                 `P-value (delNS1 vs Mock)` = 'p_value.SC35MdelNS1',
