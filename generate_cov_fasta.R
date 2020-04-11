@@ -43,15 +43,28 @@ names(aaseqs) <- baits_info.df$fasta_header
 bait_aaseqset <- AAStringSet(aaseqs[!is.na(aaseqs)])
 Biostrings::writeXStringSet(bait_aaseqset, file.path(analysis_path, "data", "cov_baits_20200331.fasta"))
 
-exp_design_template.df <- read_tsv(file.path(analysis_path, "data", "experimentalDesignTemplate.txt"))
+exp_design_template.df <- read_tsv(file.path(analysis_path, "data", "mq_apms_20200409", "experimentalDesignTemplate.txt"))
 
-exp_design.df <- extract(exp_design_template.df, 
-                         Name, c("prefix", "bait_code", "replicate"), "(.+)_(.+)_(.+)$", remove=FALSE) %>%
-    left_join(select(baits_info.df, bait_code, bait_id)) %>%
-    mutate(Experiment = str_c("APMS_", bait_id, "_", replicate)) %>%
+exp_design.df <- extract(exp_design_template.df,
+                         Name, c("date", "instrument", "user", "sample_type", "project", "data_type", "bait_code", "replicate", "tech_replicate"),
+                         "^([^_]+)_([^_]+)_([^_]+)_([^_]+)_([^_]+)_([^_]+)_([^_]+)_([^_]+)(?:_([^_]+))?$", remove=FALSE) %>%
+    left_join(select(baits_info.df, bait_type, bait_code, bait_id, ap_batch)) %>%
+    mutate(ap_batch = case_when(bait_code %in% c("31", "32") ~ "2",
+                                bait_type == "control" ~ NA_character_,
+                                TRUE ~ ap_batch),
+           replicate = parse_integer(replicate),
+           batch_ix = case_when(bait_type == "control" ~ as_integer(ceiling(replicate/4)),
+                                TRUE ~ parse_integer(ap_batch)),
+           replicate_ix = case_when(bait_type == "control" ~ replicate - (batch_ix - 1L)*4L,
+                                    TRUE ~ replicate)) %>%
+    group_by(bait_id, batch_ix, replicate_ix) %>%
+    mutate(tech_replicate_ix = if_else(n() > 1, row_number(), NA_integer_)) %>%
+    ungroup() %>%
+    mutate(Experiment = str_c("APMS_B", batch_ix, '_', bait_id, "_", replicate_ix,
+                              if_else(is.na(tech_replicate_ix), "", str_c("#", tech_replicate_ix)))) %>%
     select(Name, Fraction, Experiment, PTM)
 
-write_tsv(exp_design.df, path = file.path(analysis_path, "data", "experimentalDesign.txt"), na = "")
+write_tsv(exp_design.df, path = file.path(analysis_path, "data", "mq_apms_20200409", "experimentalDesign.txt"), na = "")
 
 bait_mapping.df <- read_tsv(file.path(analysis_path, "data", "BaitsIDMapping.txt"))
 
