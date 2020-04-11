@@ -1,9 +1,8 @@
 proj_info = (id = "cov2",
-             data_ver = "20200331",
-             fit_ver = "20200329",
-             oesc_ver = "20200331",
+             data_ver = "20200410",
+             fit_ver = "20200410",
              modelobj = "protgroup",
-             mq_folder = "mq_apms_20200329")
+             mq_folder = "mq_apms_20200409")
 using Pkg
 Pkg.activate(@__DIR__)
 
@@ -23,7 +22,7 @@ Revise.includet(joinpath(misc_scripts_path, "protgroup_assembly.jl"));
 Revise.includet(joinpath(misc_scripts_path, "protgroup_crossmatch.jl"));
 
 pepmods_rdata = load(joinpath(data_path, proj_info.mq_folder,
-                               "$(proj_info.id)_$(proj_info.mq_folder)_$(proj_info.data_ver)_pepmods.RData"))
+                              "$(proj_info.id)_$(proj_info.mq_folder)_$(proj_info.data_ver)_pepmods.RData"))
 pepmods_df = pepmods_rdata["pepmods.df"]
 proteins_df = pepmods_rdata["proteins.df"]
 pepmod2protgroups = Dict(r.pepmod_id => (Set(parse.(Int, split(r.protgroup_ids, ';'))), r.is_used)
