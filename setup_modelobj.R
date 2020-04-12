@@ -19,13 +19,13 @@ modelobj_suffix <- case_when(modelobj == "protgroup" ~ "_pg",
                              modelobj == "protregroup" ~ "_prg",
                              TRUE ~ NA_character_)
 
-global_labu_shift <- case_when(quantobj == "pepmodstate" ~ global_pepmodstate_labu_shift,
-                               quantobj == "protgroup" ~ global_protgroup_labu_shift,
-                               TRUE ~ NA_real_)
-instr_calib <- if (quantobj == "pepmodstate") {
-    instr_calib_pepmodstate
+if (quantobj == "pepmodstate") {
+    global_labu_shift <- global_protgroup_labu_shift
+    instr_calib <- instr_calib_pepmodstate
 } else if (quantobj == "protgroup") {
-    instr_calib_protgroup
+    global_labu_shift <- global_protgroup_labu_shift
+    instr_calib <- instr_calib_protgroup
 } else {
+    stop("Unknown quantobj: ", quantobj)
     NULL
 }
