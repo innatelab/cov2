@@ -5,9 +5,9 @@
 
 project_id <- 'cov2'
 message('Project ID=', project_id)
-data_version <- "20200331"
-fit_version <- "20200402"
-mq_folder <- 'mq_apms_20200329'
+data_version <- "20200410"
+fit_version <- "20200410"
+mq_folder <- 'mq_apms_20200409'
 message("Assembling fit results for project ", project_id,
         " (dataset v", data_version, ", fit v", fit_version, ")")
 
@@ -34,11 +34,11 @@ message('Loading MSGLM model fit results...')
 strip_samples <- TRUE
 
 fit_path <- file.path(scratch_path, str_c(project_id, '_', mq_folder, '_msglm', modelobj_suffix))
-fit_files <- list.files(fit_path, str_c(project_id, '_msglm', #modelobj_suffix, 
+fit_files <- list.files(fit_path, str_c(project_id, '_', mq_folder, '_msglm', modelobj_suffix, 
                                         '_', fit_version, '_\\d+\\.RData'))
 message('Found ', length(fit_files), ' model file(s)')
 fit_files.df <- tibble(filename = as.character(fit_files)) %>%
-    mutate(chunk_id = as.integer(str_split_fixed(str_remove(filename, ".RData$"), fixed('_'), 5)[, 5])) %>%
+    mutate(chunk_id = as.integer(str_split_fixed(str_remove(filename, ".RData$"), fixed('_'), 8)[, 8])) %>%
   dplyr::arrange(chunk_id) %>%
   dplyr::mutate(object_id = modelobjs_df[[modelobj_idcol]][chunk_id])
 id_range_breaks <- which(c(fit_files.df$chunk_id[-1] - 1L, nrow(modelobjs_df)) != 
