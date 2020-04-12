@@ -82,7 +82,7 @@ msdata_full <- append_protgroups_info(msdata_full, msdata.wide,
                                       proteins_info = dplyr::bind_rows(
                                         dplyr::mutate(fasta.dfs$CoV, is_viral = TRUE),
                                         dplyr::mutate(fasta.dfs$human, is_viral = FALSE)),
-                                      import_columns = "is_viral")
+                                      import_columns = c("is_viral", "organism"))
 
 msdata_full$proteins <- mutate(msdata_full$proteins,
                                protein_ac_noiso = str_remove(protein_ac, "-\\d+$"))
@@ -161,6 +161,7 @@ msdata_full$protregroups <- dplyr::inner_join(msdata_full$protregroups,
                    protein_label = strlist_label(protein_name),
                    protein_descriptions = str_c(protein_description, collapse=';'),
                    protein_description = strlist_label(protein_description),
+                   organism = str_c(unique(organism), collapse=';'),
                    is_viral = any(coalesce(is_viral, FALSE))) %>%
   dplyr::ungroup()) %>%
   dplyr::mutate(protac_label = sapply(str_split(majority_protein_acs, fixed(";")), strlist_label),
@@ -508,28 +509,33 @@ msrunXsubbatchEffect.mtx <- zero_matrix(msrun = rownames(msrunXreplEffect.mtx),
 subbatch_effects.df <- tibble(subbatch_effect=character(0),
                            is_positive=logical(0))
 
-bait_checks_protgroup.df <- dplyr::left_join(dplyr::select(baits_info.df, bait_full_id, bait_id, orgcode, protein_ac = used_uniprot_ac),
-                                             dplyr::select(msdata_full$proteins, protein_ac, protgroup_id)) %>%
+bait_checks_protgroup.df <- dplyr::left_join(dplyr::select(baits_info.df, bait_full_id, bait_id, bait_orgcode=orgcode, bait_organism=organism,
+                                                           protein_ac = used_uniprot_ac),
+                                             dplyr::select(msdata_full$proteins, protein_ac, protgroup_id, prot_organism=organism)) %>%
   dplyr::left_join(dplyr::select(dplyr::filter(msdata$protgroup_idents, ident_type=="By MS/MS"), protgroup_id, msrun)) %>%
   dplyr::left_join(dplyr::select(msdata$msruns, msrun, observing_bait_full_id = bait_full_id)) %>%
   dplyr::arrange(bait_full_id, protgroup_id, msrun) %>%
   dplyr::group_by(bait_full_id, protgroup_id) %>%
   dplyr::mutate(idented_in_msruns = str_c(unique(msrun), collapse=";"),
-                idented_in_AP_of = str_c(unique(observing_bait_full_id), collapse=";")) %>%
+                idented_in_AP_of = str_c(unique(observing_bait_full_id), collapse=";"),
+                prot_organisms = str_c(unique(prot_organism), collapse=';')) %>%
   dplyr::filter(row_number()==1L) %>%
   dplyr::select(-msrun, -observing_bait_full_id) %>%
   dplyr::ungroup() %>%
   dplyr::mutate(idented_in_msruns = if_else(idented_in_msruns == "", NA_character_, idented_in_msruns),
                 idented_in_AP_of = if_else(idented_in_AP_of == "", NA_character_, idented_in_AP_of))
 
-bait_checks_protregroup.df <- dplyr::left_join(dplyr::select(baits_info.df, bait_full_id, bait_id, orgcode, protein_ac = used_uniprot_ac),
+bait_checks_protregroup.df <- dplyr::left_join(dplyr::select(baits_info.df, bait_full_id, bait_id,
+                                                             bait_orgcode=orgcode, bait_organism=organism, protein_ac=used_uniprot_ac),
                                                dplyr::select(filter(msdata_full$protein2protregroup, is_majority), protein_ac, protregroup_id)) %>%
+  dplyr::left_join(dplyr::select(msdata_full$proteins, protein_ac, prot_organism=organism)) %>%
   dplyr::left_join(dplyr::select(dplyr::filter(msdata$protregroup_idents, ident_type=="By MS/MS"), protregroup_id, msrun)) %>%
   dplyr::left_join(dplyr::select(msdata$msruns, msrun, observing_bait_full_id = bait_full_id)) %>%
   dplyr::arrange(bait_full_id, protregroup_id, msrun) %>%
   dplyr::group_by(bait_full_id, protregroup_id) %>%
   dplyr::mutate(idented_in_msruns = str_c(unique(msrun), collapse=";"),
-                idented_in_AP_of = str_c(unique(observing_bait_full_id), collapse=";")) %>%
+                idented_in_AP_of = str_c(unique(observing_bait_full_id), collapse=";"),
+                prot_organisms = str_c(unique(prot_organism), collapse=';')) %>%
   dplyr::filter(row_number()==1L) %>%
   dplyr::select(-msrun, -observing_bait_full_id) %>%
   dplyr::ungroup() %>%

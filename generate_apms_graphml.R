@@ -76,13 +76,13 @@ iactions_4graphml.df <- filter(object_contrasts.df, str_detect(contrast, "_vs_ot
                                !(object_id %in% bait_checks.df$object_id))
 
 iactions_4table.df <- dplyr::inner_join(iactions_4graphml.df,
-                                        dplyr::select(baits_info.df, bait_full_id, bait_id, organism)) %>%
+                                        dplyr::select(bait_checks.df, bait_full_id, bait_id, bait_organism)) %>%
     left_join(krogan_apms_obj.df) %>%
     left_join(virhostnet_ppi_obj.df) %>%
     left_join(crispr_plasmids_obj.df) %>%
     left_join(dplyr::select(modelobjs_df, object_id, protein_description, any_of(c("npepmods_unique", "npeptides_unique")))) %>%
-    dplyr::arrange(bait_id, organism, bait_full_id, object_id, p_value) %>%
-    dplyr::select(organism, bait_id, bait_full_id, contrast,
+    dplyr::arrange(bait_id, bait_organism, bait_full_id, object_id, p_value) %>%
+    dplyr::select(bait_organism, bait_id, bait_full_id, contrast,
                   object_label, protein_description,
                   median_log2, p_value, median_log2_threshold, p_value_threshold,
                   majority_protein_acs, gene_names, protein_names, is_viral, is_contaminant, is_reverse,
@@ -116,27 +116,28 @@ iactions_4graphml.df <- iactions_4graphml.df %>%
 special_bait_ids <- c()
 
 # fix bait mapping to object_id
-bait2object.df <- arrange(bait_checks.df, bait_id, bait_full_id, object_id) %>%
+bait2object.df <- arrange(bait_checks.df, bait_id, bait_full_id, object_id, bait_organism) %>%
     group_by(object_id) %>%
     mutate(new_object_id = if_else(row_number() == 1, object_id, NA_integer_)) %>%
     ungroup() %>%
     mutate(object_id = new_object_id, new_object_id = NULL)
 
 # assign negative object_ids to undetected/special bait ORFs
-missed_bait_objects.df <- dplyr::filter(bait2object.df, (is.na(object_id) | bait_full_id %in% special_bait_ids) & !str_detect(bait_full_id, "Ctrl_") &
+missed_bait_objects.df <- dplyr::filter(bait2object.df, (is.na(object_id) | bait_full_id %in% special_bait_ids | bait_organism != prot_organism) &
+                                        !str_detect(bait_full_id, "Ctrl_") &
                                         bait_full_id %in% msdata$msruns$bait_full_id) %>%
     dplyr::arrange(bait_id, bait_full_id) %>%
     dplyr::mutate(object_id = -row_number()) %>%
     dplyr::transmute(bait_full_id, bait_id,
         object_id, protein_acs=protein_ac, majority_protein_acs=protein_ac,
         gene_names=bait_id, gene_label=bait_id, 
-        protein_names=str_c(bait_id, '_', orgcode), protac_label=protein_ac,
+        protein_names=str_c(bait_id, '_', bait_orgcode), protac_label=protein_ac,
         fasta_headers = NA_character_, n_proteins=1L,
         score = NA_real_, q_value = NA_real_,
         seqlen=NA_integer_, seqlens = NA_character_, mol_weight_kDA = NA_real_,
         seqcov = 0, unique_razor_seqcov = 0,
         is_contaminant = FALSE, is_reverse = FALSE, is_viral = TRUE, is_full_quant = FALSE, is_top_quant = FALSE,
-        is_comp2 = FALSE, object_label = bait_full_id)
+        is_comp2 = FALSE, object_label = bait_full_id, organism=bait_organism)
 
 bait_object_ids.df <- dplyr::bind_rows(dplyr::inner_join(
         dplyr::select(dplyr::filter(bait2object.df, !(bait_full_id %in% special_bait_ids) &
@@ -297,6 +298,7 @@ iactions.graphml <- GraphML.generate(objects_4graphml.df,
                                                     `Protein Class` = "protein_class",
                                                     `Seq Length` = "seqlen",
                                                     `Detected` = "is_detected",
+                                                    `Organism` = "organism",
                                                     `CRISPR Plasmid IDs` = "crispr_plasmid_ids"
                                      ),
                                      edge.attrs = c(`P-value (vs Background)` = 'prob_nonpos_min.vs_background',
