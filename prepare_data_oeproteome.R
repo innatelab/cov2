@@ -5,9 +5,9 @@
 
 project_id <- 'cov2'
 message('Project ID=', project_id)
-data_version <- "20200331"
-fit_version <- "20200331"
-ms_folder <- 'spectronaut_qc_20200331'
+data_version <- "20200411"
+fit_version <- "20200411"
+ms_folder <- 'spectronaut_oeproteome_20200411'
 message('Dataset version is ', data_version)
 
 source("~/R/config.R")
