@@ -543,7 +543,7 @@ bait_checks_protregroup.df <- dplyr::left_join(dplyr::select(baits_info.df, bait
                 idented_in_AP_of = if_else(idented_in_AP_of == "", NA_character_, idented_in_AP_of))
 
 rmsglmdata_filepath <- file.path(scratch_path, str_c(project_id, '_msglm_data_', mq_folder, '_', data_version, '.RData'))
-message('Saving MS data for MSGLM to ', rdata_filepath, '...')
+message('Saving MS data for MSGLM to ', rmsglmdata_filepath, '...')
 save(data_info, msdata,
      conditions.df, effects.df,
      conditionXeffect.mtx, inv_conditionXeffect.mtx, conditionXeffect.df,
@@ -559,7 +559,7 @@ save(data_info, msdata,
      file = rmsglmdata_filepath)
 
 rfulldata_filepath <- file.path(scratch_path, str_c(project_id, '_msdata_full_', mq_folder, '_', data_version, '.RData'))
-message('Saving full MS data to ', rdata_filepath, '...')
+message('Saving full MS data to ', rfulldata_filepath, '...')
 save(data_info, msdata_full,
      #protgroup_stats.df,
      file = rfulldata_filepath)
