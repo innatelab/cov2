@@ -1,7 +1,10 @@
+if (!exists("modelobj")) {
+message("Automatically defining modelobj and quantobj")
 #modelobj <- "protgroup"
 #quantobj <- "protgroup"
 modelobj <- "protregroup"
 quantobj <- "pepmodstate"
+}
 
 modelobjs_df <- msdata[[str_c(modelobj, "s")]]
 modelobj_idcol <- str_c(modelobj, "_id")
