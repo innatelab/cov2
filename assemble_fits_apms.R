@@ -101,42 +101,45 @@ modelobjs_df <- dplyr::mutate(modelobjs_df,
                               is_msvalid_object = TRUE)
 }
 
-safe_imin <- function(x, def) {
-  if_else(any(!is.na(x)), as_integer(min(x, na.rm=TRUE)), def)
-}
-safe_imax <- function(x, def) {
-  if_else(any(!is.na(x)), as_integer(max(x, na.rm=TRUE)), def)
-}
-
 pre_object_effects.df <- dplyr::inner_join(iactions.df, conditionXeffect.df) %>%
   dplyr::group_by(object_id, effect) %>%
-  dplyr::summarise(nmsruns_quanted_min = safe_imin(nmsruns_quanted, 0L),
-                   nmsruns_quanted_max = safe_imax(nmsruns_quanted, 0L),
-                   nmsruns_idented_min = safe_imin(nmsruns_idented, 0L),
-                   nmsruns_idented_max = safe_imax(nmsruns_idented, 0L)) %>%
-  dplyr::ungroup()
+  dplyr::summarise(has_quanted = any(!is.na(nmsruns_quanted)),
+                   nmsruns_quanted_min = min(nmsruns_quanted, na.rm=TRUE),
+                   nmsruns_quanted_max = max(nmsruns_quanted, na.rm=TRUE),
+                   has_idented = any(!is.na(nmsruns_idented)),
+                   nmsruns_idented_min = min(nmsruns_idented, na.rm=TRUE),
+                   nmsruns_idented_max = max(nmsruns_idented, na.rm=TRUE)) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(nmsruns_quanted_min = if_else(has_quanted, nmsruns_quanted_min, 0L),
+                nmsruns_quanted_max = if_else(has_quanted, nmsruns_quanted_max, 0L),
+                nmsruns_idented_min = if_else(has_idented, nmsruns_idented_min, 0L),
+                nmsruns_idented_max = if_else(has_idented, nmsruns_idented_max, 0L),
+                has_quanted = NULL, has_idented = NULL)
 
 pre_object_contrasts.df <- dplyr::inner_join(iactions.df, conditionXmetacondition.df) %>%
   dplyr::inner_join(contrastXmetacondition.df) %>%
   dplyr::mutate(is_lhs = weight > 0) %>%
+  dplyr::group_by(object_id, contrast, is_lhs) %>%
+  dplyr::summarise(has_quanted = any(!is.na(nmsruns_quanted)),
+                   nmsruns_quanted_min = min(nmsruns_quanted, na.rm=TRUE),
+                   nmsruns_quanted_max = max(nmsruns_quanted, na.rm=TRUE),
+                   has_idented = any(!is.na(nmsruns_idented)),
+                   nmsruns_idented_min = min(nmsruns_idented, na.rm=TRUE),
+                   nmsruns_idented_max = max(nmsruns_idented, na.rm=TRUE)) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(nmsruns_quanted_min = if_else(has_quanted, nmsruns_quanted_min, 0L),
+                nmsruns_quanted_max = if_else(has_quanted, nmsruns_quanted_max, 0L),
+                nmsruns_idented_min = if_else(has_idented, nmsruns_idented_min, 0L),
+                nmsruns_idented_max = if_else(has_idented, nmsruns_idented_max, 0L)) %>%
   dplyr::group_by(object_id, contrast) %>%
-  dplyr::summarise(nmsruns_quanted_lhs_min = safe_imin(nmsruns_quanted[is_lhs], 0L),
-                   nmsruns_quanted_lhs_max = safe_imax(nmsruns_quanted[is_lhs], 0L),
-                   nmsruns_idented_lhs_min = safe_imin(nmsruns_idented[is_lhs], 0L),
-                   nmsruns_idented_lhs_max = safe_imax(nmsruns_idented[is_lhs], 0L),
-                   #nmsruns_spec_quanted_lhs_min = safe_imin(nmsruns_spec_quanted[is_lhs], 0L),
-                   #nmsruns_spec_quanted_lhs_max = safe_imax(nmsruns_spec_quanted[is_lhs], 0L),
-                   #nmsruns_spec_idented_lhs_min = safe_imin(nmsruns_spec_idented[is_lhs], 0L),
-                   #nmsruns_spec_idented_lhs_max = safe_imax(nmsruns_spec_idented[is_lhs], 0L),
-                   nmsruns_quanted_rhs_min = safe_imin(nmsruns_quanted[!is_lhs], 0L),
-                   nmsruns_quanted_rhs_max = safe_imax(nmsruns_quanted[!is_lhs], 0L),
-                   nmsruns_idented_rhs_min = safe_imin(nmsruns_idented[!is_lhs], 0L),
-                   nmsruns_idented_rhs_max = safe_imax(nmsruns_idented[!is_lhs], 0L)#,
-                   #nmsruns_spec_quanted_rhs_min = safe_imin(nmsruns_spec_quanted[!is_lhs], 0L),
-                   #nmsruns_spec_quanted_rhs_max = safe_imax(nmsruns_spec_quanted[!is_lhs], 0L),
-                   #nmsruns_spec_idented_rhs_min = safe_imin(nmsruns_spec_idented[!is_lhs], 0L),
-                   #nmsruns_spec_idented_rhs_max = safe_imax(nmsruns_spec_idented[!is_lhs], 0L)
-                   ) %>%
+  dplyr::summarise(nmsruns_quanted_lhs_min = nmsruns_quanted_min[is_lhs],
+                   nmsruns_quanted_lhs_max = nmsruns_quanted_max[is_lhs],
+                   nmsruns_idented_lhs_min = nmsruns_idented_min[is_lhs],
+                   nmsruns_idented_lhs_max = nmsruns_idented_max[is_lhs],
+                   nmsruns_quanted_rhs_min = nmsruns_quanted_min[!is_lhs],
+                   nmsruns_quanted_rhs_max = nmsruns_quanted_max[!is_lhs],
+                   nmsruns_idented_rhs_min = nmsruns_idented_min[!is_lhs],
+                   nmsruns_idented_rhs_max = nmsruns_idented_max[!is_lhs]) %>%
   dplyr::ungroup()
 
 object_effects.df <- pre_object_effects.df %>% dplyr::inner_join(fit_stats$object_effects) %>%
