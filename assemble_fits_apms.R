@@ -90,7 +90,7 @@ iactions.df <- msdata_full$pepmodstate_intensities %>%
   dplyr::mutate(is_quanted = !is.na(intensity)) %>%
   dplyr::inner_join(msdata$msruns) %>%
   dplyr::left_join(msdata$pepmodstates) %>%
-  dplyr::left_join(msdata$protregroup2pepmod) %>%
+  dplyr::left_join(filter(msdata$protregroup2pepmod, is_specific)) %>%
   dplyr::group_by(condition, protregroup_id) %>%
   dplyr::summarize(nmsruns_quanted = n_distinct(msrun[is_idented]), # count msruns
                    nmsruns_idented = n_distinct(msrun[is_quanted])) %>%
