@@ -263,7 +263,7 @@ dimnames(conditionXeffect.mtx) <- list(condition = conditions.df$condition,
                                        effect = colnames(conditionXeffect.mtx))
 
 pheatmap(conditionXeffect.mtx, cluster_rows=FALSE, cluster_cols=FALSE, 
-         filename = file.path(data_path, paste0(project_id, "_exp_design_", mq_folder, "_", fit_version, ".pdf")),
+         filename = file.path(analysis_path, 'plots', mq_folder, paste0(project_id, "_exp_design_", mq_folder, "_", fit_version, ".pdf")),
          width = 8, height = 6)
 
 effects.df <- tibble(effect=colnames(conditionXeffect.mtx)) %>%
@@ -295,14 +295,14 @@ inv_conditionXeffect.mtx <- frame2matrix(conditionXeffect.df,
                                          rows = rownames(conditionXeffect.mtx),
                                          cols = colnames(conditionXeffect.mtx))
 pheatmap(inv_conditionXeffect.mtx, cluster_rows=FALSE, cluster_cols=FALSE,
-         filename = file.path(data_path, paste0(project_id, "_exp_design_inv_", mq_folder, "_", fit_version, ".pdf")),
+         filename = file.path(analysis_path, 'plots', mq_folder, paste0(project_id, "_exp_design_inv_", mq_folder, "_", fit_version, ".pdf")),
          width = 8, height = 6)
 
 msrunXreplEffect.mtx <- replicate_effects_matrix(
   mutate(msdata$msruns, batch_condition=str_c("B", batch, "_", condition)),
   replicate_col = "replicate", condition_col = "condition")
 pheatmap(msrunXreplEffect.mtx, cluster_rows=FALSE, cluster_cols=FALSE,
-         filename = file.path(data_path, paste0(project_id, "_exp_design_msruns_", mq_folder, "_", fit_version, ".pdf")),
+         filename = file.path(analysis_path, 'plots', mq_folder, paste0(project_id, "_exp_design_msruns_", mq_folder, "_", fit_version, ".pdf")),
          width = 16, height = 20)
 
 msrunXreplEffect.df <- as_tibble(as.table(msrunXreplEffect.mtx)) %>%
@@ -324,7 +324,7 @@ for (cname in allminus_metaconditions) {
 }
 conditionXmetacondition.mtx[filter(conditions.df, bait_type == "control")$bait_full_id, "controls"] <- TRUE
 pheatmap(ifelse(conditionXmetacondition.mtx, 1.0, 0.0), cluster_rows=FALSE, cluster_cols=FALSE,
-         filename = file.path(data_path, paste0(project_id, "_metaconditions_", mq_folder, "_", fit_version, ".pdf")),
+         filename = file.path(analysis_path, 'plots', mq_folder, paste0(project_id, "_metaconditions_", mq_folder, "_", fit_version, ".pdf")),
          width = 8, height = 6)
 
 conditionXmetacondition.df <- as_tibble(as.table(conditionXmetacondition.mtx)) %>%
@@ -356,7 +356,7 @@ for (i in 1:nrow(contrasts.df)) {
                                contrasts.df$metacondition_rhs[[i]])] <- c(1, -1)
 }
 pheatmap(contrastXmetacondition.mtx, cluster_rows=FALSE, cluster_cols=FALSE,
-         filename = file.path(data_path, paste0(project_id, "_exp_design_contrasts_", mq_folder, "_", fit_version, ".pdf")),
+         filename = file.path(analysis_path, 'plots', mq_folder, paste0(project_id, "_exp_design_contrasts_", mq_folder, "_", fit_version, ".pdf")),
          width = 11, height = 12)
 
 contrastXmetacondition.df <- as_tibble(as.table(contrastXmetacondition.mtx)) %>% dplyr::filter(n != 0) %>%
@@ -473,7 +473,7 @@ msrun_intensities_pca.df <- dplyr::mutate(msrun_intensities_pca.df,
     dplyr::inner_join(msdata$msruns)
 
 require(ggrepel)
-cairo_pdf(filename = file.path(data_path, paste0(project_id, "_msruns_pca_", mq_folder, "_", fit_version, ".pdf")),
+cairo_pdf(filename = file.path(analysis_path, 'plots', mq_folder, paste0(project_id, "_msruns_pca_", mq_folder, "_", fit_version, ".pdf")),
           width = 18, height = 18)
 ggplot(msrun_intensities_pca.df,
        aes(x=comp_1, y=comp_2, color=bait_id)) +
@@ -487,7 +487,7 @@ msruns_ordered <- filter(msruns.df, msrun %in% colnames(protgroup_intensities_im
   dplyr::arrange(bait_type, bait_id, batch, bait_full_id, replicate) %>% pull(msrun)
 protgroup_hclu = hclust(dist(protgroup_intensities_imp.mtx))
 pheatmap(log2(protgroup_intensities.mtx[, msruns_ordered]), cluster_cols=FALSE, cluster_rows=protgroup_hclu,
-         file = file.path(analysis_path, "plots", paste0(project_id, "_", mq_folder, "_", data_version, "_heatmap_intensity.pdf")), width=30, height=100)
+         file = file.path(analysis_path, "plots", mq_folder, paste0(project_id, "_", mq_folder, "_", data_version, "_heatmap_intensity.pdf")), width=30, height=100)
 
 msrunXbatchEffect_orig.mtx <- model.matrix(
   ~ 1 + batch,
