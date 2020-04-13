@@ -49,7 +49,6 @@ msruns.df <- read_tsv(file.path(mqdata_path, "combined", "experimentalDesign.txt
   left_join(select(baits_info.df, bait_full_id, bait_id, bait_type, orgcode))
 
 fasta.dfs <- list(
-  #CoV = read_innate_uniprot_fasta(file.path(mqdata_path, "fasta/cov_baits_20200326.fasta")),
   CoV = read_innate_uniprot_fasta(file.path(data_path, "cov_baits_20200331.fasta")),
   human = read_innate_uniprot_fasta(file.path(mqdata_path, "fasta/uniprot-9606_proteome_human_reviewed_canonical_isoforms_191008.fasta"))
 )
@@ -490,7 +489,6 @@ protgroup_hclu = hclust(dist(protgroup_intensities_imp.mtx))
 pheatmap(log2(protgroup_intensities.mtx[, msruns_ordered]), cluster_cols=FALSE, cluster_rows=protgroup_hclu,
          file = file.path(analysis_path, "plots", paste0(project_id, "_", mq_folder, "_", data_version, "_heatmap_intensity.pdf")), width=30, height=100)
 
-# no batch effects so far
 msrunXbatchEffect_orig.mtx <- model.matrix(
   ~ 1 + batch,
   mutate(msdata$msruns, batch = factor(batch)))
@@ -503,6 +501,7 @@ batch_effects.df <- tibble(batch_effect=colnames(msrunXbatchEffect.mtx),
                            is_positive=FALSE,
                            prior_mean = 0.0)
 
+# no subbatch effects so far
 msrunXsubbatchEffect.mtx <- zero_matrix(msrun = rownames(msrunXreplEffect.mtx),
                                      subbatch_effect = c())
 
