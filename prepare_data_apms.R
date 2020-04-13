@@ -258,7 +258,7 @@ conditionXeffect_orig.mtx <- model.matrix(
   ~ 1 + bait_id + bait_id:orgcode,
   mutate(conditions.df, orgcode = if_else(bait_type == "sample", orgcode, factor("CVHSA2", levels=levels(orgcode)))))
 conditionXeffect.mtx <- conditionXeffect_orig.mtx[, colSums(abs(conditionXeffect_orig.mtx)) != 0 &
-                                                    !str_detect(colnames(conditionXeffect_orig.mtx), "bait_idCtrl.+:orgcode")]
+                                                    !str_detect(colnames(conditionXeffect_orig.mtx), "\\(Intercept\\)|bait_idCtrl.+:orgcode")]
 dimnames(conditionXeffect.mtx) <- list(condition = conditions.df$condition,
                                        effect = colnames(conditionXeffect.mtx))
 
