@@ -168,25 +168,31 @@ object_contrasts.df <- dplyr::inner_join(pre_object_contrasts.df, fit_contrasts$
                                    p.adjust(c(prob_nonneg, prob_nonpos), method = "BY")[1:n()])) %>%
   dplyr::ungroup()
 
-weak_bait_ids <- c("SARS_CoV_ORF6",
-                   "SARS_CoV2_ORF6",
-                   "SARS_CoV2_ORF7a",
+weak_bait_ids <- c("SARS_CoV_E", "SARS_CoV2_E",
+                   "HCoV_ORF4",
+                   "SARS_CoV_ORF6", "SARS_CoV2_ORF6",
+                   "SARS_CoV_ORF7a", "SARS_CoV2_ORF7a",
                    "SARS_CoV_ORF8",
-                   "SARS_CoV_ORF9b",
+                   "SARS_CoV_ORF9b", "SARS_CoV2_ORF9b",
                    "SARS_CoV2_N",
-                   "SARS_CoV2_E",
-                   "SARS_CoV2_NSP3_macroD",
+                   "SARS_CoV2_NSP1",
+                   "SARS_CoV_NSP3_macroD", "SARS_CoV2_NSP3_macroD",
                    "SARS_CoV2_NSP4",
-                   "SARS_CoV2_NSP7",
+                   "SARS_CoV_NSP7", "SARS_CoV2_NSP7",
+                   "SARS_CoV2_NSP8",
+                   "SARS_CoV2_NSP9",
+                   "SARS_CoV_NSP10",
+                   "SARS_CoV2_NSP14",
                    "SARS_CoV2_NSP15",
-                   "SARS_CoV2_NSP16")
+                   "SARS_CoV2_NSP16"
+                   )
 
 strong_bait_ids <- c(
-                   "SARS_CoV_ORF7b",
-                   "SARS_CoV2_ORF7b",
-                   "HCoV_ORF3",
                    "SARS_CoV2_ORF3",
-                   "SARS_CoV2_M")
+                   "HCoV_ORF3",
+                   "SARS_CoV_ORF7b", "SARS_CoV2_ORF7b",
+                   "SARS_CoV_ORF8", "SARS_CoV_ORF8b",
+                   "SARS_CoV2_M", "SARS_CoV_M")
 
 object_contrasts_thresholds.df <- select(object_contrasts.df, contrast, contrast_type, std_type) %>%
   distinct() %>%
@@ -195,8 +201,8 @@ object_contrasts_thresholds.df <- select(object_contrasts.df, contrast, contrast
                                        TRUE ~ 0.001),
          median_log2_threshold = case_when(bait_full_id %in% weak_bait_ids ~ 1,
                                            TRUE ~ 2),
-         median_log2_max = case_when(bait_full_id %in% strong_bait_ids ~ 8,
-                                       TRUE ~ 5))
+         median_log2_max = case_when(bait_full_id %in% strong_bait_ids ~ 13,
+                                       TRUE ~ 8))
 
 object_contrasts.df <- object_contrasts.df %>%
   select(-any_of(c("p_value_threshold", "median_log2_threshold", "median_log2_max"))) %>%
