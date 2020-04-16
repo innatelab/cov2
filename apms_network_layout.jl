@@ -1,9 +1,9 @@
 proj_info = (id = "cov2",
-             data_ver = "20200329",
-             fit_ver = "20200402",
+             data_ver = "20200410",
+             fit_ver = "20200410",
              modelobj = "protgroup",
-             mq_folder = "mq_apms_20200329",
-             network_ver = "20200402")
+             mq_folder = "mq_apms_20200409",
+             network_ver = "20200410")
 using Pkg
 Pkg.activate(@__DIR__)
 using Revise
@@ -24,7 +24,7 @@ network_rdata = load(joinpath(networks_path, "$(proj_info.id)_4graph_$(proj_info
 objects_orig_df = network_rdata["objects_4graphml.df"]
 iactions_orig_df = network_rdata["iactions_ex_4graphml.df"]
 
-nodesize_scale = 0.015
+nodesize_scale = 0.006
 node_type_props = Dict("bait" => (mass=2.0, width=6nodesize_scale, height=6nodesize_scale),
                        "prey" => (mass=2.0, width=3nodesize_scale, height=3nodesize_scale))
 objects_df = copy(objects_orig_df)
@@ -37,6 +37,7 @@ ppi_weight_scales = Dict("ppi_low" => 0.05,
                          "ppi_medium" => 0.05,
                          "ppi_strong" => 0.05,
                          "complex" => 0.05,
+                         "homology" => 0.05,
                          "experiment" => 1.0)
 iactions_df = filter(r -> r.src_object_id != r.dest_object_id, iactions_orig_df)
 iactions_df.src_object_id = convert(Vector{Int}, iactions_df.src_object_id)
@@ -101,8 +102,8 @@ FA.layout!(gr, FA.ForceAtlas3Settings(gr,
             gravityRodCorners=((0.0, -4.0), (0.0, 4.0)), gravityRodCenterWeight=0.1),
             nsteps=5000, progressbar=true)
 
-objects_df.layout_x = FA.extract_layout(gr)[1] .* 20
-objects_df.layout_y = FA.extract_layout(gr)[2] .* 20
+objects_df.layout_x = FA.extract_layout(gr)[1] .* 30
+objects_df.layout_y = FA.extract_layout(gr)[2] .* 30
 
 includet(joinpath(misc_scripts_path, "graphml_writer.jl"))
 
@@ -125,11 +126,19 @@ apms_graph = GraphML.import_graph(objects_df, iactions_df,
                                            :seqlen => "Seq Length",
                                            :is_detected => "Detected",
                                            :crispr_plasmid_ids => "CRISPR Plasmid IDs",
+                                           :oeproteome_is_hit => "OE Proteome Hit",
+                                           :oeproteome_bait_full_ids => "OE Proteome Baits",
+                                           :oeproteome_p_value => "OE Proteome Most Signif. P-value",
+                                           :oeproteome_median_log2 => "OE Proteome Most Signif. Median Log2",
                                            :layout_x, :layout_y],
                              edge_attrs = [Symbol("prob_nonpos_min_vs_background") => "P-value (vs Background)",
                                            Symbol("median_log2_vs_background") => "Enrichment (vs Background)",
                                            Symbol("edge_weight") => "Weight",
                                            :type => "type",
+                                           :oeproteome_is_hit => "OE Proteome Hit",
+                                           :oeproteome_p_value => "OE Proteome P-value",
+                                           :oeproteome_median_log2 => "OE Proteome Median Log2",
+                                           :is_in_20200402_network => "Is In 20200409 Network",
                                            :krogan_is_hit => "Krogan hit",
                                            :krogan_MIST => "Krogan MIST score",
                                            :krogan_avg_spec => "Krogan Average SC",
