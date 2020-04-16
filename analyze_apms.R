@@ -24,13 +24,13 @@ object_contrasts_4show.df <- object_contrasts.df %>%
                                          is_signif & !is_hit ~ "significant nonhit",
                                          is_hit ~ "hit",
                                          TRUE ~ "none"))
-    
+
 object_contrasts_4show.df %>%
 group_by(contrast, std_type) %>% do({
     sel_object_contrast.df <- .
     sel_object_contrast_thresholds.df <- semi_join(object_contrasts_thresholds.df, sel_object_contrast.df)
     message("Plotting ", sel_object_contrast_thresholds.df$contrast[[1]], " std_type=", sel_object_contrast.df$std_type[[1]])
-    
+
     p <- ggplot(sel_object_contrast.df,
                 aes(x=median_log2_trunc, y=p_value_compressed, color=is_viral, shape=truncation)) +
         geom_hline(data=sel_object_contrast_thresholds.df,
@@ -72,7 +72,7 @@ group_by(contrast, std_type) %>% do({
 candidate_genes <- c("ATL2", "MAVS", "AIFM1", "SHC1", "NELFB", "ILF3", "C14orf166", "PRAF2", "UNC93B1",
                      "EIF4H", "G3BP1", "PIP4K2C", "HLA-E", "TNFAIP2", "MARC1", "JAK1",
                      "TNFRSF10B", "TNFRSF10A", "TNFRSF21", "IFITM10", "SQSTM1")
-sel_objects.df <- dplyr::semi_join(msdata_full$objects,
+sel_objects.df <- dplyr::semi_join(modelobjs_df,
                                    dplyr::filter(msdata_full$proteins, gene_name %in% candidate_genes) %>%
                                    dplyr::inner_join(msdata_full[[str_c("protein2", modelobj)]]) %>%
                                    dplyr::select(!!modelobj_idcol))
@@ -90,10 +90,10 @@ sel_pepmodstates.df <- dplyr::inner_join(sel_objects.df, msdata_full[[str_c(mode
     dplyr::mutate(pepmodstate_ext = factor(paste0(pepmodstate_id, "(", pepmod_id, ")")))
 
 
-sel_pepmod_intens.df <- dplyr::inner_join(dplyr::select(sel_pepmodstates.df, object_id, protac_label, gene_label, gene_names, pepmod_id, pepmodstate_id, charge, pepmodstate_ext) %>%
+sel_pepmod_intens.df <- dplyr::inner_join(dplyr::select(sel_pepmodstates.df, object_id, protac_label, gene_label, gene_names,
+                                                        pepmod_id, pepmodstate_id, charge, pepmodstate_ext) %>%
                                                  dplyr::distinct(),
                                              msdata_full$pepmodstate_intensities) %>%
-    dplyr::left_join(select(msdata_full$pepmodstate_intensities, msrun, pepmodstate_id, ident_type)) %>%
     dplyr::inner_join(distinct(select(msdata$msruns, msrun, replicate, bait_type, bait_full_id, bait_id, condition)) %>%
                       dplyr::left_join(dplyr::select(total_msrun_shifts.df, msrun, total_msrun_shift)) %>%
                       dplyr::arrange(bait_type, bait_id, bait_full_id, replicate) %>%
@@ -111,6 +111,7 @@ sel_pepmods.df <- dplyr::group_by(sel_pepmod_intens.df, pepmod_id) %>%
 group_by(sel_pepmod_intens.df, object_id) %>% do({
     shown_pepmod_intens.df <- .#sel_pepmod_intens.df
     gene_name <- str_remove(shown_pepmod_intens.df$gene_label[[1]], "\\.\\.\\.$")
+    obj_id <- shown_pepmod_intens.df$object_id[[1]]
     message("Plotting ", gene_name)
 p <- ggplot(shown_pepmod_intens.df) +
     geom_tile(aes(x=msrun, y=pepmodstate_ext,
@@ -119,16 +120,17 @@ p <- ggplot(shown_pepmod_intens.df) +
     theme(axis.text.x = element_text(angle = -90, hjust=0, vjust=0)) +
     facet_grid(object_id + gene_label ~ ., scales = "free_y", space="free_y") +
     guides(color=guide_legend("ident_type", override.aes = list(fill=NA, size=2))) +
-    ggtitle(str_c(gene_name,  " (pg_id=", shown_pepmod_intens.df$object_id[[1]],
-                  ", ac=", shown_pepmod_intens.df$protac_label[[1]], ") peptide map")) +
+    ggtitle(str_c(gene_name,  " (pg_id=", obj_id,
+                  ", ac=", shown_pepmod_intens.df$protac_label[[1]], ") peptide map"),
+            subtitle = semi_join(modelobjs_df, dplyr::select(shown_pepmod_intens.df, !!modelobj_idcol))$protein_description[[1]]) +
     scale_fill_distiller(na.value="#00000000", type="div", palette = "Spectral") +
     scale_color_manual(na.value="#00000000",
                        values=c("MULTI-MSMS"="black", "MULTI-MATCH-MSMS"="khaki",
                                 "MSMS"="cornflowerblue", "MULTI-SECPEP"="firebrick",
                                 "MULTI-MATCH"="gray"))
 ggsave(filename = file.path(analysis_path, "plots", mq_folder, "peptide_heatmaps",
-                            paste0(project_id, "_", mq_folder, '_', data_version, "_pepmod_heatmap_", gene_name, ".pdf")),
-       plot = p, width=16, height=3 + n_distinct(shown_pepmod_intens.df$object_id) + min(20, 0.1*n_distinct(shown_pepmod_intens.df$pepmodstate_id)),
+                            paste0(project_id, "_", mq_folder, '_', data_version, "_pepmod_heatmap_", gene_name, "_", obj_id, ".pdf")),
+       plot = p, width=20, height=3 + n_distinct(shown_pepmod_intens.df$object_id) + min(20, 0.1*n_distinct(shown_pepmod_intens.df$pepmodstate_id)),
        device=cairo_pdf, family="Arial")
     tibble()
 })
