@@ -213,6 +213,16 @@ object_contrasts.df <- object_contrasts.df %>%
                   is_msvalid_object,
                 change = if_else(is_signif, if_else(median_log2 < 0, "-", "+"), "."))
 
+object_contrast_stats.df <- dplyr::group_by(object_contrasts.df, contrast, contrast_type, std_type) %>%
+  dplyr::summarise(p_value_001 = quantile(p_value, 0.001),
+                   p_value_01 = quantile(p_value, 0.01),
+                   p_value_05 = quantile(p_value, 0.05),
+                   median_log2_abs_50 = quantile(abs(median_log2[p_value <= 0.1]), 0.5),
+                   median_log2_abs_95 = quantile(abs(median_log2[p_value <= 0.1]), 0.95),
+                   median_log2_abs_99 = quantile(abs(median_log2[p_value <= 0.1]), 0.99),
+                   n_hits = sum(is_hit_nomschecks)) %>%
+  dplyr::ungroup()
+
 object_effects_wide.df <- pivot_wider(object_effects.df,
                                       id_cols = c("std_type", "object_id", "object_label", "majority_protein_acs", "gene_names"),
                                       names_from = "effect", names_sep = ".",
