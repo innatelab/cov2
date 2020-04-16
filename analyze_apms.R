@@ -109,9 +109,16 @@ sel_pepmods.df <- dplyr::group_by(sel_pepmod_intens.df, pepmod_id) %>%
     dplyr::arrange(desc(n_pepmod_quants), desc(median_quant), pepmod_id)
 
 group_by(sel_pepmod_intens.df, object_id) %>% do({
-    shown_pepmod_intens.df <- .#sel_pepmod_intens.df
+    shown_pepmod_intens.df <- mutate(., !!modelobj_idcol := object_id)#sel_pepmod_intens.df
     gene_name <- str_remove(shown_pepmod_intens.df$gene_label[[1]], "\\.\\.\\.$")
     obj_id <- shown_pepmod_intens.df$object_id[[1]]
+    is_viral <- inner_join(shown_pepmod_intens.df, modelobjs_df)$is_viral[[1]]
+    if (is_viral) {
+        bait_df <- filter(bait_checks.df, object_id == obj_id)
+        if (nrow(bait_df) > 0) {
+            gene_name <- bait_df$bait_full_id[[1]]
+        }
+    }
     message("Plotting ", gene_name)
 p <- ggplot(shown_pepmod_intens.df) +
     geom_tile(aes(x=msrun, y=pepmodstate_ext,
@@ -128,7 +135,7 @@ p <- ggplot(shown_pepmod_intens.df) +
                        values=c("MULTI-MSMS"="black", "MULTI-MATCH-MSMS"="khaki",
                                 "MSMS"="cornflowerblue", "MULTI-SECPEP"="firebrick",
                                 "MULTI-MATCH"="gray"))
-ggsave(filename = file.path(analysis_path, "plots", mq_folder, "peptide_heatmaps",
+ggsave(filename = file.path(analysis_path, "plots", mq_folder, str_c("peptide_heatmaps", if_else(is_viral, "/viral", "")),
                             paste0(project_id, "_", mq_folder, '_', data_version, "_pepmod_heatmap_", gene_name, "_", obj_id, ".pdf")),
        plot = p, width=20, height=3 + n_distinct(shown_pepmod_intens.df$object_id) + min(20, 0.1*n_distinct(shown_pepmod_intens.df$pepmodstate_id)),
        device=cairo_pdf, family="Arial")
