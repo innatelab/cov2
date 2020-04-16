@@ -1,10 +1,19 @@
 project_id <- 'cov2'
 message('Project ID=', project_id)
-data_version <- "20200331"
-fit_version <- "20200402"
-mq_folder <- 'mq_apms_20200329'
+datasets <- list(
+    apms = list(ms_folder = 'mq_apms_20200409',
+                data_version = "20200410",
+                fit_version = "20200410"),
+    prev_apms = list(ms_folder = 'mq_apms_20200329',
+                data_version = "20200331",
+                fit_version = "20200402"),
+    oeproteome = list(ms_folder = 'spectronaut_oeproteome_20200411',
+                      data_version = "20200411",
+                      fit_version = "20200411")
+)
 message("Assembling fit results for project ", project_id,
-        " (dataset v", data_version, ", fit v", fit_version, ")")
+        " (APMS dataset v", datasets$apms$data_version, ", fit v", datasets$apms$fit_version, ", ",
+          "OE proteome dataset v", datasets$oeproteome$data_version, ", fit v", datasets$oeproteome$fit_version, ")")
 
 source("~/R/config.R")
 source(file.path(base_scripts_path, 'R/misc/setup_base_paths.R'))
@@ -20,15 +29,51 @@ require(msglm)
 require(maxquantUtils)
 
 message('Loading data...')
-load(file.path(scratch_path, paste0(project_id, '_msglm_data_', mq_folder, '_', data_version, '.RData')))
-load(file.path(scratch_path, paste0(project_id, '_msdata_full_', mq_folder, '_',data_version, '.RData')))
-load(file.path(scratch_path, paste0(project_id, '_msglm_fit_', mq_folder, '_', fit_version, '.RData')))
+load(file.path(scratch_path, paste0(project_id, '_msglm_data_', datasets$apms$ms_folder, '_', datasets$apms$data_version, '.RData')))
+load(file.path(scratch_path, paste0(project_id, '_msdata_full_', datasets$apms$ms_folder, '_', datasets$apms$data_version, '.RData')))
+load(file.path(scratch_path, paste0(project_id, '_msglm_fit_', datasets$apms$ms_folder, '_', datasets$apms$fit_version, '.RData')))
+
+oeprot.env <- new.env(parent=baseenv())
+load(file.path(scratch_path, paste0(project_id, '_msglm_data_', datasets$oeproteome$ms_folder, '_', datasets$oeproteome$data_version, '.RData')), envir = oeprot.env)
+load(file.path(scratch_path, paste0(project_id, '_msdata_full_', datasets$oeproteome$ms_folder, '_', datasets$oeproteome$data_version, '.RData')), envir = oeprot.env)
+load(file.path(scratch_path, paste0(project_id, '_msglm_fit_', datasets$oeproteome$ms_folder, '_', datasets$oeproteome$fit_version, '.RData')), envir = oeprot.env)
+
+prev_apms.env <- new.env(parent=baseenv())
+load(file.path(analysis_path, "networks", paste0(project_id, '_4graph_', datasets$prev_apms$ms_folder, '_', datasets$prev_apms$fit_version, '.RData')), envir = prev_apms.env)
+load(file.path(scratch_path, paste0(project_id, '_msdata_full_', datasets$prev_apms$ms_folder, '_', datasets$prev_apms$data_version, '.RData')), envir = prev_apms.env)
 
 source(file.path(project_scripts_path, 'setup_modelobj.R'))
 
 bait_checks.df <- get(str_c("bait_checks_", modelobj, ".df"))
 bait_checks.df$object_id <- bait_checks.df[[modelobj_idcol]]
 
+#ap_plasmids.df <- read_xlsx(file.path(data_path, "AP_plasmids_20200409.xlsx")) %>%
+#    extract(`CONSTRUCT NAME`,
+#            c("vector", "terminus", "tag", "gene_name", "organism"),
+#            "(EC|p\\w+)[ -]([NC](?:-term)?)(?:[ -](myc|Myc|HA|6Myc|Flag|FLAG|V5|1xHA|2xHA))?[-_ ](RIG-I|[^_ -]+)(?:[-_ (](human|mouse|murine)\\)?)?",
+#            remove = FALSE)
+#write_tsv(crispr_plasmids.df, file.path(data_path, "AP_plasmids_20200409_with_genename.txt"), na = "")
+
+prev_iactions_obj.df <- filter(prev_apms.env$iactions_ex_4graphml.df, str_detect(type, "experiment")) %>%
+    dplyr::inner_join(select(filter(prev_apms.env$msdata_full$protein2protregroup, is_majority),
+                             protein_ac, dest_object_id = protregroup_id)) %>%
+    dplyr::select(bait_full_id, protein_ac) %>%
+    dplyr::inner_join(filter(msdata_full$protein2protregroup, is_majority)) %>%
+    dplyr::select(bait_full_id, object_id = protregroup_id) %>%
+    dplyr::distinct() %>%
+    dplyr::mutate(is_in_20200402_network = TRUE)
+
+oeproteome_effects_obj.df <- filter(oeprot.env$object_contrasts.df, str_detect(contrast, "_vs_FPMS_controls") & std_type == "replicate") %>%
+    dplyr::mutate(bait_full_id = str_match(contrast, "FPMS_(.+)_vs_FPMS_(controls|others)")[,2]) %>%
+    dplyr::inner_join(dplyr::select(filter(oeprot.env$msdata_full$protein2protgroup, is_majority),
+                         protein_ac, object_id = protgroup_id)) %>%
+    dplyr::select(bait_full_id, protein_ac,
+                  oeproteome_median_log2 = median_log2, oeproteome_p_value = p_value, oeproteome_is_hit = is_hit) %>%
+    dplyr::inner_join(filter(msdata_full$protein2protregroup, is_majority)) %>%
+    dplyr::select(bait_full_id, object_id = protregroup_id, starts_with("oeproteome_")) %>%
+    dplyr::group_by(bait_full_id, object_id) %>%
+    dplyr::filter(row_number(oeproteome_p_value) == 1L) %>% # pick the most significant if multiple matches
+    dplyr::ungroup()
 
 crispr_plasmids.df <- read_tsv(file.path(data_path, "CRISPR_plasmids_20200410.txt")) %>%
     mutate(organism = if_else(is.na(organism), "human", organism),
@@ -72,35 +117,44 @@ virhostnet_ppi_obj.df <- left_join(virhostnet_ppi.df, modelobj2protein.df) %>%
               virhostnet_references = str_c(sort(unique(virhostnet_references)), collapse=' '))
 
 # contrasts-based interactions filter
-iactions_4graphml.df <- filter(object_contrasts.df, str_detect(contrast, "_vs_others") & is_hit & std_type == "replicate" &
+iactions_4graphml_pre.df <- filter(object_contrasts.df, str_detect(contrast, "_vs_others") & std_type == "replicate" &
                                !(object_id %in% bait_checks.df$object_id))
 
-iactions_4table.df <- dplyr::inner_join(iactions_4graphml.df,
+iactions_4table.df <- dplyr::inner_join(iactions_4graphml_pre.df,
                                         dplyr::select(bait_checks.df, bait_full_id, bait_id, bait_organism)) %>%
     left_join(krogan_apms_obj.df) %>%
     left_join(virhostnet_ppi_obj.df) %>%
     left_join(crispr_plasmids_obj.df) %>%
+    left_join(prev_iactions_obj.df) %>%
+    left_join(oeproteome_effects_obj.df) %>%
     left_join(dplyr::select(modelobjs_df, object_id, protein_description, any_of(c("npepmods_unique", "npeptides_unique")))) %>%
     dplyr::arrange(bait_id, bait_organism, bait_full_id, object_id, p_value) %>%
     dplyr::select(bait_organism, bait_id, bait_full_id, contrast,
                   object_label, protein_description,
-                  median_log2, p_value, median_log2_threshold, p_value_threshold,
+                  is_hit, median_log2, p_value, median_log2_threshold, p_value_threshold,
                   majority_protein_acs, gene_names, protein_names, is_viral, is_contaminant, is_reverse,
                   any_of(c("npepmods_unique", "npeptides_unique")),
                   nmsruns_quanted = nmsruns_quanted_lhs_max,
+                  is_in_20200402_network, starts_with("oeproteome_"),
                   starts_with("krogan_"), starts_with("virhostnet_"),
                   crispr_plasmid_ids)
-write_tsv(iactions_4table.df, file.path(analysis_path, 'networks',
-                                        str_c(project_id, '_interactions_', mq_folder, '_', fit_version, modelobj_suffix, '.txt')),
+    
+write_tsv(iactions_4table.df,
+          file.path(analysis_path, 'networks',
+                    str_c(project_id, '_interactions_all_', datasets$apms$ms_folder, '_', datasets$apms$fit_version, modelobj_suffix, '.txt')),
+          na = "")
+write_tsv(filter(iactions_4table.df, is_hit),
+          file.path(analysis_path, 'networks',
+                    str_c(project_id, '_interactions_signif_', datasets$apms$ms_folder, '_', datasets$apms$fit_version, modelobj_suffix, '.txt')),
           na = "")
 
-bait_labels.df <- distinct(select(iactions_4graphml.df, contrast)) %>%
+bait_labels.df <- distinct(select(iactions_4graphml_pre.df, contrast)) %>%
     dplyr::inner_join(select(filter(contrastXmetacondition.df, condition_role == "signal"), contrast, metacondition)) %>%
     dplyr::inner_join(conditionXmetacondition.df) %>%
     dplyr::inner_join(select(conditions.df, condition, bait_full_id, bait_id, orgcode)) %>%
     dplyr::select(-metacondition, -condition)
 
-iactions_4graphml.df <- iactions_4graphml.df %>%
+iactions_4graphml.df <- filter(iactions_4graphml_pre.df, is_hit) %>%
     dplyr::select(-prob_nonneg) %>%
     dplyr::inner_join(bait_labels.df) %>%
     dplyr::arrange(bait_full_id, bait_id, object_id, prob_nonpos) %>%
@@ -111,7 +165,9 @@ iactions_4graphml.df <- iactions_4graphml.df %>%
                      sd_log2.vs_background = sd_log2[1]) %>%
     dplyr::ungroup() %>%
     left_join(krogan_apms_obj.df) %>%
-    left_join(virhostnet_ppi_obj.df)
+    left_join(virhostnet_ppi_obj.df) %>%
+    left_join(prev_iactions_obj.df) %>%
+    left_join(oeproteome_effects_obj.df)
 
 special_bait_ids <- c()
 
@@ -161,8 +217,8 @@ iactions_4graphml.df <- iactions_4graphml.df %>%
 
 objects_4graphml.df <- dplyr::bind_rows(semi_join(modelobjs_df,
                                                   dplyr::select(iactions_4graphml.df, object_id = dest_object_id)) %>%
-                                           anti_join(dplyr::select(bait_object_ids.df, object_id)),
-                                           dplyr::select(bait_object_ids.df, -bait_full_id, -bait_id)) %>%
+                                        anti_join(dplyr::select(bait_object_ids.df, object_id)),
+                                        dplyr::select(bait_object_ids.df, -bait_full_id, -bait_id)) %>%
     #dplyr::left_join(dplyr::select(object_batch_effects.df, object_id, batch_effect_p_value = p_value, batch_effect_median_log2 = median_log2)) %>%
     dplyr::mutate(is_bait = object_id %in% bait_object_ids.df$object_id,
                   is_detected = object_id %in% iactions_4graphml.df$dest_object_id,
@@ -175,7 +231,15 @@ objects_4graphml.df <- dplyr::bind_rows(semi_join(modelobjs_df,
                                             is_reverse ~ "reverse",
                                             TRUE ~ NA_character_),
                   exp_role = if_else(is_bait, 'bait', 'prey')) %>%
-    left_join(crispr_plasmids_obj.df)
+    left_join(crispr_plasmids_obj.df) %>%
+    left_join(filter(semi_join(oeproteome_effects_obj.df, filter(iactions_4graphml_pre.df, is_hit)), oeproteome_is_hit) %>%
+              dplyr::arrange(object_id, oeproteome_p_value, bait_full_id) %>%
+              dplyr::group_by(object_id) %>%
+              dplyr::mutate(oeproteome_bait_full_ids = str_c(bait_full_id, collapse=' '),
+                            oeproteome_median_log2_max = max(oeproteome_median_log2)) %>%
+              dplyr::filter(row_number(oeproteome_p_value) == 1L) %>% dplyr::ungroup() %>%
+              dplyr::select(object_id, starts_with("oeproteome_"))) %>%
+    dplyr::mutate(oeproteome_is_hit = coalesce(oeproteome_is_hit, FALSE) & oeproteome_median_log2_max >= 1)
 
 # integrate known PPI
 ppi.env <- new.env(parent=baseenv())
@@ -215,9 +279,12 @@ ppi_participants.df <- bind_rows(
 
 ppi_confidence_classes.df <- read_tsv(file.path(data_path, "../../vgirault_vzvapms/data/intact_iaction_stats_20191118_weighted_VG.txt")) %>%
     mutate(confidence_class = factor(confidence_class, levels = c("low", "medium", "strong"), ordered = TRUE),
-           n_pubmeds_required = case_when(confidence_class == "strong" ~ 1L,
-                                          confidence_class == "medium" ~ 2L,
-                                          confidence_class == "low" ~ 3L,
+           n_pubmeds_required_strong = 1L,
+           n_pubmeds_required_medium = 2L,
+           n_pubmeds_required_low = 3L,
+           n_pubmeds_required = case_when(confidence_class == "strong" ~ n_pubmeds_required_strong,
+                                          confidence_class == "medium" ~ n_pubmeds_required_medium,
+                                          confidence_class == "low" ~ n_pubmeds_required_low,
                                           TRUE ~ NA_integer_))
 
 observed_ppi_participants.df <- ppi_participants.df %>%
@@ -256,32 +323,48 @@ known_ppi_pairs.df <- dplyr::inner_join(observed_ppi_participants.df, observed_p
                      iaction_ids = paste0(unique(interaction_id), collapse = ' '),
                      pubmed_ids = paste0(unique(pubmed_id[!is.na(pubmed_id)]), collapse = ' '),
                      has_complex = any(ppi_type == "complex"),
-                     confidence_class_max = max(confidence_class, na.rm = TRUE),
                      n_baits = n_distinct(bait_id),
                      n_iactions = n_distinct(interaction_id),
                      n_pubmeds = n_distinct(pubmed_id[!is.na(pubmed_id)]),
                      n_pubmeds_strong = n_distinct(pubmed_id[!is.na(pubmed_id) & confidence_class == "strong"]),
                      n_pubmeds_medium = n_distinct(pubmed_id[!is.na(pubmed_id) & confidence_class == "medium"]),
                      n_pubmeds_weak = n_distinct(pubmed_id[!is.na(pubmed_id) & confidence_class == "weak"]),
-                     n_pubmeds_maxconf = n_distinct(pubmed_id[!is.na(pubmed_id) & confidence_class == confidence_class_max]),
-                     n_pubmeds_required = n_pubmeds_required[rank(desc(confidence_class), na.last=TRUE, ties.method = "first") == 1L]
+                     is_pubmeds_ok_strong = n_pubmeds_strong >= n_pubmeds_required_strong[[1]],
+                     is_pubmeds_ok_medium = n_pubmeds_medium >= n_pubmeds_required_medium[[1]],
+                     is_pubmeds_ok_low = n_pubmeds_weak >= n_pubmeds_required_low[[1]]
     ) %>%
     dplyr::ungroup() %>%
-    dplyr::filter(has_complex | (n_pubmeds_maxconf >= n_pubmeds_required)) %>%
-    dplyr::mutate(ppi_type = case_when(#has_complex & is_enriched & is_gocc ~ "enriched_complex_gocc",
+    dplyr::filter(has_complex | is_pubmeds_ok_strong | is_pubmeds_ok_medium | is_pubmeds_ok_low) %>%
+    dplyr::mutate(
+        confidence_class_max = factor(case_when(is_pubmeds_ok_strong ~ "strong",
+                                                is_pubmeds_ok_medium ~ "medium",
+                                                is_pubmeds_ok_low ~ "low",
+                                                TRUE ~ NA_character_), levels=levels(ppi_confidence_classes.df$confidence_class)),
+        ppi_type = case_when(#has_complex & is_enriched & is_gocc ~ "enriched_complex_gocc",
                                        #has_complex & is_enriched ~ "enriched_complex",
                                        has_complex ~ "complex",
                                        !is.na(confidence_class_max) ~ paste0("ppi_", as.character(confidence_class_max)),
                                        TRUE ~ NA_character_))
+
+# virtual interactions between homologous baits
+homology_iactions.df <- dplyr::inner_join(
+    dplyr::select(filter(objects_4graphml.df, is_bait), gene_label, src_object_id=object_id),
+    dplyr::select(filter(objects_4graphml.df, is_bait), gene_label, dest_object_id=object_id),
+    by="gene_label") %>%
+    dplyr::filter(src_object_id < dest_object_id) %>%
+    dplyr::mutate(is_homology = TRUE, weight = 50.0)
 
 iactions_ex_4graphml.df <- dplyr::full_join(iactions_4graphml.df,
                                             mutate(known_ppi_pairs.df,
                                                    weight = case_when(str_detect(ppi_type, "complex|virhost") ~ 40.0,
                                                                       str_detect(ppi_type, "ppi") ~ 30.0,
                                                                       TRUE ~ NA_real_))) %>%
-    dplyr::mutate(type = if_else(!is.na(type),
-                                 if_else(!is.na(ppi_type), paste0('experiment ', ppi_type),
-                                         'experiment'), ppi_type))
+    dplyr::full_join(homology_iactions.df) %>%
+    dplyr::mutate(type = case_when(!is.na(type) & !is.na(ppi_type) ~ paste0('experiment ', ppi_type),
+                                   !is.na(type) & is.na(ppi_type) ~ 'experiment',
+                                   !is.na(ppi_type) ~ ppi_type,
+                                   replace_na(is_homology, FALSE) ~ "homology",
+                                   TRUE ~ NA_character_))
 
 require(RGraphML)
 
@@ -324,11 +407,10 @@ iactions.graphml <- GraphML.generate(objects_4graphml.df,
 )
 
 write(iactions.graphml, file.path(analysis_path, 'networks',
-                                  paste0(project_id, '_', mq_folder, '_', fit_version, '.graphml')))
-rgraph_filepath <- file.path(analysis_path, 'networks', paste0(project_id, '_4graph_', mq_folder, '_', fit_version, '.RData'))
-results_info <- list(project_id = project_id, mq_folder=mq_folder,
-                     data_version = data_version, fit_version = fit_version,
+                                  paste0(project_id, '_', datasets$apms$ms_folder, '_', datasets$apms$fit_version, '.graphml')))
+rgraph_filepath <- file.path(analysis_path, 'networks', paste0(project_id, '_4graph_', datasets$apms$ms_folder, '_', datasets$apms$fit_version, '.RData'))
+results_info <- list(project_id = project_id, datasets,
                      modelobj = modelobj, quantobj = quantobj)
 message('Saving full analysis results to ', rgraph_filepath, '...')
-save(results_info, iactions_ex_4graphml.df, objects_4graphml.df,
+save(results_info, iactions_4table.df, iactions_ex_4graphml.df, objects_4graphml.df,
      file = rgraph_filepath)
