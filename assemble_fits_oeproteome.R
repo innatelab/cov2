@@ -204,7 +204,7 @@ object_contrasts.df <- dplyr::inner_join(pre_object_contrasts.df, fit_contrasts$
 
 object_contrasts_thresholds.df <- select(object_contrasts.df, contrast, contrast_type, std_type) %>%
   distinct() %>%
-  mutate(bait_full_id = str_remove(contrast, "_vs_.+"),
+  mutate(bait_full_id = str_extract(contrast, "FPMS_(.+)_vs_FPMS_(controls|others)")[,1],
          p_value_threshold = case_when(bait_full_id %in% weak_bait_ids ~ 0.05,
                                        TRUE ~ 0.001),
          median_log2_threshold = case_when(bait_full_id %in% weak_bait_ids ~ 0.25,
