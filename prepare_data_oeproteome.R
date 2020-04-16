@@ -63,6 +63,7 @@ msdata_full$msruns <- dplyr::select(msdata_full$protgroup_intensities, msrun_ix,
   left_join(dplyr::select(baits_info.df, bait_type, bait_code, bait_full_id, bait_id, organism, orgcode)) %>%
   mutate(condition = str_c("FPMS_", bait_full_id),
          msrun = str_c(condition, "_", replicate),
+         batch = if_else(bait_full_id %in% c("SARS_CoV2_E", "SARS_CoV2_M", "SARS_CoV2_N", "SARS_CoV2_NSP15", "SARS_CoV2_NSP16", "SARS_CoV2_ORF3"), 2L, 1L),
          is_used = !msrun %in% bad_msruns)
 
 msdata_full$protgroup_intensities <- dplyr::select(msdata_full$protgroup_intensities, -raw_file) %>%
@@ -235,7 +236,7 @@ options(mc.cores=8)
 # 3) all baits together
 msruns_hnorm <- multilevel_normalize_experiments(instr_calib_protgroup,
                                                  filter(msdata$msruns, is_used) %>%
-                                                   mutate(batch = 1L, # FIXME
+                                                   mutate(batch=as.character(batch),
                                                           batch_bait_full_id = str_c("B", batch, "_", bait_full_id),
                                                           batch_bait_id = str_c("B", batch, "_", bait_id)),
                                                  msdata4norm.df,
@@ -243,7 +244,7 @@ msruns_hnorm <- multilevel_normalize_experiments(instr_calib_protgroup,
                                                  mcmc.iter = 2000L,
                                                  #mcmc.chains = 6,
                                                  verbose=TRUE,
-                                                 norm_levels = list(msrun = list(cond_col = "msrun", max_objs=500L, missing_exp.ratio=0.1),
+                                                 norm_levels = list(msrun = list(cond_col = "msrun", max_objs=700L, missing_exp.ratio=0.1),
                                                                     bait_full_id = list(cond_col="batch_bait_full_id", max_objs=500L, missing_exp.ratio=0.1),
                                                                     bait_id = list(cond_col="batch_bait_id", max_objs=300L, missing_exp.ratio=0.1),
                                                                     batch = list(cond_col="batch", max_objs=200L, missing_exp.ratio=0.1)
@@ -264,13 +265,17 @@ global_protgroup_labu_shift <- 0.95*median(log(dplyr::filter(msdata$msruns) %>%
                                                  dplyr::select(msrun) %>% dplyr::distinct() %>%
                                                  dplyr::inner_join(msdata_full$protgroup_intensities) %>% pull(intensity)), na.rm=TRUE)
 
-# no subbatch effects so far
-msrunXbatchEffect.mtx <- zero_matrix(msrun = rownames(msrunXreplEffect.mtx),
-                                     batch_effect = c())
+msrunXbatchEffect_orig.mtx <- model.matrix(
+  ~ 1 + batch,
+  mutate(msdata$msruns, batch = factor(batch)))
+msrunXbatchEffect.mtx <- msrunXbatchEffect_orig.mtx[, colnames(msrunXbatchEffect_orig.mtx) != "(Intercept)", drop=FALSE]
+dimnames(msrunXbatchEffect.mtx) <- list(msrun = msdata$msruns$msrun,
+                                        batch_effect = colnames(msrunXbatchEffect_orig.mtx)[colnames(msrunXbatchEffect_orig.mtx) != "(Intercept)"])
+pheatmap(msrunXbatchEffect.mtx, cluster_rows=FALSE, cluster_cols=FALSE)
 
-batch_effects.df <- tibble(batch_effect=character(0),
-                           is_positive=logical(0),
-                           prior_mean = double(0))
+batch_effects.df <- tibble(batch_effect=colnames(msrunXbatchEffect.mtx),
+                           is_positive=FALSE,
+                           prior_mean = 0.0)
 
 # no subbatch effects so far
 msrunXsubbatchEffect.mtx <- zero_matrix(msrun = rownames(msrunXreplEffect.mtx),
