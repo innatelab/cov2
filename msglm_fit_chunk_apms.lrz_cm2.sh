@@ -5,7 +5,7 @@
 #SBATCH --clusters=cm2
 #SBATCH --partition=cm2_large
 #SBATCH --reservation=special_covid
-#SBATCH --nodes=108
+#SBATCH --nodes=116
 ##SBATCH --ntasks=1
 #SBATCH --mincpus=7
 ##SBATCH --mem-per-cpu=2GB
@@ -30,12 +30,12 @@ if [[ -f $CHUNK_IDS_FILE ]]; then
   echo "Reading ${CHUNK_IDS_FILE}..."
   readarray -t CHUNK_IDS < $CHUNK_IDS_FILE
 else
-  CHUNK_IDS=( $(seq 1 4000) )
+  CHUNK_IDS=( $(seq 1 5000) )
 fi
 
 for chunk in ${CHUNK_IDS[@]}
 do
-srun -c7 -n1 --mem-per-cpu=2GB --wait=0 \
+srun -c7 -n1 --nodes=1 --ntasks-per-node=4 --mem-per-cpu=2GB --wait=0 \
      --no-kill --distribution=block --exclusive=user \
 ch-run $SCRATCH/docker4muc/archpc.msglm \
   -t --unset-env='*PATH' \
@@ -45,6 +45,10 @@ ch-run $SCRATCH/docker4muc/archpc.msglm \
   -b $SCRATCH:/scratch \
   -- Rscript /projects/adhoc/$PROJECT_ID/msglm_fit_chunk_apms.R \
   $PROJECT_ID $SLURM_JOB_NAME $MQ_FOLDER $DATA_VERSION $FIT_VERSION $SLURM_JOB_ID $chunk &
+# sleep to avoid clogging of too many steps
+if ! ((chunk % 300)); then
+  sleep 1
+fi
 done
 
 wait
