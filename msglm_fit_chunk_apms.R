@@ -135,6 +135,16 @@ model_data$msdata <- mutate(model_data$msdata,
 
 model_data <- prepare_effects(model_data, underdefined_iactions=FALSE)
 
+dims_info <- msglm.prepare_dims_info(model_data, object_cols=c('object_id', modelobj_idcol, "object_label",
+                                                               "majority_protein_acs", "gene_names",
+                                                               "is_viral", "is_contaminant", "is_reverse",
+                                                               "protein_names"
+))
+
+# remove unneeded data to free some memory
+msdata <- NULL
+gc()
+
 msglm.stan_data <- stan.prepare_data(instr_calib, model_data,
                                      global_labu_shift = global_labu_shift,
                                      batch_tau=0.8, effect_repl_shift_tau=0.4)
@@ -147,11 +157,6 @@ msglm.stan_fit <- stan.sampling(msglm.stan_data, adapt_delta=0.9, max_treedepth=
 #launch_shinystan(shinystan::as.shinystan(msglm.stan_fit))
 
 min.iteration <- as.integer(1.5 * msglm.stan_fit@sim$warmup)
-dims_info <- msglm.prepare_dims_info(model_data, object_cols=c('object_id', modelobj_idcol, "object_label",
-                                                               "majority_protein_acs", "gene_names",
-                                                               "is_viral", "is_contaminant", "is_reverse",
-                                                               "protein_names"
-                                                               ))
 
 background_contrasts <- unique(as.character(filter(contrastXmetacondition.df,
                                                    str_detect(contrast, "_vs_others") & weight < 0)$contrast))
