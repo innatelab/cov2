@@ -391,7 +391,7 @@ options(mc.cores=8)
 # 1) MS replicates for a given bait
 # 2) same viral protein of different strains
 # 3) all baits together
-msruns_hnorm <- multilevel_normalize_experiments(instr_calib_pepmod,
+msruns_hnorm <- multilevel_normalize_experiments(instr_calib_pepmodstate,
     filter(msdata$msruns, is_used) %>%
     mutate(batch_bait_full_id = str_c("B", batch, "_", bait_full_id),
            batch_bait_id = str_c("B", batch, "_", bait_id)),
@@ -400,10 +400,10 @@ msruns_hnorm <- multilevel_normalize_experiments(instr_calib_pepmod,
     mcmc.iter = 2000L,
     #mcmc.chains = 6,
     verbose=TRUE,
-    norm_levels = list(msrun = list(cond_col = "msrun", max_objs=500L, missing_exp.ratio=0.1),
-                       bait_full_id = list(cond_col="batch_bait_full_id", max_objs=500L, missing_exp.ratio=0.1),
-                       bait_id = list(cond_col="batch_bait_id", max_objs=200L, missing_exp.ratio=0.1),
-                       batch = list(cond_col="batch", max_objs=100L, missing_exp.ratio=0.1)
+    norm_levels = list(msrun = list(cond_col = "msrun", max_objs=1000L, missing_exp.ratio=0.1),
+                       bait_full_id = list(cond_col="batch_bait_full_id", max_objs=1000L, missing_exp.ratio=0.1),
+                       bait_id = list(cond_col="batch_bait_id", max_objs=300L, missing_exp.ratio=0.25),
+                       batch = list(cond_col="batch", max_objs=200L, missing_exp.ratio=0.25)
                        ))
 
 # ignore all higher levels of normalization
