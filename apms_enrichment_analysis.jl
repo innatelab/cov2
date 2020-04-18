@@ -1,9 +1,9 @@
 proj_info = (id = "cov2",
-             data_ver = "20200329",
-             fit_ver = "20200329",
-             oesc_ver = "20200331",
-             modelobj = "protgroup",
-             ms_folder = "mq_apms_20200329")
+             data_ver = "20200410",
+             fit_ver = "20200410",
+             oesc_ver = "20200415",
+             modelobj = "protregroup",
+             ms_folder = "mq_apms_20200409")
 using Pkg
 Pkg.activate(@__DIR__)
 
@@ -32,16 +32,9 @@ effects_df = copy(input_rdata["effects.df"]);
 contrasts_df = unique!(select!(copy(input_rdata["contrastXmetacondition.df"]), [:contrast, :contrast_type]));
 objects_df = copy(input_rdata["msdata"][string(proj_info.modelobj, "s")]) |> MSGLMUtils.fix_object_id!;
 protacs_df = copy(full_rdata["msdata_full"]["proteins"]);
-if proj_info.modelobj == "protregroup"
 obj2protac_df = select!(
-    join(full_rdata["msdata_full"]["protein2protgroup"],
-         input_rdata["msdata"]["protregroup2protgroup"], on=:protgroup_id, kind=:inner),
-    [objid_col, :protein_ac]) |> unique! |> MSGLMUtils.fix_object_id!; # is_majority?
-elseif proj_info.modelobj == "protgroup"
-    obj2protac_df = select!(
-        full_rdata["msdata_full"]["protein2protgroup"],
-        [objid_col, :protein_ac]) |> unique! |> MSGLMUtils.fix_object_id!; # is_majority?
-end
+         filter(r -> r.is_majority, full_rdata["msdata_full"][string("protein2", proj_info.modelobj)]),
+         [objid_col, :protein_ac]) |> unique! |> MSGLMUtils.fix_object_id!; # is_majority?
 #obj2protac_df = obj2protac_df[obj2protac_df.is_majority, [:object_id, :protein_ac]];
 obj_effs_df = copy(fit_rdata["object_effects.df"]);
 obj_contrasts_df = copy(fit_rdata["object_contrasts.df"]);
@@ -90,7 +83,7 @@ for contrast_df in groupby(obj_contrasts_df[obj_contrasts_df.is_hit, :], [:std_t
     obj_contrast_sets[(string.(contrast_df[1, :std_type], "_std"), contrast_df[1, :contrast], contrast_df[1, :change])] = Set(skipmissing(contrast_df.object_id))
 end
 # only relevant ones
-sel_std_type = "median"
+sel_std_type = "replicate"
 obj_contrast_selsets = filter(kv ->
     (kv[1][1] == sel_std_type*"_std") &&
     !occursin(r"_vs_controls$", kv[1][2]),
@@ -114,10 +107,11 @@ cover_params = CoverParams(setXset_factor=0.5,
                            uncovered_factor=0.0, covered_factor=0.0)#, covered_factor=0.002)
 
 obj_contrast_covers = Dict(begin
-    @info "Covering $mosaic_name by effects..."
+    @info "Covering $mosaic_name by contrasts..."
     mosaic_name => collect(masked_mosaic, cover_params,
             CoverEnumerationParams(max_set_score=0.0, max_covers=1),
-            MultiobjOptimizerParams(ϵ=[0.02, 0.2], MaxSteps=3_000_000, WeightDigits=2, NWorkers=Threads.nthreads()-1, MaxRestarts=200),
+            MultiobjOptimizerParams(ϵ=[0.02, 0.2], MaxSteps=2_000_000, WeightDigits=2,
+                                    NWorkers=Threads.nthreads()-1, MaxRestarts=200),
             true)
     end for (mosaic_name, masked_mosaic) in pairs(obj_contrast_mosaics))
 
