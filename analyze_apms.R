@@ -6,9 +6,11 @@ require(ggrepel)
 mlog10_pvalue_compress <- function(x, threshold = 10) {
     if (x < threshold) {
         return (x)
-    } else {
+    } else if (is.finite(x)) {
         t <- x - threshold
         return (threshold + sqrt(t))
+    } else {
+        return (2.5*threshold)
     }
 }
 
