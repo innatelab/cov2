@@ -9,7 +9,7 @@ message('Project ID=', project_id)
 
 job_name <- as.character(job.args[[2]])
 job_version <- job.args[[5]]
-mq_folder <- job.args[[3]]
+ms_folder <- job.args[[3]]
 data_version <- job.args[[4]]
 fit_version <- job_version
 job_id <- as.integer(job.args[[6]])
@@ -22,7 +22,7 @@ source("/projects/R/config.R")
 source(file.path(base_scripts_path, 'R/misc/setup_base_paths.R'))
 source(file.path(base_scripts_path, 'R/misc/setup_project_paths.R'))
 
-rdata_filepath <- file.path(scratch_path, paste0(project_id, '_msglm_data_', mq_folder, '_', data_version, '.RData'))
+rdata_filepath <- file.path(scratch_path, paste0(project_id, '_msglm_data_', ms_folder, '_', data_version, '.RData'))
 message('Loading data from ', rdata_filepath)
 load(rdata_filepath)
 
@@ -166,13 +166,13 @@ names(background_contrasts.quantiles_rhs) <- background_contrasts
 msglm_results <- process.stan_fit(msglm.stan_fit, dims_info,
                                   condition.quantiles_rhs = background_contrasts.quantiles_rhs)
 
-res_prefix <- paste0(project_id, "_", mq_folder, "_msglm", modelobj_suffix)
+res_prefix <- paste0(project_id, "_", ms_folder, "_msglm", modelobj_suffix)
 if (!dir.exists(file.path(scratch_path, res_prefix))) {
   dir.create(file.path(scratch_path, res_prefix))
 }
 rdata_filepath <- file.path(scratch_path, res_prefix, paste0(res_prefix, '_', fit_version, '_', job_chunk, '.RData'))
 message('Saving STAN results to ', rdata_filepath, '...')
-results_info <- list(project_id = project_id, mq_folder = mq_folder,
+results_info <- list(project_id = project_id, ms_folder = ms_folder,
                      data_version = data_version, fit_version = fit_version,
                      job_name = job_name, job_chunk = job_chunk, modelobj = modelobj, quantobj = quantobj)
 save(data_info, results_info,

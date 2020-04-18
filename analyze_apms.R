@@ -61,7 +61,7 @@ group_by(contrast, std_type) %>% do({
         ggtitle(sel_object_contrast_thresholds.df$contrast[[1]],
                 subtitle=str_c("std_type=", sel_object_contrast_thresholds.df$std_type[[1]])) +
         theme_bw_ast()
-    ggsave(filename = file.path(analysis_path, 'plots', mq_folder,
+    ggsave(filename = file.path(analysis_path, 'plots', ms_folder,
                                 str_c("volcanos_", sel_object_contrast_thresholds.df$std_type[[1]], modelobj_suffix),
                                 paste0(project_id, '_', fit_version, '_volcano_',
                                        sel_object_contrast_thresholds.df$contrast[[1]], '.pdf')),
@@ -135,8 +135,8 @@ p <- ggplot(shown_pepmod_intens.df) +
                        values=c("MULTI-MSMS"="black", "MULTI-MATCH-MSMS"="khaki",
                                 "MSMS"="cornflowerblue", "MULTI-SECPEP"="firebrick",
                                 "MULTI-MATCH"="gray"))
-ggsave(filename = file.path(analysis_path, "plots", mq_folder, str_c("peptide_heatmaps", if_else(is_viral, "/viral", "")),
-                            paste0(project_id, "_", mq_folder, '_', data_version, "_pepmod_heatmap_", gene_name, "_", obj_id, ".pdf")),
+ggsave(filename = file.path(analysis_path, "plots", ms_folder, str_c("peptide_heatmaps", if_else(is_viral, "/viral", "")),
+                            paste0(project_id, "_", ms_folder, '_', data_version, "_pepmod_heatmap_", gene_name, "_", obj_id, ".pdf")),
        plot = p, width=20, height=3 + n_distinct(shown_pepmod_intens.df$object_id) + min(20, 0.1*n_distinct(shown_pepmod_intens.df$pepmodstate_id)),
        device=cairo_pdf, family="Arial")
     tibble()

@@ -24,8 +24,8 @@ module load charliecloud
 PROJECT_ID=cov2
 DATA_VERSION=20200411
 FIT_VERSION=20200411
-MQ_FOLDER=spectronaut_oeproteome_20200411
-CHUNK_IDS_FILE=${SCRATCH}/${PROJECT_ID}/${PROJECT_ID}_${MQ_FOLDER}_${FIT_VERSION}_pending_chunk_ids
+MS_FOLDER=spectronaut_oeproteome_20200411
+CHUNK_IDS_FILE=${SCRATCH}/${PROJECT_ID}/${PROJECT_ID}_${MS_FOLDER}_${FIT_VERSION}_pending_chunk_ids
 if [[ -f $CHUNK_IDS_FILE ]]; then
   echo "Reading ${CHUNK_IDS_FILE}..."
   readarray -t CHUNK_IDS < $CHUNK_IDS_FILE

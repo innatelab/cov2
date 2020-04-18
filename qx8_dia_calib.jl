@@ -7,7 +7,7 @@ proj_info = (id = "cov2",
              quantobj = :protgroup,
              quanttype = :intensity,
              quantcol = :intensity,
-             mq_folder = "spectronaut_oeproteome_20200411")
+             ms_folder = "spectronaut_oeproteome_20200411")
 using Pkg
 Pkg.activate(@__DIR__)
 using Revise
@@ -31,7 +31,7 @@ Revise.includet(joinpath(misc_scripts_path, "spectronaut_utils.jl"));
 data_path = joinpath(base_analysis_path, proj_info.id, "data")
 scratch_path = joinpath(base_analysis_path, proj_info.id, "scratch")
 
-protgroup_data, report_colinfo = SpectronautUtils.read_proteins_report(joinpath(data_path, proj_info.mq_folder, "20200410_COV2_B1_DIA_DDA library_proteinreport.csv"),
+protgroup_data, report_colinfo = SpectronautUtils.read_proteins_report(joinpath(data_path, proj_info.ms_folder, "20200410_COV2_B1_DIA_DDA library_proteinreport.csv"),
                 import_data=[:quantity])
 quantity_colinfo_df = SpectronautUtils.metrics_colinfo(report_colinfo[:quantity])
 msruns_df = unique!(select(quantity_colinfo_df, [:msrun_ix, :rawfile]))

@@ -1,7 +1,7 @@
 proj_info = (id = "cov2",
              data_ver = "20200417",
              fit_ver = "20200417",
-             mq_folder = "mq_apms_20200417")
+             ms_folder = "mq_apms_20200417")
 using Pkg
 Pkg.activate(@__DIR__)
 
@@ -20,8 +20,8 @@ const plots_path = joinpath(analysis_path, "plots")
 Revise.includet(joinpath(misc_scripts_path, "protgroup_assembly.jl"));
 Revise.includet(joinpath(misc_scripts_path, "protgroup_crossmatch.jl"));
 
-pepmods_rdata = load(joinpath(data_path, proj_info.mq_folder,
-                              "$(proj_info.id)_$(proj_info.mq_folder)_$(proj_info.data_ver)_pepmods.RData"))
+pepmods_rdata = load(joinpath(data_path, proj_info.ms_folder,
+                              "$(proj_info.id)_$(proj_info.ms_folder)_$(proj_info.data_ver)_pepmods.RData"))
 pepmods_df = pepmods_rdata["pepmods.df"]
 proteins_df = pepmods_rdata["proteins.df"]
 pepmod2protgroups = Dict(r.pepmod_id => (Set(parse.(Int, split(r.protgroup_ids, ';'))), r.is_used)
@@ -39,10 +39,10 @@ protregroups_acs_df = ProtgroupAssembly.dataframe(protregroups_acs,
                             protein_ranks=Dict(r.protein_ac => ProtgroupXMatch.rank_uniprot(r) for r in eachrow(proteins_df)),
                             protgroup_col=:protregroup_id, protein_col=:protein_ac)
 
-CSV.write(joinpath(data_path, proj_info.mq_folder,
-                   "$(proj_info.id)_$(proj_info.mq_folder)_$(proj_info.data_ver)_protregroups.txt"),
+CSV.write(joinpath(data_path, proj_info.ms_folder,
+                   "$(proj_info.id)_$(proj_info.ms_folder)_$(proj_info.data_ver)_protregroups.txt"),
           protregroups_df, delim='\t', missingstring="")
 
-CSV.write(joinpath(data_path, proj_info.mq_folder,
-                   "$(proj_info.id)_$(proj_info.mq_folder)_$(proj_info.data_ver)_protregroups_acs.txt"),
+CSV.write(joinpath(data_path, proj_info.ms_folder,
+                   "$(proj_info.id)_$(proj_info.ms_folder)_$(proj_info.data_ver)_protregroups_acs.txt"),
           protregroups_acs_df, delim='\t', missingstring="")

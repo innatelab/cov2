@@ -3,7 +3,7 @@ proj_info = (id = "cov2",
              fit_ver = "20200329",
              oesc_ver = "20200331",
              modelobj = "protgroup",
-             mq_folder = "mq_apms_20200329")
+             ms_folder = "mq_apms_20200329")
 using Pkg
 Pkg.activate(@__DIR__)
 
@@ -25,9 +25,9 @@ Revise.includet(joinpath(misc_scripts_path, "msglm_utils.jl"));
 
 objid_col = Symbol(string(proj_info.modelobj, "_id"));
 
-input_rdata = load(joinpath(scratch_path, "$(proj_info.id)_msglm_data_$(proj_info.mq_folder)_$(proj_info.data_ver).RData"), convert=true)
-full_rdata = load(joinpath(scratch_path, "$(proj_info.id)_msdata_full_$(proj_info.mq_folder)_$(proj_info.data_ver).RData"), convert=true)
-fit_rdata = load(joinpath(scratch_path, "$(proj_info.id)_msglm_fit_$(proj_info.mq_folder)_$(proj_info.fit_ver).RData"), convert=true)
+input_rdata = load(joinpath(scratch_path, "$(proj_info.id)_msglm_data_$(proj_info.ms_folder)_$(proj_info.data_ver).RData"), convert=true)
+full_rdata = load(joinpath(scratch_path, "$(proj_info.id)_msdata_full_$(proj_info.ms_folder)_$(proj_info.data_ver).RData"), convert=true)
+fit_rdata = load(joinpath(scratch_path, "$(proj_info.id)_msglm_fit_$(proj_info.ms_folder)_$(proj_info.fit_ver).RData"), convert=true)
 effects_df = copy(input_rdata["effects.df"]);
 contrasts_df = unique!(select!(copy(input_rdata["contrastXmetacondition.df"]), [:contrast, :contrast_type]));
 objects_df = copy(input_rdata["msdata"][string(proj_info.modelobj, "s")]) |> MSGLMUtils.fix_object_id!;
@@ -227,7 +227,7 @@ for term_coll in unique(obj_contrast_covers_df.term_collection), signif in (fals
                    :yaxis_tickfont_size=>12, :xaxis_tickangle=>45]
         coll_heatmap.plot.layout[k] = v
     end
-    plotname = joinpath(plots_path, "$(proj_info.mq_folder)", "oesc_$(sel_std_type)_std",
+    plotname = joinpath(plots_path, "$(proj_info.ms_folder)", "oesc_$(sel_std_type)",
                         "$(proj_info.id)_$(proj_info.oesc_ver)_$(term_coll)_X_contrast$(signif ? "_signif" : "")_heatmap")
     PlotlyJS.savehtml(coll_heatmap, "$(plotname).html", :embed);
     try

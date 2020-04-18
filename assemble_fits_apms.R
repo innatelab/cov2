@@ -25,16 +25,16 @@ require(stringr)
 require(maxquantUtils)
 
 message('Loading data...')
-load(file.path(scratch_path, str_c(project_id, '_msglm_data_', mq_folder, '_', data_version, '.RData')))
-load(file.path(scratch_path, str_c(project_id, '_msdata_full_', mq_folder, '_', data_version, '.RData')))
+load(file.path(scratch_path, str_c(project_id, '_msglm_data_', ms_folder, '_', data_version, '.RData')))
+load(file.path(scratch_path, str_c(project_id, '_msdata_full_', ms_folder, '_', data_version, '.RData')))
 
 source(file.path(project_scripts_path, 'setup_modelobj.R'))
 
 message('Loading MSGLM model fit results...')
 strip_samples <- TRUE
 
-fit_path <- file.path(scratch_path, str_c(project_id, '_', mq_folder, '_msglm', modelobj_suffix))
-fit_files <- list.files(fit_path, str_c(project_id, '_', mq_folder, '_msglm', modelobj_suffix, 
+fit_path <- file.path(scratch_path, str_c(project_id, '_', ms_folder, '_msglm', modelobj_suffix))
+fit_files <- list.files(fit_path, str_c(project_id, '_', ms_folder, '_msglm', modelobj_suffix, 
                                         '_', fit_version, '_\\d+\\.RData'))
 message('Found ', length(fit_files), ' model file(s)')
 fit_files.df <- tibble(filename = as.character(fit_files)) %>%
@@ -239,8 +239,8 @@ object_contrasts_wide.df <- pivot_wider(object_contrasts.df,
                                         names_from = "contrast", names_sep = ".",
                                         values_from = c("median_log2", "mean_log2", "sd_log2", "p_value", "is_hit", "change"))
 
-rfit_filepath <- file.path(scratch_path, paste0(project_id, '_msglm_fit_', mq_folder, '_', fit_version, '.RData'))
-results_info <- list(project_id = project_id, mq_folder=mq_folder,
+rfit_filepath <- file.path(scratch_path, paste0(project_id, '_msglm_fit_', ms_folder, '_', fit_version, '.RData'))
+results_info <- list(project_id = project_id, ms_folder=ms_folder,
                      data_version = data_version, fit_version = fit_version,
                      modelobj = modelobj, quantobj = quantobj)
 message('Saving full analysis results to ', rfit_filepath, '...')

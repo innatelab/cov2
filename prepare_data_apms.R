@@ -7,7 +7,7 @@ project_id <- 'cov2'
 message('Project ID=', project_id)
 data_version <- "20200417"
 fit_version <- "20200417"
-mq_folder <- 'mq_apms_20200417'
+ms_folder <- 'mq_apms_20200417'
 message('Dataset version is ', data_version)
 
 source("~/R/config.R")
@@ -26,11 +26,11 @@ require(stringr)
 require(readr)
 require(pheatmap)
 
-mqdata_path <- file.path(data_path, mq_folder)
+mqdata_path <- file.path(data_path, ms_folder)
 
 data_info <- list(project_id = project_id,
                   data_ver = data_version, fit_ver = fit_version,
-                  mq_folder = mq_folder,
+                  ms_folder = ms_folder,
                   instr_calib_protgroup_filename = "instr_protgroup_LFQ_calib_scaturro_qep5calib_20161110_borg.json",
                   instr_calib_pepmodstate_filename = "instr_pepmod_intensity_raw_calib_laudenbach_pcp_20170128_borg.json",
                   quant_type = "LFQ", quant_col_prefix = "LFQ_Intensity",
@@ -63,7 +63,7 @@ mqevidence$peptides <- read.MaxQuant.Peptides(file.path(mqdata_path, 'combined/t
                                               import_data = c("ident_type"))
 mqevidence$peaks <- NULL # exclude big data frame
 
-mqrdata_filepath <- file.path(data_path, str_c(project_id, '_mqdata_APMS_', mq_folder, '.RData'))
+mqrdata_filepath <- file.path(data_path, str_c(project_id, '_mqdata_APMS_', ms_folder, '.RData'))
 message('Saving imported MaxQuant MS data to ', mqrdata_filepath, '...')
 save(data_info, msruns.df, fasta.dfs,
      msdata.wide, mqevidence, instr_calib,
@@ -122,11 +122,11 @@ msdata_full$pepmodstates <- mqevidence$pepmodstates
 # redefine protein groups (protregroups) considering only peptides that are clicked
 pepmods.df <- dplyr::select(msdata_full$pepmods, pepmod_id, protgroup_ids, protein_acs, lead_protein_acs, seq, modifs, charges, is_reverse, is_used)
 proteins.df <- msdata_full$proteins
-save(file = file.path(mqdata_path, str_c(project_id, "_", mq_folder, '_', data_version, "_pepmods.RData")),
+save(file = file.path(mqdata_path, str_c(project_id, "_", ms_folder, '_', data_version, "_pepmods.RData")),
      pepmods.df, proteins.df)
 # .. run protregroup_apms.jl
-msdata_full$protregroups <- read_tsv(file.path(data_path, mq_folder,
-                                               str_c(project_id, "_", mq_folder, '_', data_version, "_protregroups_acs.txt")),
+msdata_full$protregroups <- read_tsv(file.path(data_path, ms_folder,
+                                               str_c(project_id, "_", ms_folder, '_', data_version, "_protregroups_acs.txt")),
                                      col_types = list(protregroup_id = "i")) %>%
   dplyr::mutate(is_contaminant = str_detect(majority_protein_acs, "(;|^)CON__"),
                 is_reverse = str_detect(majority_protein_acs, "(;|^)REV__"))
@@ -263,7 +263,7 @@ dimnames(conditionXeffect.mtx) <- list(condition = conditions.df$condition,
                                        effect = colnames(conditionXeffect.mtx))
 
 pheatmap(conditionXeffect.mtx, cluster_rows=FALSE, cluster_cols=FALSE, 
-         filename = file.path(analysis_path, 'plots', mq_folder, paste0(project_id, "_exp_design_", mq_folder, "_", fit_version, ".pdf")),
+         filename = file.path(analysis_path, 'plots', ms_folder, paste0(project_id, "_exp_design_", ms_folder, "_", fit_version, ".pdf")),
          width = 8, height = 6)
 
 effects.df <- tibble(effect=colnames(conditionXeffect.mtx)) %>%
@@ -295,14 +295,14 @@ inv_conditionXeffect.mtx <- frame2matrix(conditionXeffect.df,
                                          rows = rownames(conditionXeffect.mtx),
                                          cols = colnames(conditionXeffect.mtx))
 pheatmap(inv_conditionXeffect.mtx, cluster_rows=FALSE, cluster_cols=FALSE,
-         filename = file.path(analysis_path, 'plots', mq_folder, paste0(project_id, "_exp_design_inv_", mq_folder, "_", fit_version, ".pdf")),
+         filename = file.path(analysis_path, 'plots', ms_folder, paste0(project_id, "_exp_design_inv_", ms_folder, "_", fit_version, ".pdf")),
          width = 8, height = 6)
 
 msrunXreplEffect.mtx <- replicate_effects_matrix(
   mutate(msdata$msruns, batch_condition=str_c("B", batch, "_", condition)),
   replicate_col = "replicate", condition_col = "condition")
 pheatmap(msrunXreplEffect.mtx, cluster_rows=FALSE, cluster_cols=FALSE,
-         filename = file.path(analysis_path, 'plots', mq_folder, paste0(project_id, "_exp_design_msruns_", mq_folder, "_", fit_version, ".pdf")),
+         filename = file.path(analysis_path, 'plots', ms_folder, paste0(project_id, "_exp_design_msruns_", ms_folder, "_", fit_version, ".pdf")),
          width = 16, height = 20)
 
 msrunXreplEffect.df <- as_tibble(as.table(msrunXreplEffect.mtx)) %>%
@@ -324,7 +324,7 @@ for (cname in allminus_metaconditions) {
 }
 conditionXmetacondition.mtx[filter(conditions.df, bait_type == "control")$bait_full_id, "controls"] <- TRUE
 pheatmap(ifelse(conditionXmetacondition.mtx, 1.0, 0.0), cluster_rows=FALSE, cluster_cols=FALSE,
-         filename = file.path(analysis_path, 'plots', mq_folder, paste0(project_id, "_metaconditions_", mq_folder, "_", fit_version, ".pdf")),
+         filename = file.path(analysis_path, 'plots', ms_folder, paste0(project_id, "_metaconditions_", ms_folder, "_", fit_version, ".pdf")),
          width = 8, height = 6)
 
 conditionXmetacondition.df <- as_tibble(as.table(conditionXmetacondition.mtx)) %>%
@@ -356,7 +356,7 @@ for (i in 1:nrow(contrasts.df)) {
                                contrasts.df$metacondition_rhs[[i]])] <- c(1, -1)
 }
 pheatmap(contrastXmetacondition.mtx, cluster_rows=FALSE, cluster_cols=FALSE,
-         filename = file.path(analysis_path, 'plots', mq_folder, paste0(project_id, "_exp_design_contrasts_", mq_folder, "_", fit_version, ".pdf")),
+         filename = file.path(analysis_path, 'plots', ms_folder, paste0(project_id, "_exp_design_contrasts_", ms_folder, "_", fit_version, ".pdf")),
          width = 11, height = 12)
 
 contrastXmetacondition.df <- as_tibble(as.table(contrastXmetacondition.mtx)) %>% dplyr::filter(n != 0) %>%
@@ -473,7 +473,7 @@ msrun_intensities_pca.df <- dplyr::mutate(msrun_intensities_pca.df,
     dplyr::inner_join(msdata$msruns)
 
 require(ggrepel)
-cairo_pdf(filename = file.path(analysis_path, 'plots', mq_folder, paste0(project_id, "_msruns_pca_", mq_folder, "_", fit_version, ".pdf")),
+cairo_pdf(filename = file.path(analysis_path, 'plots', ms_folder, paste0(project_id, "_msruns_pca_", ms_folder, "_", fit_version, ".pdf")),
           width = 18, height = 18)
 ggplot(msrun_intensities_pca.df,
        aes(x=comp_1, y=comp_2, color=bait_id)) +
@@ -487,7 +487,7 @@ msruns_ordered <- filter(msruns.df, msrun %in% colnames(protgroup_intensities_im
   dplyr::arrange(bait_type, bait_id, batch, bait_full_id, replicate) %>% pull(msrun)
 protgroup_hclu = hclust(dist(protgroup_intensities_imp.mtx))
 pheatmap(log2(protgroup_intensities.mtx[, msruns_ordered]), cluster_cols=FALSE, cluster_rows=protgroup_hclu,
-         file = file.path(analysis_path, "plots", mq_folder, paste0(project_id, "_", mq_folder, "_", data_version, "_heatmap_intensity.pdf")), width=30, height=100)
+         file = file.path(analysis_path, "plots", ms_folder, paste0(project_id, "_", ms_folder, "_", data_version, "_heatmap_intensity.pdf")), width=30, height=100)
 
 msrunXbatchEffect_orig.mtx <- model.matrix(
   ~ 1 + batch,
@@ -541,7 +541,7 @@ bait_checks_protregroup.df <- dplyr::left_join(dplyr::select(baits_info.df, bait
   dplyr::mutate(idented_in_msruns = if_else(idented_in_msruns == "", NA_character_, idented_in_msruns),
                 idented_in_AP_of = if_else(idented_in_AP_of == "", NA_character_, idented_in_AP_of))
 
-rmsglmdata_filepath <- file.path(scratch_path, str_c(project_id, '_msglm_data_', mq_folder, '_', data_version, '.RData'))
+rmsglmdata_filepath <- file.path(scratch_path, str_c(project_id, '_msglm_data_', ms_folder, '_', data_version, '.RData'))
 message('Saving MS data for MSGLM to ', rmsglmdata_filepath, '...')
 save(data_info, msdata,
      conditions.df, effects.df,
@@ -557,7 +557,7 @@ save(data_info, msdata,
      bait_checks_protgroup.df, bait_checks_protregroup.df,
      file = rmsglmdata_filepath)
 
-rfulldata_filepath <- file.path(scratch_path, str_c(project_id, '_msdata_full_', mq_folder, '_', data_version, '.RData'))
+rfulldata_filepath <- file.path(scratch_path, str_c(project_id, '_msdata_full_', ms_folder, '_', data_version, '.RData'))
 message('Saving full MS data to ', rfulldata_filepath, '...')
 save(data_info, msdata_full,
      #protgroup_stats.df,
