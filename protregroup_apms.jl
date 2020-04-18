@@ -1,8 +1,7 @@
 proj_info = (id = "cov2",
-             data_ver = "20200410",
-             fit_ver = "20200410",
-             modelobj = "protgroup",
-             mq_folder = "mq_apms_20200409")
+             data_ver = "20200417",
+             fit_ver = "20200417",
+             mq_folder = "mq_apms_20200417")
 using Pkg
 Pkg.activate(@__DIR__)
 

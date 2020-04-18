@@ -22,9 +22,9 @@ module load slurm_setup
 module load charliecloud
 
 PROJECT_ID=cov2
-DATA_VERSION=20200410
-FIT_VERSION=20200410
-MQ_FOLDER=mq_apms_20200409
+DATA_VERSION=20200417
+FIT_VERSION=20200417
+MQ_FOLDER=mq_apms_20200417
 CHUNK_IDS_FILE=${SCRATCH}/${PROJECT_ID}/${PROJECT_ID}_${MQ_FOLDER}_${FIT_VERSION}_pending_chunk_ids
 if [[ -f $CHUNK_IDS_FILE ]]; then
   echo "Reading ${CHUNK_IDS_FILE}..."
