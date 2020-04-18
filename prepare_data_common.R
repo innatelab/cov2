@@ -5,7 +5,7 @@ strlist_label2 <- function(strs, delim=fixed(';')) {
     sapply(str_split(strs, delim), strlist_label)
 }
 
-orgcodes = list("SARS-CoV-2" = "CVHSA2",
+orgcodes = list("SARS-CoV-2" = "SARS2",
                 "SARS-CoV" = "CVHSA",
                 "SARS-CoV-GZ02" = "CVHSA",
                 "HCoV-NL63" = "CVHNL",

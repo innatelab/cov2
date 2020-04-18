@@ -49,8 +49,8 @@ msruns.df <- read_tsv(file.path(mqdata_path, "combined", "experimentalDesign.txt
   left_join(select(baits_info.df, bait_full_id, bait_id, bait_type, orgcode))
 
 fasta.dfs <- list(
-  CoV = read_innate_uniprot_fasta(file.path(data_path, "cov_baits_20200331.fasta")),
-  human = read_innate_uniprot_fasta(file.path(mqdata_path, "fasta/uniprot-9606_proteome_human_reviewed_canonical_isoforms_191008.fasta"))
+  CoV = read_innate_uniprot_fasta(file.path(data_path, "cov_baits_20200415.fasta")),
+  human = read_innate_uniprot_fasta(file.path(data_path, "fasta/uniprot-9606_proteome_human_reviewed_canonical_isoforms_191008.fasta"))
 )
 
 msdata.wide <- read.MaxQuant.ProteinGroups(file.path(mqdata_path, 'combined/txt'),
@@ -256,7 +256,7 @@ msdata <- msdata_full[c('protgroup_intensities', 'protgroup_idents', 'protregrou
 # setup experimental design matrices
 conditionXeffect_orig.mtx <- model.matrix(
   ~ 1 + bait_id + bait_id:orgcode,
-  mutate(conditions.df, orgcode = if_else(bait_type == "sample", orgcode, factor("CVHSA2", levels=levels(orgcode)))))
+  mutate(conditions.df, orgcode = if_else(bait_type == "sample", orgcode, factor("SARS2", levels=levels(orgcode)))))
 conditionXeffect.mtx <- conditionXeffect_orig.mtx[, colSums(abs(conditionXeffect_orig.mtx)) != 0 &
                                                     !str_detect(colnames(conditionXeffect_orig.mtx), "\\(Intercept\\)|bait_idCtrl.+:orgcode")]
 dimnames(conditionXeffect.mtx) <- list(condition = conditions.df$condition,
