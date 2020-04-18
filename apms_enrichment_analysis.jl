@@ -82,6 +82,18 @@ obj_contrast_sets = Dict{Tuple{String, String, String}, Set{ObjectType}}()
 for contrast_df in groupby(obj_contrasts_df[obj_contrasts_df.is_hit, :], [:std_type, :contrast, :change])
     obj_contrast_sets[(string.(contrast_df[1, :std_type], "_std"), contrast_df[1, :contrast], contrast_df[1, :change])] = Set(skipmissing(contrast_df.object_id))
 end
+# leave only true interactors in bait-to-bait comparison
+for ((std_type, contrast, change), objs) in obj_contrast_sets
+    conditions = match(r"(.+)_vs_(.+)", contrast)
+    if !in(conditions[2], ["controls", "others"])
+        cond1_objs = obj_contrast_sets[(std_type, string(conditions[1], "_vs_controls"), "+")]
+        cond2_objs = obj_contrast_sets[(std_type, string(conditions[2], "_vs_controls"), "+")]
+        new_objs = intersect(objs, union(cond1_objs, cond2_objs))
+        @info "$contrast: was $(length(objs)), new $(length(new_objs))"
+        obj_contrast_sets[(std_type, contrast, change)] = new_objs
+    end
+end
+
 # only relevant ones
 sel_std_type = "replicate"
 obj_contrast_selsets = filter(kv ->
