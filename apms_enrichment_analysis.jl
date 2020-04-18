@@ -162,7 +162,7 @@ obj_contrast_covers_df = join(OptCoverUtils.covers_report(
 obj_contrast_covers_signif_df = by(obj_contrast_covers_df, :term_collection) do coll_df
     @info "Processing $(coll_df.term_collection[1])..."
     return select!(OptCoverUtils.filter_multicover(coll_df, set_cols=[:std_type, :contrast, :change],
-                                                   max_term_pvalue=1E-3, max_set_pvalue=1E-2, max_entry_pvalue=1.0),
+                                                   max_term_pvalue=1E-4, max_set_pvalue=1E-3, max_entry_pvalue=1.0),
                    Not(:term_collection))
 end
 
