@@ -119,7 +119,7 @@ pre_object_effects.df <- dplyr::inner_join(iactions.df, conditionXeffect.df) %>%
 pre_object_contrasts.df <- dplyr::inner_join(iactions.df, conditionXmetacondition.df) %>%
   dplyr::inner_join(contrastXmetacondition.df) %>%
   dplyr::mutate(is_lhs = weight > 0) %>%
-  dplyr::group_by(object_id, contrast, is_lhs) %>%
+  dplyr::group_by(object_id, contrast_type, contrast, metacondition, condition_role, is_lhs) %>%
   dplyr::summarise(has_quanted = any(!is.na(nmsruns_quanted)),
                    nmsruns_quanted_min = min(nmsruns_quanted, na.rm=TRUE),
                    nmsruns_quanted_max = max(nmsruns_quanted, na.rm=TRUE),
@@ -131,7 +131,7 @@ pre_object_contrasts.df <- dplyr::inner_join(iactions.df, conditionXmetaconditio
                 nmsruns_quanted_max = if_else(has_quanted, nmsruns_quanted_max, 0L),
                 nmsruns_idented_min = if_else(has_idented, nmsruns_idented_min, 0L),
                 nmsruns_idented_max = if_else(has_idented, nmsruns_idented_max, 0L)) %>%
-  dplyr::group_by(object_id, contrast) %>%
+  dplyr::group_by(object_id, contrast_type, contrast) %>%
   dplyr::summarise(nmsruns_quanted_lhs_min = nmsruns_quanted_min[is_lhs],
                    nmsruns_quanted_lhs_max = nmsruns_quanted_max[is_lhs],
                    nmsruns_idented_lhs_min = nmsruns_idented_min[is_lhs],
@@ -140,7 +140,11 @@ pre_object_contrasts.df <- dplyr::inner_join(iactions.df, conditionXmetaconditio
                    nmsruns_quanted_rhs_max = nmsruns_quanted_max[!is_lhs],
                    nmsruns_idented_rhs_min = nmsruns_idented_min[!is_lhs],
                    nmsruns_idented_rhs_max = nmsruns_idented_max[!is_lhs]) %>%
-  dplyr::ungroup()
+  dplyr::ungroup() %>%
+  dplyr::left_join(dplyr::select(filter(contrastXcondition.df, weight > 0),
+                                 bait_full_id, contrast)) %>%
+  dplyr::left_join(dplyr::select(filter(contrastXcondition.df, contrast_type == "comparison" & weight < 0),
+                                 bait_full_id_rhs=bait_full_id, contrast))
 
 object_effects.df <- pre_object_effects.df %>% dplyr::inner_join(fit_stats$object_effects) %>%
   dplyr::left_join(select(modelobjs_df, object_id, is_msvalid_object)) %>%
@@ -161,7 +165,6 @@ object_contrasts.df <- dplyr::inner_join(pre_object_contrasts.df, fit_contrasts$
   dplyr::left_join(select(modelobjs_df, object_id, is_msvalid_object)) %>%
   dplyr::filter(var %in% c('iaction_labu', 'iaction_labu_replCI')) %>%
   dplyr::mutate(std_type = if_else(str_detect(var, "_replCI$"), "replicate", "median")) %>%
-  dplyr::inner_join(dplyr::select(contrastXmetacondition.df, contrast, metacondition, contrast_type, condition_role)) %>%
   dplyr::mutate(p_value = pmin(prob_nonpos, prob_nonneg) * if_else(contrast_type == "comparison", 2, 1)) %>%
   dplyr::group_by(std_type, var, contrast) %>%
   dplyr::mutate(p_value_adj = pmin(p.adjust(c(prob_nonpos, prob_nonneg), method = "BY")[1:n()],
@@ -196,8 +199,7 @@ strong_bait_ids <- c(
 
 object_contrasts_thresholds.df <- select(object_contrasts.df, contrast, contrast_type, std_type) %>%
   distinct() %>%
-  mutate(bait_full_id = str_remove(contrast, "_vs_.+"),
-         p_value_threshold = case_when(bait_full_id %in% weak_bait_ids ~ 0.01,
+  mutate(p_value_threshold = case_when(contrast_type == "filter" & bait_full_id %in% weak_bait_ids ~ 0.01,
                                        TRUE ~ 0.001),
          median_log2_threshold = case_when(bait_full_id %in% weak_bait_ids ~ 1,
                                            TRUE ~ 2),
@@ -218,8 +220,17 @@ object_contrasts.df <- object_contrasts.df %>%
                           (nmsruns_idented_rhs_max>2) & (nmsruns_quanted_rhs_max>2)) &
                   is_msvalid_object,
                 change = if_else(is_signif, if_else(median_log2 < 0, "-", "+"), "."))
+# in bait_vs_bait comparison, consider only the hits of bait_vs_controls comparison
+object_contrasts_vs_controls_hits.df <- filter(object_contrasts.df, str_detect(contrast, "_vs_others") & is_hit_nomschecks)
+object_contrasts.df <- dplyr::select(object_contrasts.df, -any_of(c("is_hit_nomschecks_lhs", "is_hit_nomschecks_rhs"))) %>%
+  dplyr::left_join(dplyr::select(object_contrasts_vs_controls_hits.df, std_type, bait_full_id, object_id, is_hit_nomschecks_lhs=is_hit_nomschecks)) %>%
+  dplyr::left_join(dplyr::select(object_contrasts_vs_controls_hits.df, std_type, bait_full_id_rhs = bait_full_id, object_id, is_hit_nomschecks_rhs=is_hit_nomschecks)) %>%
+  dplyr::mutate(is_hit_nomschecks = is_hit_nomschecks &
+                    ((contrast_type != "comparison") |
+                     (median_log2 > 0 & coalesce(is_hit_nomschecks_lhs, FALSE)) | (median_log2 < 0 & coalesce(is_hit_nomschecks_rhs, FALSE))),
+                is_hit = is_hit & is_hit_nomschecks)
 
-object_contrast_stats.df <- dplyr::group_by(object_contrasts.df, contrast, contrast_type, std_type) %>%
+object_contrast_stats.df <- dplyr::group_by(object_contrasts.df, contrast, bait_full_id, contrast_type, std_type) %>%
   dplyr::summarise(p_value_001 = quantile(p_value, 0.001),
                    p_value_01 = quantile(p_value, 0.01),
                    p_value_05 = quantile(p_value, 0.05),
