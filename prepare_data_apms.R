@@ -65,10 +65,10 @@ mqevidence$peptides <- read.MaxQuant.Peptides(file.path(mqdata_path, 'combined/t
                                               import_data = c("ident_type"))
 mqevidence$peaks <- NULL # exclude big data frame
 
-mqrdata_filepath <- file.path(data_path, str_c(project_id, '_mqdata_APMS_', ms_folder, '.RData'))
+mqrdata_filepath <- file.path(scratch_path, str_c(project_id, '_mqdata_APMS_', ms_folder, '.RData'))
 message('Saving imported MaxQuant MS data to ', mqrdata_filepath, '...')
 save(data_info, msruns.df, fasta.dfs,
-     msdata.wide, mqevidence, instr_calib,
+     msdata.wide, mqevidence, instr_calib_pepmodstate, instr_calib_protgroup,
      file = mqrdata_filepath, compress = "xz")
 load(mqrdata_filepath)
 
