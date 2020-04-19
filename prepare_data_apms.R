@@ -461,6 +461,14 @@ protgroup_intensities4pca.df <- msdata_full$protgroup_intensities_all %>%
   dplyr::semi_join(dplyr::filter(msdata$protgroups, !is_reverse & !is_contaminant)) %>%
   dplyr::arrange(msrun, protgroup_id)
 
+protgroup_intensities4pca_agg.df <- inner_join(protgroup_intensities4pca.df,
+                                               dplyr::select(msdata$msruns, msrun, batch, condition)) %>%
+  dplyr::mutate(batch_condition = str_c("B", batch, "_", condition)) %>%
+  dplyr::group_by(batch_condition, protgroup_id) %>%
+  dplyr::summarise(intensity_imputed_norm = median(intensity_imputed_norm)) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(log2_intensity_imputed_norm = log2(intensity_imputed_norm))
+
 protgroup_intensities.mtx <- matrix(log2(protgroup_intensities4pca.df$intensity_norm),
                                     nrow = n_distinct(protgroup_intensities4pca.df$protgroup_id),
                                     dimnames = list(protgroup = unique(protgroup_intensities4pca.df$protgroup_id),
@@ -469,6 +477,10 @@ protgroup_intensities_imp.mtx <- matrix(log2(protgroup_intensities4pca.df$intens
                                     nrow = n_distinct(protgroup_intensities4pca.df$protgroup_id),
                                     dimnames = list(protgroup = unique(protgroup_intensities4pca.df$protgroup_id),
                                                     msrun = unique(protgroup_intensities4pca.df$msrun)))
+protgroup_intensities_imp_agg.mtx <- matrix(log2(protgroup_intensities4pca_agg.df$intensity_imputed_norm),
+                                        nrow = n_distinct(protgroup_intensities4pca_agg.df$protgroup_id),
+                                        dimnames = list(protgroup = unique(protgroup_intensities4pca_agg.df$protgroup_id),
+                                                        batch_condition = unique(protgroup_intensities4pca_agg.df$batch_condition)))
 
 require(FactoMineR)
 msrun_intensities_pca <- PCA(protgroup_intensities_imp.mtx, graph = FALSE)
@@ -489,8 +501,12 @@ ggplot(msrun_intensities_pca.df,
 dev.off()
 
 require(pheatmap)
-msruns_ordered <- filter(msruns.df, msrun %in% colnames(protgroup_intensities_imp.mtx)) %>%
-  dplyr::arrange(bait_type, bait_id, batch, bait_full_id, replicate) %>% pull(msrun)
+condition_hclu = hclust(dist(t(protgroup_intensities_imp_agg.mtx)))
+msruns_ordered <- filter(msdata$msruns, msrun %in% colnames(protgroup_intensities_imp.mtx)) %>%
+  mutate(batch_condition = factor(str_c("B", batch, "_", condition), levels=condition_hclu$labels[condition_hclu$order])) %>%
+  dplyr::arrange(batch_condition, replicate) %>%
+  #dplyr::arrange(bait_type, bait_id, batch, bait_full_id, replicate) %>%
+  pull(msrun)
 protgroup_hclu = hclust(dist(protgroup_intensities_imp.mtx))
 pheatmap(log2(protgroup_intensities.mtx[, msruns_ordered]), cluster_cols=FALSE, cluster_rows=protgroup_hclu,
          file = file.path(analysis_path, "plots", ms_folder, paste0(project_id, "_", ms_folder, "_", data_version, "_heatmap_intensity.pdf")), width=30, height=100)
