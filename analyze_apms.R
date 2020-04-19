@@ -96,9 +96,9 @@ sel_pepmod_intens.df <- dplyr::inner_join(dplyr::select(sel_pepmodstates.df, obj
                                                         pepmod_id, pepmodstate_id, charge, pepmodstate_ext) %>%
                                                  dplyr::distinct(),
                                              msdata_full$pepmodstate_intensities) %>%
-    dplyr::inner_join(distinct(select(msdata$msruns, msrun, replicate, bait_type, bait_full_id, bait_id, condition)) %>%
+    dplyr::inner_join(distinct(select(msdata$msruns, msrun, batch, replicate, bait_type, bait_full_id, bait_id, condition)) %>%
                       dplyr::left_join(dplyr::select(total_msrun_shifts.df, msrun, total_msrun_shift)) %>%
-                      dplyr::arrange(bait_type, bait_id, bait_full_id, replicate) %>%
+                      dplyr::arrange(bait_type, bait_id, bait_full_id, batch, replicate) %>%
                       dplyr::mutate(msrun.2 = factor(msrun, levels=msrun))) %>%
     dplyr::mutate(intensity_norm = exp(-total_msrun_shift)*intensity,
                   msrun = msrun.2,
