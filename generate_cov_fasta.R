@@ -19,11 +19,10 @@ require(stringr)
 require(dplyr)
 require(tidyr)
 
-#baits_info.df <- read_xls(file.path(analysis_path, "data", "baits_info.xlsx"))
-baits_info.df <- read_tsv(file.path(analysis_path, "data", "baits_info.txt"))
+baits_info.df <- read_xlsx(file.path(analysis_path, "data", "baits_info.xlsx"))
 baits_info.df <- mutate(baits_info.df,
                         used_uniprot_ac = ifelse(!is.na(uniprot_ac), uniprot_ac, bait_id),
-                        organism_code = case_when(virus == "SARS-CoV-2" ~ "CVHSA2",
+                        organism_code = case_when(virus == "SARS-CoV-2" ~ "SARS2",
                                                   virus == "SARS-CoV" ~ "CVHSA",
                                                   virus == "SARS-CoV-GZ02" ~ "CVHSA",
                                                   virus == "HCoV-NL63" ~ "CVHNL",
@@ -41,9 +40,9 @@ aaseqs <- baits_info.df$aa_sequence
 names(aaseqs) <- baits_info.df$fasta_header
 
 bait_aaseqset <- AAStringSet(aaseqs[!is.na(aaseqs)])
-Biostrings::writeXStringSet(bait_aaseqset, file.path(analysis_path, "data", "cov_baits_20200331.fasta"))
+Biostrings::writeXStringSet(bait_aaseqset, file.path(analysis_path, "data", "msfasta", "cov_baits_20200415.fasta"))
 
-exp_design_template.df <- read_tsv(file.path(analysis_path, "data", "mq_apms_20200409", "experimentalDesignTemplate.txt"))
+exp_design_template.df <- read_tsv(file.path(analysis_path, "data", "mq_apms_20200415", "experimentalDesignTemplate.txt"))
 
 exp_design.df <- extract(exp_design_template.df,
                          Name, c("date", "instrument", "user", "sample_type", "project", "data_type", "bait_code", "replicate", "tech_replicate"),
@@ -64,7 +63,7 @@ exp_design.df <- extract(exp_design_template.df,
                               if_else(is.na(tech_replicate_ix), "", str_c("#", tech_replicate_ix)))) %>%
     select(Name, Fraction, Experiment, PTM)
 
-write_tsv(exp_design.df, path = file.path(analysis_path, "data", "mq_apms_20200409", "experimentalDesign.txt"), na = "")
+write_tsv(exp_design.df, path = file.path(analysis_path, "data", "mq_apms_20200417", "experimentalDesign.txt"), na = "")
 
 bait_mapping.df <- read_tsv(file.path(analysis_path, "data", "BaitsIDMapping.txt"))
 
