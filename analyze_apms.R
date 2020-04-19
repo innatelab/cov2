@@ -43,6 +43,7 @@ group_by(contrast, std_type) %>% do({
     sel_object_contrast.df <- .
     sel_object_contrast_thresholds.df <- semi_join(object_contrasts_thresholds.df, sel_object_contrast.df)
     message("Plotting ", sel_object_contrast_thresholds.df$contrast[[1]], " std_type=", sel_object_contrast.df$std_type[[1]])
+    nlabels <- nrow(dplyr::filter(sel_object_contrast.df, is_signif & show_label))
 
     p <- ggplot(sel_object_contrast.df,
                 aes(x=median_log2_trunc, y=p_value_compressed, color=is_viral, shape=truncation, size=truncation_type)) +
@@ -62,7 +63,11 @@ group_by(contrast, std_type) %>% do({
         geom_point(data=dplyr::filter(sel_object_contrast.df, is_signif & is_hit)) +
         geom_text_repel(data=dplyr::filter(sel_object_contrast.df, is_signif & show_label),
                   aes(label = object_label),
-                  vjust=-0.5, size=3, show.legend = FALSE, segment.color = "gray") +
+                  vjust=-0.5,
+                  size=if_else(nlabels > 20, 2.5, 3.5),
+                  force=if_else(nlabels > 20, 0.25, 1.0),
+                  label.padding=if_else(nlabels > 20, 0.1, 0.25),
+                  show.legend = FALSE, segment.color = "gray") +
         scale_y_continuous(trans=mlog10_trans(), limits=c(1.0, NA)) +
         scale_color_manual(values=c("TRUE" = "red", "FALSE" = "black"), na.value="black") +
         scale_shape_manual(values=c("p_value"=-9650,
