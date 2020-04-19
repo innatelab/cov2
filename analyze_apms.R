@@ -26,11 +26,17 @@ object_contrasts_4show.df <- object_contrasts.df %>%
                   object_label = if_else(is_viral & !is.na(obj_bait_full_id), obj_bait_full_id, object_label),
                   show_label = is_viral | is_hit_nomschecks,
                   truncation = case_when(#p_value < p_value_capped ~ "p_value",
-                                         median_log2 > median_log2_trunc ~ "median_right",
-                                         median_log2 < median_log2_trunc ~ "median_left",
+                                         median_log2 > median_log2_trunc & is_hit ~ "median_right hit",
+                                         median_log2 > median_log2_trunc & !is_hit ~ "median_right nonhit",
+                                         median_log2 < median_log2_trunc & is_hit ~ "median_left hit",
+                                         median_log2 < median_log2_trunc & !is_hit ~ "median_left nonhit",
                                          is_signif & !is_hit ~ "significant nonhit",
                                          is_hit ~ "hit",
-                                         TRUE ~ "none"))
+                                         TRUE ~ "none"),
+                  truncation_type = case_when(truncation == "none" ~ "insignif",
+                                              truncation %in% c("hit", "significant nonhit") ~ "signif",
+                                              is_signif ~ "truncated signif",
+                                              TRUE ~ "truncated insignif"))
 
 object_contrasts_4show.df %>%
 group_by(contrast, std_type) %>% do({
@@ -39,7 +45,7 @@ group_by(contrast, std_type) %>% do({
     message("Plotting ", sel_object_contrast_thresholds.df$contrast[[1]], " std_type=", sel_object_contrast.df$std_type[[1]])
 
     p <- ggplot(sel_object_contrast.df,
-                aes(x=median_log2_trunc, y=p_value_compressed, color=is_viral, shape=truncation)) +
+                aes(x=median_log2_trunc, y=p_value_compressed, color=is_viral, shape=truncation, size=truncation_type)) +
         geom_hline(data=sel_object_contrast_thresholds.df,
                    aes(yintercept = p_value_threshold), linetype=2, color="darkgray") +
         #geom_hline(data=sel_object_contrast_thresholds.df,
@@ -52,17 +58,20 @@ group_by(contrast, std_type) %>% do({
                    aes(xintercept = -median_log2_threshold), linetype=2, color="darkgray") +
         geom_point_rast(data=dplyr::filter(sel_object_contrast.df, !is_signif),
                         alpha=0.1, size=0.5, color="darkgray") +
-        geom_point(data=dplyr::filter(sel_object_contrast.df, is_signif & !is_hit), aes(size=truncation=="none"), shape=1L) +
-        geom_point(data=dplyr::filter(sel_object_contrast.df, is_signif & is_hit), aes(size=truncation=="none"), shape=16L) +
+        geom_point(data=dplyr::filter(sel_object_contrast.df, is_signif & !is_hit)) +
+        geom_point(data=dplyr::filter(sel_object_contrast.df, is_signif & is_hit)) +
         geom_text_repel(data=dplyr::filter(sel_object_contrast.df, is_signif & show_label),
                   aes(label = object_label),
                   vjust=-0.5, size=3, show.legend = FALSE, segment.color = "gray") +
         scale_y_continuous(trans=mlog10_trans(), limits=c(1.0, NA)) +
         scale_color_manual(values=c("TRUE" = "red", "FALSE" = "black"), na.value="black") +
-        scale_shape_manual(values=c("p_value"=-9650, "median_left"=-9664, "median_right"=-9654,
+        scale_shape_manual(values=c("p_value"=-9650,
+                                    "median_left hit"=-9664, "median_left nonhit"=-9665,
+                                    "median_right hit"=-9654, "median_right nonhit"=-9655,
                                     "significant nonhit"=1L, "hit"=16L, "none"=16L), guide="none") +
         #scale_fill_gradient(low="gray75", high="black") +
-        scale_size_manual(values=c("TRUE"=1, "FALSE"=2.5), guide="none") +
+        scale_size_manual(values=c("insignif"=1, "signif"=2,
+                                   "truncated insignif"=2, "truncated signif"=4), guide="none") +
         #scale_alpha_manual(values=c("TRUE"=1.0, "FALSE"=0.5)) +
         #facet_grid(p_value_range ~ contrast, scales = "free_y") +
         ggtitle(sel_object_contrast_thresholds.df$contrast[[1]],
