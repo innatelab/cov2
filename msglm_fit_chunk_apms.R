@@ -1,5 +1,5 @@
 Sys.setenv(TZ='Etc/GMT+1') # issue#612@rstan
-#job.args <- c("cov2", "ast_cov2_msglm", "mq_apms_20200417", "20200417", "20200417", "0", "1235")
+#job.args <- c("cov2", "ast_cov2_msglm", "mq_apms_20200417", "20200420", "20200420", "0", "174")
 if (!exists('job.args')) {
   job.args <- commandArgs(trailingOnly = TRUE)
 }
@@ -160,7 +160,7 @@ min.iteration <- as.integer(1.5 * msglm.stan_fit@sim$warmup)
 
 background_contrasts <- unique(as.character(filter(contrastXmetacondition.df,
                                                    str_detect(contrast, "_vs_others") & weight < 0)$contrast))
-background_contrasts.quantiles_rhs <- lapply(background_contrasts, function(contr) c(0.25, 0.9))
+background_contrasts.quantiles_rhs <- lapply(background_contrasts, function(contr) c(0.25, 0.92))
 names(background_contrasts.quantiles_rhs) <- background_contrasts
 
 msglm_results <- process.stan_fit(msglm.stan_fit, dims_info,
