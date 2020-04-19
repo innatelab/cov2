@@ -3,6 +3,9 @@ source(file.path(misc_scripts_path, 'ggplot_ext.R'))
 require(ggrastr)
 require(ggrepel)
 
+bait_checks.df <- get(str_c("bait_checks_", modelobj, ".df"))
+bait_checks.df$object_id <- bait_checks.df[[modelobj_idcol]]
+
 mlog10_pvalue_compress <- function(x, threshold = 10) {
     if (x < threshold) {
         return (x)
@@ -15,10 +18,12 @@ mlog10_pvalue_compress <- function(x, threshold = 10) {
 }
 
 object_contrasts_4show.df <- object_contrasts.df %>%
+    dplyr::left_join(dplyr::select(bait_checks.df, object_id, obj_bait_full_id = bait_full_id, obj_organism = bait_organism)) %>%
     dplyr::mutate(p_value_compressed = 10^(-sapply(-log10(p_value), mlog10_pvalue_compress)),
                   p_value_capped = pmax(1E-20, p_value),
                   p_value_range = if_else(p_value <= 1E-7, "high", "low"),
                   object_annotation = is_viral,
+                  object_label = if_else(is_viral & !is.na(obj_bait_full_id), obj_bait_full_id, object_label),
                   show_label = is_viral | is_hit_nomschecks,
                   truncation = case_when(#p_value < p_value_capped ~ "p_value",
                                          median_log2 > median_log2_trunc ~ "median_right",
