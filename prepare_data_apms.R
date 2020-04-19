@@ -289,7 +289,7 @@ effects.df <- dplyr::mutate(effects.df,
                             effect_type = case_when(!is.na(bait_id) & !is.na(orgcode) ~ "baitXvirus",
                                                     !is.na(bait_id) ~ "bait"),
                             effect_label = factor(effect_label, levels=effect_label)) %>%
-  dplyr::mutate(prior_tau = case_when(effect_type == "baitXvirus" ~ 0.25,
+  dplyr::mutate(prior_tau = case_when(effect_type == "baitXvirus" ~ 0.5,
                                       effect_type == "bait" ~ 1.0,
                                       TRUE ~ 5.0))
 # prior_mean is calculated after the normalization
