@@ -5,9 +5,9 @@
 
 project_id <- 'cov2'
 message('Project ID=', project_id)
-data_version <- "20200410"
-fit_version <- "20200410"
-mq_folder <- 'mq_apms_20200409'
+data_version <- "20200417"
+fit_version <- "20200417"
+ms_folder <- 'mq_apms_20200417'
 message("Assembling fit results for project ", project_id,
         " (dataset v", data_version, ", fit v", fit_version, ")")
 
@@ -173,33 +173,41 @@ object_contrasts.df <- dplyr::inner_join(pre_object_contrasts.df, fit_contrasts$
 
 weak_bait_ids <- c("SARS_CoV_E", "SARS_CoV2_E",
                    "HCoV_ORF4",
+                   "SARS_CoV_ORF3b", 
                    "SARS_CoV_ORF6", "SARS_CoV2_ORF6",
                    "SARS_CoV_ORF7a", "SARS_CoV2_ORF7a",
                    "SARS_CoV_ORF8",
+                   "SARS_CoV_ORF8a",
                    "SARS_CoV_ORF9b", "SARS_CoV2_ORF9b",
                    "SARS_CoV2_N",
                    "SARS_CoV2_NSP1",
+                   "SARS_CoV_NSP2", "SARS_CoV2_NSP2",
                    "SARS_CoV_NSP3_macroD", "SARS_CoV2_NSP3_macroD",
-                   "SARS_CoV2_NSP4",
+                   "SARS_CoV_NSP4", "SARS_CoV2_NSP4",
                    "SARS_CoV_NSP7", "SARS_CoV2_NSP7",
-                   "SARS_CoV2_NSP8",
-                   "SARS_CoV2_NSP9",
+                   "SARS_CoV_NSP8", "SARS_CoV2_NSP8",
+                   "SARS_CoV_NSP9", "SARS_CoV2_NSP9",
                    "SARS_CoV_NSP10",
+                   "SARS_CoV2_NSP13",
                    "SARS_CoV2_NSP14",
-                   "SARS_CoV2_NSP15",
+                   "SARS_CoV_NSP15", "SARS_CoV2_NSP15",
                    "SARS_CoV2_NSP16"
                    )
 
 strong_bait_ids <- c(
                    "SARS_CoV2_ORF3",
                    "HCoV_ORF3",
+                   "SARS_CoV_ORF3a", "HCoV_ORF4a",
                    "SARS_CoV_ORF7b", "SARS_CoV2_ORF7b",
-                   "SARS_CoV_ORF8", "SARS_CoV_ORF8b",
-                   "SARS_CoV2_M", "SARS_CoV_M")
+                   "SARS_CoV_ORF8", "SARS_CoV2_ORF8",
+                   "SARS_CoV_ORF8b",
+                   "SARS_CoV2_M", "SARS_CoV_M",
+                   "SARS_CoV_NSP1",
+                   "SARS_CoV_NSP6", "SARS_CoV2_NSP6")
 
-object_contrasts_thresholds.df <- select(object_contrasts.df, contrast, contrast_type, std_type) %>%
+object_contrasts_thresholds.df <- select(object_contrasts.df, contrast, contrast_type, std_type, bait_full_id) %>%
   distinct() %>%
-  mutate(p_value_threshold = case_when(contrast_type == "filter" & bait_full_id %in% weak_bait_ids ~ 0.01,
+  mutate(p_value_threshold = case_when(contrast_type == "filter" & bait_full_id %in% weak_bait_ids ~ 0.005,
                                        TRUE ~ 0.001),
          median_log2_threshold = case_when(bait_full_id %in% weak_bait_ids ~ 1,
                                            TRUE ~ 2),

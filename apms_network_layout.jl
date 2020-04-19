@@ -1,9 +1,8 @@
 proj_info = (id = "cov2",
-             data_ver = "20200410",
-             fit_ver = "20200410",
-             modelobj = "protgroup",
-             ms_folder = "mq_apms_20200409",
-             network_ver = "20200410")
+             data_ver = "20200417",
+             fit_ver = "20200417",
+             ms_folder = "mq_apms_20200417",
+             network_ver = "20200417")
 using Pkg
 Pkg.activate(@__DIR__)
 using Revise
@@ -156,6 +155,6 @@ apms_graph = GraphML.import_graph(objects_df, iactions_df,
  #                 `Weight` = 'weight',
  #                 `type` = "type" )
                              # verbose=verbose)
-open(joinpath(networks_path, "$(proj_info.id)_4graph_$(proj_info.ms_folder)_$(proj_info.fit_ver)_FA3_2.graphml"), "w") do io
+open(joinpath(networks_path, "$(proj_info.id)_4graph_$(proj_info.ms_folder)_$(proj_info.fit_ver)_FA3.graphml"), "w") do io
     write(io, apms_graph)
 end

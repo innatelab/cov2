@@ -1,5 +1,5 @@
 proj_info = (id = "cov2",
-             match_ver = "20200331")
+             match_ver = "20200417")
 using Pkg
 Pkg.activate(@__DIR__)
 using Revise

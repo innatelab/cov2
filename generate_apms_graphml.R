@@ -1,9 +1,9 @@
 project_id <- 'cov2'
 message('Project ID=', project_id)
 datasets <- list(
-    apms = list(ms_folder = 'mq_apms_20200409',
-                data_version = "20200410",
-                fit_version = "20200410"),
+    apms = list(ms_folder = 'mq_apms_20200417',
+                data_version = "20200417",
+                fit_version = "20200417"),
     prev_apms = list(ms_folder = 'mq_apms_20200329',
                 data_version = "20200331",
                 fit_version = "20200402"),
