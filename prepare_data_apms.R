@@ -49,8 +49,10 @@ msruns.df <- read_tsv(file.path(mqdata_path, "combined", "experimentalDesign.txt
   left_join(select(baits_info.df, bait_full_id, bait_id, bait_type, orgcode))
 
 fasta.dfs <- list(
-  CoV = read_innate_uniprot_fasta(file.path(data_path, "cov_baits_20200415.fasta")),
-  human = read_innate_uniprot_fasta(file.path(data_path, "fasta/uniprot-9606_proteome_human_reviewed_canonical_isoforms_191008.fasta"))
+  CoV = read_innate_uniprot_fasta(file.path(data_path, "cov_baits_20200415.fasta")) %>%
+    dplyr::select(-protein_name) %>%
+    left_join(select(baits_info.df, protein_ac=uniprot_ac, protein_name=bait_full_id)),
+  human = read_innate_uniprot_fasta(file.path(data_path, "msfasta/uniprot-9606_proteome_human_reviewed_canonical_isoforms_191008.fasta"))
 )
 
 msdata.wide <- read.MaxQuant.ProteinGroups(file.path(mqdata_path, 'combined/txt'),
@@ -107,7 +109,9 @@ msdata_full$protgroups <- left_join(msdata_full$protgroups, pg_razor_stats.df)
 msdata_full$protgroups <- dplyr::mutate(msdata_full$protgroups,
                                         gene_label = strlist_label2(gene_names),
                                         protac_label = strlist_label2(protein_acs),
-                                        protgroup_label = case_when(!is.na(gene_label) ~ gene_label,
+                                        protein_label = strlist_label2(protein_names),
+                                        protgroup_label = case_when(is_viral ~ protein_label,
+                                                                    !is.na(gene_label) ~ gene_label,
                                                                     !is.na(protac_label) ~ protac_label,
                                                                     TRUE ~ str_c('#', protgroup_id)))
 
@@ -164,7 +168,8 @@ msdata_full$protregroups <- dplyr::inner_join(msdata_full$protregroups,
                    is_viral = any(coalesce(is_viral, FALSE))) %>%
   dplyr::ungroup()) %>%
   dplyr::mutate(protac_label = sapply(str_split(majority_protein_acs, fixed(";")), strlist_label),
-                protregroup_label = case_when(!is.na(gene_label) ~ gene_label,
+                protregroup_label = case_when(is_viral ~ protein_label,
+                                              !is.na(gene_label) ~ gene_label,
                                               !is.na(protac_label) ~ protac_label,
                                               TRUE ~ str_c('#', protregroup_id))) %>%
   dplyr::left_join(dplyr::inner_join(msdata_full$protregroup2pepmod, msdata_full$pepmods) %>%
