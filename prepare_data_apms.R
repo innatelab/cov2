@@ -5,8 +5,8 @@
 
 project_id <- 'cov2'
 message('Project ID=', project_id)
-data_version <- "20200417"
-fit_version <- "20200417"
+data_version <- "20200420"
+fit_version <- "20200420"
 ms_folder <- 'mq_apms_20200417'
 message('Dataset version is ', data_version)
 
