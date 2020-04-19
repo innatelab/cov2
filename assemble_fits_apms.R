@@ -238,7 +238,10 @@ object_contrast_stats.df <- dplyr::group_by(object_contrasts.df, contrast, bait_
                    median_log2_abs_95 = quantile(abs(median_log2[p_value <= 0.1]), 0.95),
                    median_log2_abs_99 = quantile(abs(median_log2[p_value <= 0.1]), 0.99),
                    n_hits = sum(is_hit_nomschecks)) %>%
-  dplyr::ungroup()
+  dplyr::ungroup() %>%
+  dplyr::left_join(dplyr::select(msdata$msruns, bait_full_id, batch) %>%
+                   dplyr::group_by(bait_full_id) %>% dplyr::summarise(batches = str_c(unique(batch), collapse=" ")) %>% dplyr::ungroup())
+View(filter(object_contrast_stats.df, std_type == "replicate" & str_detect(contrast, "_vs_others")) %>% dplyr::arrange(desc(batches), desc(n_hits)))
 
 object_effects_wide.df <- pivot_wider(object_effects.df,
                                       id_cols = c("std_type", "object_id", "object_label", "majority_protein_acs", "gene_names"),
