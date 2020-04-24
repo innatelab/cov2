@@ -8,6 +8,7 @@ message('Project ID=', project_id)
 data_version <- "20200423"
 fit_version <- "20200423"
 ms_folder <- 'cov2timecourse_dia_20200423'
+batch <- 'cov2ts'
 message('Dataset version is ', data_version)
 
 source("~/R/config.R")
@@ -77,7 +78,7 @@ msdata_full$msruns <- dplyr::select(msdata_full$protgroup_intensities, msrun_ix,
          infection = factor(infection),
          timepoint= factor(timepoint),
          condition= factor(condition),
-         #batch = if_else(bait_full_id %in% c("SARS_CoV2_E", "SARS_CoV2_M", "SARS_CoV2_N", "SARS_CoV2_NSP15", "SARS_CoV2_NSP16", "SARS_CoV2_ORF3"), 2L, 1L),
+         batch = batch,#if_else(bait_full_id %in% c("SARS_CoV2_E", "SARS_CoV2_M", "SARS_CoV2_N", "SARS_CoV2_NSP15", "SARS_CoV2_NSP16", "SARS_CoV2_ORF3"), 2L, 1L),
          is_used = !msrun %in% bad_msruns
          )
 
@@ -158,6 +159,7 @@ for (TP in distinct_cond_timepoints) {
 }  
 effects.df <- effects.df %>% mutate(timepoint = str_extract(effect,"\\d+h"),
                                     timepoint= str_replace(timepoint,"h","") %>% factor(),
+                                    is_positive = FALSE,
                                     prior_mean = 0,
                                     prior_tau = case_when(!is.na(timepoint) & is.na(infection) ~ 0.5,
                                                           !is.na(timepoint) & !is.na(infection) ~ 2.0,
@@ -315,7 +317,7 @@ pheatmap(contrastXmetacondition.mtx, cluster_rows=FALSE, cluster_cols=FALSE,
 ##  dplyr::mutate(condition_role = if_else(contrast_type == "filter" & weight < 0, "background", "signal"))
 contrastXmetacondition.df <- as_tibble(as.table(contrastXmetacondition.mtx)) %>% dplyr::filter(n != 0) %>% 
   dplyr::rename(weight = n) %>%
-  dplyr::mutate(contrast_type='comparision',
+  dplyr::mutate(contrast_type='comparison',
                 condition_role= 'signal')
 
 contrastXcondition.df <- conditionXmetacondition.df %>%
@@ -553,84 +555,94 @@ global_protgroup_labu_shift <- 0.95*median(log(dplyr::filter(msdata$msruns, TRUE
 
 ###############skip###############
 # normalize using the intensities
-msdata4norm.df <- msdata$protgroup_intensities %>%
-  dplyr::filter(npeptides_quanted > 1 & !is.na(intensity)) %>%
-  dplyr::semi_join(dplyr::filter(msdata$protgroups, !is_contaminant & !is_viral)) %>%
-  dplyr::select(protgroup_id) %>% dplyr::distinct() %>%
-  dplyr::inner_join(msdata$protgroup_intensities)
+##msdata4norm.df <- msdata$protgroup_intensities %>%
+##  dplyr::filter(npeptides_quanted > 1 & !is.na(intensity)) %>%
+##  dplyr::semi_join(dplyr::filter(msdata$protgroups, !is_contaminant & !is_viral)) %>%
+##  dplyr::select(protgroup_id) %>% dplyr::distinct() %>%
+##  dplyr::inner_join(msdata$protgroup_intensities)
 
-options(mc.cores=8)
+##options(mc.cores=8)
 
 # normalize experiments:
 # 1) MS replicates for a given bait
 # 2) same viral protein of different strains
 # 3) all baits together
-msruns_hnorm <- multilevel_normalize_experiments(instr_calib_protgroup,
-                                                 filter(msdata$msruns, is_used) %>%
-                                                   mutate(batch=as.character(batch),
-                                                          batch_bait_full_id = str_c("B", batch, "_", bait_full_id),
-                                                          batch_bait_id = str_c("B", batch, "_", bait_id)),
-                                                 msdata4norm.df,
-                                                 quant_col = "intensity", obj_col = "protgroup_id", mschan_col = "msrun",
-                                                 mcmc.iter = 2000L,
+##msruns_hnorm <- multilevel_normalize_experiments(instr_calib_protgroup,
+##                                                 filter(msdata$msruns, is_used) %>%
+##                                                   mutate(batch=as.character(batch),
+##                                                          batch_bait_full_id = str_c("B", batch, "_", bait_full_id),
+##                                                          batch_bait_id = str_c("B", batch, "_", bait_id)),
+##                                                 msdata4norm.df,
+##                                                 quant_col = "intensity", obj_col = "protgroup_id", mschan_col = "msrun",
+##                                                 mcmc.iter = 2000L,
                                                  #mcmc.chains = 6,
-                                                 verbose=TRUE,
-                                                 norm_levels = list(msrun = list(cond_col = "msrun", max_objs=700L, missing_exp.ratio=0.1),
-                                                                    bait_full_id = list(cond_col="batch_bait_full_id", max_objs=500L, missing_exp.ratio=0.1),
-                                                                    bait_id = list(cond_col="batch_bait_id", max_objs=300L, missing_exp.ratio=0.1),
-                                                                    batch = list(cond_col="batch", max_objs=200L, missing_exp.ratio=0.1)
-                                                 ))
+##                                                 verbose=TRUE,
+##                                                 norm_levels = list(msrun = list(cond_col = "msrun", max_objs=700L, missing_exp.ratio=0.1),
+##                                                                    bait_full_id = list(cond_col="batch_bait_full_id", max_objs=500L, missing_exp.ratio=0.1),
+##                                                                    bait_id = list(cond_col="batch_bait_id", max_objs=300L, missing_exp.ratio=0.1),
+##                                                                    batch = list(cond_col="batch", max_objs=200L, missing_exp.ratio=0.1)
+##                                                 ))
 
 # ignore all higher levels of normalization
-msruns_hnorm$msruns_shifts <- msruns_hnorm$mschannel_shifts
+##msruns_hnorm$msruns_shifts <- msruns_hnorm$mschannel_shifts
 
-total_msrun_shifts.df <- msruns_hnorm$msruns_shifts
+##total_msrun_shifts.df <- msruns_hnorm$msruns_shifts
 
 # apply normalization
-msdata_full$protgroup_intensities <- dplyr::left_join(msdata_full$protgroup_intensities,
-                                                      dplyr::select(total_msrun_shifts.df, msrun, total_msrun_shift)) %>%
-  dplyr::mutate(intensity_norm = intensity*exp(-total_msrun_shift))
+##msdata_full$protgroup_intensities <- dplyr::left_join(msdata_full$protgroup_intensities,
+##                                                      dplyr::select(total_msrun_shifts.df, msrun, total_msrun_shift)) %>%
+##  dplyr::mutate(intensity_norm = intensity*exp(-total_msrun_shift))
 
 # use only native medium to calculate average intensity
-global_protgroup_labu_shift <- 0.95*median(log(dplyr::filter(msdata$msruns) %>%
-                                                 dplyr::select(msrun) %>% dplyr::distinct() %>%
-                                                 dplyr::inner_join(msdata_full$protgroup_intensities) %>% pull(intensity)), na.rm=TRUE)
+##global_protgroup_labu_shift <- 0.95*median(log(dplyr::filter(msdata$msruns) %>%
+##                                                 dplyr::select(msrun) %>% dplyr::distinct() %>%
+##                                                 dplyr::inner_join(msdata_full$protgroup_intensities) %>% pull(intensity)), na.rm=TRUE)
 ############################
-msrunXbatchEffect_orig.mtx <- model.matrix(
-  ~ 1 + batch,
-  mutate(msdata$msruns, batch = factor(batch)))
-msrunXbatchEffect.mtx <- msrunXbatchEffect_orig.mtx[, colnames(msrunXbatchEffect_orig.mtx) != "(Intercept)", drop=FALSE]
+#batcheffect
+msrunXbatchEffect.mtx <- model.matrix(~ 1,
+                                      data=dplyr::mutate(msdata$msruns, batch=factor(batch)))
+msrunXbatchEffect.mtx <- msrunXbatchEffect.mtx[, colnames(msrunXbatchEffect.mtx) != "(Intercept)", drop=FALSE]
 dimnames(msrunXbatchEffect.mtx) <- list(msrun = msdata$msruns$msrun,
-                                        batch_effect = colnames(msrunXbatchEffect_orig.mtx)[colnames(msrunXbatchEffect_orig.mtx) != "(Intercept)"])
-pheatmap(msrunXbatchEffect.mtx, cluster_rows=FALSE, cluster_cols=FALSE)
+                                        batch_effect = colnames(msrunXbatchEffect.mtx))
 
-batch_effects.df <- tibble(batch_effect=colnames(msrunXbatchEffect.mtx),
-                           is_positive=FALSE,
-                           prior_mean = 0.0)
+batch_effects.df <- tibble(batch_effect = character(0),#colnames(msrunXbatchEffect.mtx),
+                           is_positive  = logical(0))
+
+##msrunXbatchEffect_orig.mtx <- model.matrix(
+## ~ 1 + batch,
+##  mutate(msdata$msruns, batch = factor(batch)))
+##msrunXbatchEffect.mtx <- msrunXbatchEffect_orig.mtx[, colnames(msrunXbatchEffect_orig.mtx) != "(Intercept)", drop=FALSE]
+##dimnames(msrunXbatchEffect.mtx) <- list(msrun = msdata$msruns$msrun,
+##                                       batch_effect = colnames(msrunXbatchEffect_orig.mtx)[colnames(msrunXbatchEffect_orig.mtx) != "(Intercept)"])
+##pheatmap(msrunXbatchEffect.mtx, cluster_rows=FALSE, cluster_cols=FALSE)
+
+##batch_effects.df <- tibble(batch_effect=colnames(msrunXbatchEffect.mtx),
+##                           is_positive=FALSE,
+##                           prior_mean = 0.0)
 
 # no subbatch effects so far
-msrunXsubbatchEffect.mtx <- zero_matrix(msrun = rownames(msrunXreplEffect.mtx),
-                                        subbatch_effect = c())
+##msrunXsubbatchEffect.mtx <- zero_matrix(msrun = rownames(msrunXreplEffect.mtx),
+##                                        subbatch_effect = c())
 
-subbatch_effects.df <- tibble(subbatch_effect=character(0),
-                              is_positive=logical(0),
-                              prior_mean = double(0))
+##subbatch_effects.df <- tibble(subbatch_effect=character(0),
+##                              is_positive=logical(0),
+##                              prior_mean = double(0))
 
-bait_checks_protgroup.df <- dplyr::left_join(dplyr::select(baits_info.df, bait_full_id, bait_id, bait_orgcode=orgcode, bait_organism=organism,
-                                                           protein_ac = used_uniprot_ac),
-                                             dplyr::select(msdata_full$proteins, protein_ac, protgroup_id, prot_organism=organism)) %>%
-  dplyr::left_join(dplyr::select(dplyr::filter(msdata$protgroup_intensities, ident_type=="By MS/MS"), protgroup_id, msrun)) %>%
-  dplyr::left_join(dplyr::select(msdata$msruns, msrun, observing_bait_full_id = bait_full_id)) %>%
-  dplyr::arrange(bait_full_id, protgroup_id, msrun) %>%
-  dplyr::group_by(bait_full_id, protgroup_id) %>%
-  dplyr::mutate(idented_in_msruns = str_c(unique(msrun), collapse=";"),
-                idented_in_FP_of = str_c(unique(observing_bait_full_id), collapse=";"),
-                prot_organisms = str_c(unique(prot_organism), collapse=';')) %>%
-  dplyr::filter(row_number()==1L) %>%
-  dplyr::select(-msrun, -observing_bait_full_id) %>%
-  dplyr::ungroup() %>%
-  dplyr::mutate(idented_in_msruns = if_else(idented_in_msruns == "", NA_character_, idented_in_msruns),
-                idented_in_FP_of = if_else(idented_in_FP_of == "", NA_character_, idented_in_FP_of))
+##bait_checks_protgroup.df <- dplyr::left_join(dplyr::select(baits_info.df, bait_full_id, bait_id, bait_orgcode=orgcode, bait_organism=organism,
+##                                                           protein_ac = used_uniprot_ac),
+##                                             dplyr::select(msdata_full$proteins, protein_ac, protgroup_id, prot_organism=organism)) %>%
+##  dplyr::left_join(dplyr::select(dplyr::filter(msdata$protgroup_intensities, ident_type=="By MS/MS"), protgroup_id, msrun)) %>%
+##  dplyr::left_join(dplyr::select(msdata$msruns, msrun, observing_bait_full_id = bait_full_id)) %>%
+##  dplyr::arrange(bait_full_id, protgroup_id, msrun) %>%
+##  dplyr::group_by(bait_full_id, protgroup_id) %>%
+##  dplyr::mutate(idented_in_msruns = str_c(unique(msrun), collapse=";"),
+##                idented_in_FP_of = str_c(unique(observing_bait_full_id), collapse=";"),
+##                prot_organisms = str_c(unique(prot_organism), collapse=';')) %>%
+##  dplyr::filter(row_number()==1L) %>%
+##  dplyr::select(-msrun, -observing_bait_full_id) %>%
+##  dplyr::ungroup() %>%
+##  dplyr::mutate(idented_in_msruns = if_else(idented_in_msruns == "", NA_character_, idented_in_msruns),
+##                idented_in_FP_of = if_else(idented_in_FP_of == "", NA_character_, idented_in_FP_of))
 
 rmsglmdata_filepath <- file.path(scratch_path, str_c(project_id, '_msglm_data_', ms_folder, '_', data_version, '.RData'))
 message('Saving MS data for MSGLM to ', rmsglmdata_filepath, '...')
@@ -643,7 +655,7 @@ save(data_info, msdata,
      global_protgroup_labu_shift,
      msruns_hnorm, total_msrun_shifts.df,
      msrunXreplEffect.mtx,
-     #batch_effects.df, msrunXbatchEffect.mtx,
+     batch_effects.df, msrunXbatchEffect.mtx,
      #subbatch_effects.df, msrunXsubbatchEffect.mtx,
      #bait_checks_protgroup.df,
      file = rmsglmdata_filepath)

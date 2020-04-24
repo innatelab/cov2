@@ -44,7 +44,8 @@ if (Sys.getenv('SLURM_CPUS_PER_TASK') != '') {
 }
 
 require(dplyr)
-require(msglm)
+library(devtools)
+devtools::load_all('~/projects/R/msglm')
 require(rstan)
 require(tidyr)
 
@@ -67,7 +68,7 @@ message(sel_object_ids, " ", model_obj, " ID(s): ",
         paste0(sort(unique(dplyr::pull(msdata[[model_obj_df]][msdata[[model_obj_df]][[model_objid_col]] %in% sel_object_ids, ], gene_names))), collapse=' '))
 msdata.df <- dplyr::filter(msdata$protgroups, protgroup_id %in% sel_object_ids) %>%
     dplyr::inner_join(dplyr::select(msdata$protgroup_intensities, protgroup_id, msrun, intensity, intensity_norm)) %>%
-    dplyr::inner_join(msdata$msruns %>% dplyr::select(msrun, condition, virus, virus_full_id, timepoint) %>% dplyr::distinct()) %>%
+    dplyr::inner_join(msdata$msruns %>% dplyr::select(msrun, condition, infection, timepoint) %>% dplyr::distinct()) %>%
     #dplyr::select(-msrun) %>%
     dplyr::mutate(object_id = protgroup_id)
 #msdata.df <- dplyr::select(msdata.df, -one_of("intensity")) %>% dplyr::rename(intensity = intensity_corr.F)
@@ -75,7 +76,7 @@ msdata.df <- dplyr::filter(msdata$protgroups, protgroup_id %in% sel_object_ids) 
 message('Preparing MS GLM data...')
 model_data <- list()
 model_data$mschannels <- dplyr::select(dplyr::filter(msdata$mschannels, mstag != "Sum"),
-                                       virus, virus_full_id, timepoint, replicate, condition,
+                                        infection,timepoint, replicate, condition,
                                        msrun) %>%
   dplyr::inner_join(dplyr::select(total_msrun_shifts.df, msrun, total_msrun_shift)) %>%
   dplyr::arrange(condition, replicate, msrun) %>% dplyr::distinct() %>%
@@ -86,7 +87,7 @@ experiment_shift_col <- 'total_msrun_shift'
 model_data$mschannels$model_mschannel_shift <- model_data$mschannels[[experiment_shift_col]]
 model_data$conditions <- conditions.df
 
-model_data$conditions <- dplyr::select(model_data$mschannels, condition, virus_full_id, virus, timepoint) %>%
+model_data$conditions <- dplyr::select(model_data$mschannels, condition, infection, timepoint) %>%
   dplyr::distinct() %>%
   dplyr::arrange(condition) %>%
   dplyr::mutate(condition_ix = as.integer(factor(condition, levels = rownames(conditionXeffect.mtx)))) %>%
