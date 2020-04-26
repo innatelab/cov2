@@ -17,15 +17,8 @@ modelobj2protein.df$object_id <- modelobj2protein.df[[modelobj_idcol]]
 
 modelobj_suffix <- case_when(modelobj == "protgroup" ~ "_pg",
                              modelobj == "protregroup" ~ "_prg",
+                             modelobj == "ptmgroup" ~ "_ptm",
                              TRUE ~ NA_character_)
 
-if (quantobj == "pepmodstate") {
-    global_labu_shift <- global_protgroup_labu_shift
-    instr_calib <- instr_calib_pepmodstate
-} else if (quantobj == "protgroup") {
-    global_labu_shift <- global_protgroup_labu_shift
-    instr_calib <- instr_calib_protgroup
-} else {
-    stop("Unknown quantobj: ", quantobj)
-    NULL
-}
+global_labu_shift <- get(str_c("global_", quantobj, "_labu_shift"))
+instr_calib <- get(str_c("instr_calib_", quantobj))
