@@ -1,0 +1,222 @@
+source(file.path(misc_scripts_path, 'ggplot_ext.R'))
+
+require(ggrastr)
+require(ggrepel)
+
+bait_checks.df <- get(str_c("bait_checks_", modelobj, ".df"))
+bait_checks.df$object_id <- bait_checks.df[[modelobj_idcol]]
+
+mlog10_pvalue_compress <- function(x, threshold = 10) {
+    if (x < threshold) {
+        return (x)
+    } else if (is.finite(x)) {
+        t <- x - threshold
+        return (threshold + sqrt(t))
+    } else {
+        return (2.5*threshold)
+    }
+}
+
+object_contrasts_4show.df <- object_contrasts.df %>%
+    #dplyr::left_join(dplyr::select(bait_checks.df, object_id, obj_bait_full_id = bait_full_id, obj_organism = bait_organism)) %>%
+    dplyr::mutate(p_value_compressed = 10^(-sapply(-log10(p_value), mlog10_pvalue_compress)),
+                  p_value_capped = pmax(1E-20, p_value),
+                  p_value_range = if_else(p_value <= 1E-7, "high", "low"),
+                  object_annotation = is_viral,
+                  #object_label = if_else(is_viral & !is.na(obj_bait_full_id), obj_bait_full_id, object_label),
+                  show_label = is_viral | is_hit_nomschecks,
+                  truncation = case_when(#p_value < p_value_capped ~ "p_value",
+                                         median_log2 > median_log2_trunc & is_hit ~ "median_right hit",
+                                         median_log2 > median_log2_trunc & !is_hit ~ "median_right nonhit",
+                                         median_log2 < median_log2_trunc & is_hit ~ "median_left hit",
+                                         median_log2 < median_log2_trunc & !is_hit ~ "median_left nonhit",
+                                         is_signif & !is_hit ~ "significant nonhit",
+                                         is_hit ~ "hit",
+                                         TRUE ~ "none"),
+                  truncation_type = case_when(truncation == "none" ~ "insignif",
+                                              truncation %in% c("hit", "significant nonhit") ~ "signif",
+                                              is_signif ~ "truncated signif",
+                                              TRUE ~ "truncated insignif"))
+
+object_contrasts_4show.df %>%
+group_by(contrast, std_type) %>% do({
+    sel_object_contrast.df <- .
+    sel_object_contrast_thresholds.df <- semi_join(object_contrasts_thresholds.df, sel_object_contrast.df)
+    message("Plotting ", sel_object_contrast_thresholds.df$contrast[[1]], " std_type=", sel_object_contrast.df$std_type[[1]])
+    nlabels <- nrow(dplyr::filter(sel_object_contrast.df, is_signif & show_label))
+
+    p <- ggplot(sel_object_contrast.df,
+                aes(x=median_log2_trunc, y=p_value_compressed, color=is_viral, shape=truncation, size=truncation_type)) +
+        geom_hline(data=sel_object_contrast_thresholds.df,
+                   aes(yintercept = p_value_threshold), linetype=2, color="darkgray") +
+        #geom_hline(data=sel_object_contrast_thresholds.df,
+        #           aes(yintercept = p_value_max), linetype=1, color="darkgray") +
+        geom_vline(data=sel_object_contrast_thresholds.df,
+                   aes(xintercept = 0), linetype=1, color="darkgray") +
+        geom_vline(data=sel_object_contrast_thresholds.df,
+                   aes(xintercept = median_log2_threshold), linetype=2, color="darkgray") +
+        geom_vline(data=sel_object_contrast_thresholds.df,
+                   aes(xintercept = -median_log2_threshold), linetype=2, color="darkgray") +
+        geom_point_rast(data=dplyr::filter(sel_object_contrast.df, !is_signif),
+                        alpha=0.1, size=0.5, color="darkgray") +
+        geom_point(data=dplyr::filter(sel_object_contrast.df, is_signif & !is_hit)) +
+        geom_point(data=dplyr::filter(sel_object_contrast.df, is_signif & is_hit)) +
+        geom_text_repel(data=dplyr::filter(sel_object_contrast.df, is_signif & show_label),
+                  aes(label = object_label),
+                  vjust=-0.5,
+                  size=if_else(nlabels > 20, 2.5, 3.5),
+                  force=if_else(nlabels > 20, 0.25, 1.0),
+                  label.padding=if_else(nlabels > 20, 0.1, 0.25),
+                  show.legend = FALSE, segment.color = "gray") +
+        scale_y_continuous(trans=mlog10_trans(), limits=c(1.0, NA)) +
+        scale_color_manual(values=c("TRUE" = "red", "FALSE" = "black"), na.value="black") +
+        scale_shape_manual(values=c("p_value"=-9650,
+                                    "median_left hit"=-9664, "median_left nonhit"=-9665,
+                                    "median_right hit"=-9654, "median_right nonhit"=-9655,
+                                    "significant nonhit"=1L, "hit"=16L, "none"=16L), guide="none") +
+        #scale_fill_gradient(low="gray75", high="black") +
+        scale_size_manual(values=c("insignif"=1, "signif"=2,
+                                   "truncated insignif"=2, "truncated signif"=4), guide="none") +
+        #scale_alpha_manual(values=c("TRUE"=1.0, "FALSE"=0.5)) +
+        #facet_grid(p_value_range ~ contrast, scales = "free_y") +
+        ggtitle(sel_object_contrast_thresholds.df$contrast[[1]],
+                subtitle=str_c("std_type=", sel_object_contrast_thresholds.df$std_type[[1]])) +
+        theme_bw_ast()
+    ggsave(filename = file.path(analysis_path, 'plots', ms_folder,
+                                str_c("volcanos_", sel_object_contrast_thresholds.df$std_type[[1]], modelobj_suffix),
+                                paste0(project_id, '_', fit_version, '_volcano_',
+                                       sel_object_contrast_thresholds.df$contrast[[1]], '.pdf')),
+           plot = p, width=15, height=18, device=cairo_pdf, family="Arial")
+    tibble()
+})
+
+object_effects_4show.df <- object_effects.df %>%
+    dplyr::mutate(p_value_compressed = 10^(-sapply(-log10(p_value), mlog10_pvalue_compress)),
+                  p_value_capped = pmax(1E-20, p_value),
+                  p_value_range = if_else(p_value <= 1E-7, "high", "low"),
+                  object_annotation = is_viral,
+                  show_label = is_viral | is_hit_nomschecks,
+                  truncation = case_when(#p_value < p_value_capped ~ "p_value",
+                      median_log2 > median_log2_trunc ~ "median_right",
+                      median_log2 < median_log2_trunc ~ "median_left",
+                      is_signif & !is_hit ~ "significant nonhit",
+                      is_hit ~ "hit",
+                      TRUE ~ "none"))
+
+object_effects_4show.df %>%
+    group_by(effect, std_type) %>% do({
+        sel_object_effect.df <- .
+        sel_object_effect_thresholds.df <- semi_join(object_effects_thresholds.df, sel_object_effect.df)
+        message("Plotting ", sel_object_effect_thresholds.df$effect[[1]], " std_type=", sel_object_effect.df$std_type[[1]])
+        
+        p <- ggplot(sel_object_effect.df,
+                    aes(x=median_log2_trunc, y=p_value_compressed, color=is_viral, shape=truncation)) +
+            geom_hline(data=sel_object_effect_thresholds.df,
+                       aes(yintercept = p_value_threshold), linetype=2, color="darkgray") +
+            #geom_hline(data=sel_object_effect_thresholds.df,
+            #           aes(yintercept = p_value_max), linetype=1, color="darkgray") +
+            geom_vline(data=sel_object_effect_thresholds.df,
+                       aes(xintercept = 0), linetype=1, color="darkgray") +
+            geom_vline(data=sel_object_effect_thresholds.df,
+                       aes(xintercept = median_log2_threshold), linetype=2, color="darkgray") +
+            geom_vline(data=sel_object_effect_thresholds.df,
+                       aes(xintercept = -median_log2_threshold), linetype=2, color="darkgray") +
+            geom_point_rast(data=dplyr::filter(sel_object_effect.df, !is_signif),
+                            alpha=0.1, size=0.5, color="darkgray") +
+            geom_point(data=dplyr::filter(sel_object_effect.df, is_signif & !is_hit), aes(size=truncation=="none"), shape=1L) +
+            geom_point(data=dplyr::filter(sel_object_effect.df, is_signif & is_hit), aes(size=truncation=="none"), shape=16L) +
+            geom_text_repel(data=dplyr::filter(sel_object_effect.df, is_signif & show_label),
+                            aes(label = object_label),
+                            vjust=-0.5, size=3, show.legend = FALSE, segment.color = "gray") +
+            scale_y_continuous(trans=mlog10_trans(), limits=c(1.0, NA)) +
+            scale_color_manual(values=c("TRUE" = "red", "FALSE" = "black"), na.value="black") +
+            scale_shape_manual(values=c("p_value"=-9650, "median_left"=-9664, "median_right"=-9654,
+                                        "significant nonhit"=1L, "hit"=16L, "none"=16L), guide="none") +
+            #scale_fill_gradient(low="gray75", high="black") +
+            scale_size_manual(values=c("TRUE"=1, "FALSE"=2.5), guide="none") +
+            #scale_alpha_manual(values=c("TRUE"=1.0, "FALSE"=0.5)) +
+            #facet_grid(p_value_range ~ effect, scales = "free_y") +
+            ggtitle(sel_object_effect_thresholds.df$effect[[1]],
+                    subtitle=str_c("std_type=", sel_object_effect_thresholds.df$std_type[[1]])) +
+            theme_bw_ast()
+        ggsave(filename = file.path(analysis_path, 'plots', ms_folder,
+                                    str_c("volcanos_effects_", sel_object_effect_thresholds.df$std_type[[1]], modelobj_suffix),
+                                    paste0(project_id, '_', fit_version, '_volcano_',
+                                           str_replace(sel_object_effect_thresholds.df$effect[[1]],':','_'), '.pdf')),
+               plot = p, width=15, height=18, device=cairo_pdf, family="Arial")
+        tibble()
+    })
+
+
+candidate_genes <- c("ATL2", "MAVS", "AIFM1", "SHC1", "NELFB", "ILF3", "C14orf166", "PRAF2", "UNC93B1",
+                     "EIF4H", "G3BP1", "PIP4K2C", "HLA-E", "TNFAIP2", "MARC1", "JAK1",
+                     "TNFRSF10B", "TNFRSF10A", "TNFRSF21", "IFITM10", "SQSTM1")
+sel_objects.df <- dplyr::semi_join(modelobjs_df,
+                                   dplyr::filter(msdata_full$proteins, gene_name %in% candidate_genes) %>%
+                                   dplyr::inner_join(msdata_full[[str_c("protein2", modelobj)]]) %>%
+                                   dplyr::select(!!modelobj_idcol))
+
+sel_pepmodstates.df <- dplyr::inner_join(sel_objects.df, msdata_full[[str_c(modelobj, "2pepmod")]]) %>%
+    dplyr::filter(is_specific) %>%
+    dplyr::inner_join(msdata_full$pepmodstates) %>%
+    dplyr::select(object_id, pepmod_id, majority_protein_acs, protac_label, gene_label, gene_names, charge, pepmodstate_id) %>%
+    dplyr::group_by(object_id) %>%
+    dplyr::mutate(glm_subobject_ix = row_number()) %>%
+#sel_pepmodstates.df <- dplyr::inner_join(fit_stats$subobjects, sel_protregroups.df) %>%
+#    dplyr::select(protregroup_id, pepmod_id, protgroup_ids, majority_protein_acs, gene_names,
+#                  glm_object_ix, glm_subobject_ix, pepmodstate_id) %>%
+    dplyr::ungroup() %>%
+    dplyr::mutate(pepmodstate_ext = factor(paste0(pepmodstate_id, "(", pepmod_id, ")")))
+
+
+sel_pepmod_intens.df <- dplyr::inner_join(dplyr::select(sel_pepmodstates.df, object_id, protac_label, gene_label, gene_names,
+                                                        pepmod_id, pepmodstate_id, charge, pepmodstate_ext) %>%
+                                                 dplyr::distinct(),
+                                             msdata_full$pepmodstate_intensities) %>%
+    dplyr::inner_join(distinct(select(msdata$msruns, msrun, batch, replicate, bait_type, bait_full_id, bait_id, condition)) %>%
+                      dplyr::left_join(dplyr::select(total_msrun_shifts.df, msrun, total_msrun_shift)) %>%
+                      dplyr::arrange(bait_type, bait_id, bait_full_id, batch, replicate) %>%
+                      dplyr::mutate(msrun.2 = factor(msrun, levels=msrun))) %>%
+    dplyr::mutate(intensity_norm = exp(-total_msrun_shift)*intensity,
+                  msrun = msrun.2,
+                  msrun.2 = NULL)
+
+sel_pepmods.df <- dplyr::group_by(sel_pepmod_intens.df, pepmod_id) %>%
+    dplyr::summarize(n_pepmod_quants = sum(!is.na(intensity)),
+                     median_quant = median(intensity, na.rm=TRUE)) %>%
+    dplyr::ungroup() %>%
+    dplyr::arrange(desc(n_pepmod_quants), desc(median_quant), pepmod_id)
+
+group_by(sel_pepmod_intens.df, object_id) %>% do({
+    shown_pepmod_intens.df <- mutate(., !!modelobj_idcol := object_id)#sel_pepmod_intens.df
+    gene_name <- str_remove(shown_pepmod_intens.df$gene_label[[1]], "\\.\\.\\.$")
+    obj_id <- shown_pepmod_intens.df$object_id[[1]]
+    is_viral <- inner_join(shown_pepmod_intens.df, modelobjs_df)$is_viral[[1]]
+    if (is_viral) {
+        bait_df <- filter(bait_checks.df, object_id == obj_id)
+        if (nrow(bait_df) > 0) {
+            gene_name <- bait_df$bait_full_id[[1]]
+        }
+    }
+    message("Plotting ", gene_name)
+p <- ggplot(shown_pepmod_intens.df) +
+    geom_tile(aes(x=msrun, y=pepmodstate_ext,
+                  fill=log10(intensity_norm), color=ident_type), size=0.5, width=0.85, height=0.85) +
+    theme_bw_ast(base_family = "", base_size = 10) +
+    theme(axis.text.x = element_text(angle = -90, hjust=0, vjust=0)) +
+    facet_grid(object_id + gene_label ~ ., scales = "free_y", space="free_y") +
+    guides(color=guide_legend("ident_type", override.aes = list(fill=NA, size=2))) +
+    ggtitle(str_c(gene_name,  " (pg_id=", obj_id,
+                  ", ac=", shown_pepmod_intens.df$protac_label[[1]], ") peptide map"),
+            subtitle = semi_join(modelobjs_df, dplyr::select(shown_pepmod_intens.df, !!modelobj_idcol))$protein_description[[1]]) +
+    scale_fill_distiller(na.value="#00000000", type="div", palette = "Spectral") +
+    scale_color_manual(na.value="#00000000",
+                       values=c("MULTI-MSMS"="black", "MULTI-MATCH-MSMS"="khaki",
+                                "MSMS"="cornflowerblue", "MULTI-SECPEP"="firebrick",
+                                "MULTI-MATCH"="gray"))
+ggsave(filename = file.path(analysis_path, "plots", ms_folder, str_c("peptide_heatmaps", if_else(is_viral, "/viral", "")),
+                            paste0(project_id, "_", ms_folder, '_', data_version, "_pepmod_heatmap_", gene_name, "_", obj_id, ".pdf")),
+       plot = p, width=20, height=3 + n_distinct(shown_pepmod_intens.df$object_id) + min(20, 0.1*n_distinct(shown_pepmod_intens.df$pepmodstate_id)),
+       device=cairo_pdf, family="Arial")
+    tibble()
+})
