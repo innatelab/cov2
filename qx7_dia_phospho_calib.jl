@@ -1,7 +1,6 @@
-#addprocs(15);
 proj_info = (id = "cov2",
              data_ver = "20200423",
-             fit_ver = "20200423",
+             fit_ver = "20200427",
              modelobj = :ptmgroup,
              msinstrument = "QX7",
              quantobj = :ptmgroup,
@@ -59,7 +58,7 @@ ptm_used_intensities_df = ptmgroup_intensities_df[ptmgroup_intensities_df.ptmgro
 mscalib_data = MSInstrumentCalibration.MSErrorCalibrationData(ptm_used_intensities_df, ptms_df, msruns_df,
         object_col=:ptmgroup_id, mschannel_col=:msrun, exp_col=:condition, tech_repl_col=:replicate)
 
-instr_calib_filename = "instr_$(proj_info.msinstrument)_$(proj_info.quanttype)_$(proj_info.quantobj)_calib_$(proj_info.id)_$(proj_info.data_ver)"
+instr_calib_filename = "instr_$(proj_info.msinstrument)_$(proj_info.quanttype)_$(proj_info.quantobj)_calib_$(proj_info.id)_$(proj_info.fit_ver)"
 
 using JLD2, JSON
 

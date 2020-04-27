@@ -5,8 +5,8 @@
 
 project_id <- 'cov2'
 message('Project ID=', project_id)
-data_version <- "20200423"
-fit_version <- "20200425"
+data_version <- "20200427"
+fit_version <- "20200427"
 ms_folder <- 'cov2timecourse_phospho_dia_20200423'
 message('Dataset version is ', data_version)
 
@@ -33,7 +33,7 @@ msdata_path <- file.path(data_path, ms_folder)
 data_info <- list(project_id = project_id,
                   data_ver = data_version, fit_ver = fit_version,
                   ms_folder = ms_folder,
-                  instr_calib_ptm_filename = "instr_QX7_intensity_ptmgroup_calib_cov2_20200423_borg.json",
+                  instr_calib_ptm_filename = "instr_QX7_intensity_ptmgroup_calib_cov2_20200427_borg.json",
                   quant_type = "intensity", quant_col_prefix = "intensity",
                   ptm_quant_type = "intensity")
 
@@ -164,7 +164,7 @@ effects.df <- left_join(effects.df,
                                   effect_type == "timepoint" ~ str_c(timepoint, "h"),
                                   TRUE ~ NA_character_),
          prior_mean = 0,
-         prior_tau = case_when(effect_type == "treatmentXtimepoint" ~ 0.5,
+         prior_tau = case_when(effect_type == "treatmentXtimepoint" ~ 0.25,
                                effect_type == "treatment" ~ 0.5,
                                effect_type == "timepoint" ~ 1.0,
                                TRUE ~ NA_real_),

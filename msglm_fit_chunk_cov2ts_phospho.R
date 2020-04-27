@@ -1,5 +1,5 @@
 Sys.setenv(TZ='Etc/GMT+1') # issue#612@rstan
-#job.args <- c("cov2", "ast_cov2_msglm", "cov2timecourse_phospho_dia_20200423", "20200423", "20200425", "0", "1235")
+#job.args <- c("cov2", "ast_cov2_msglm", "cov2timecourse_phospho_dia_20200423", "20200427", "20200427", "0", "1235")
 if (!exists('job.args')) {
   job.args <- commandArgs(trailingOnly = TRUE)
 }
