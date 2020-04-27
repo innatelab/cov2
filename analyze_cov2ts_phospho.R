@@ -154,7 +154,8 @@ ggplot(data=sel_ptm_iactions.df, aes(x = timepoint_num, color=treatment, fill=tr
     scale_color_manual(values=c("mock"="gray", "SARS_COV2"="red")) +
     scale_fill_manual(values=c("mock"="gray", "SARS_COV2"="red")) +
     scale_y_log10() +
-    ggtitle(str_c(sel_ptmgroup.df$ptmgroup_label, " timecourse")) +
+    ggtitle(str_c(sel_ptmgroup.df$ptmgroup_label, " timecourse"),
+            subtitle=sel_ptmgroup.df$protein_description) +
     facet_wrap( ~ ptmgroup_id, scales = "free")
 ggsave(p, file = file.path(analysis_path, "plots", ms_folder, "ptmgroups",
                         paste0(project_id, "_", ms_folder, '_', fit_version, "_", sel_ptmgroup.df$ptmgroup_label[[1]], ".pdf")),
