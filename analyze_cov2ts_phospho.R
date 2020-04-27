@@ -123,8 +123,10 @@ sel_ptmgroups.df <- dplyr::filter(msdata$ptmgroups, str_detect(ptmgroup_id, "EPH
 sel_ptmgroups.df <- dplyr::semi_join(msdata$ptmgroups,
     dplyr::distinct(
     bind_rows(
-        dplyr::select(dplyr::filter(object_effects.df, std_type=="replicate" & is_hit_nomschecks & effect_type == "treatmentXtimepoint"), ptmgroup_id),
-        dplyr::select(dplyr::filter(object_contrasts.df, std_type=="replicate" & is_hit_nomschecks & str_detect(contrast, "SARS_COV2@\\dh_vs_mock@\\dh")), ptmgroup_id)
+        dplyr::select(dplyr::filter(object_effects.df, std_type=="replicate" & 
+                                        is_hit_nomschecks & effect_type == "treatmentXtimepoint"), ptmgroup_id),
+        dplyr::select(dplyr::filter(object_contrasts.df, std_type=="replicate" & 
+                                        is_hit_nomschecks & str_detect(contrast, "SARS_COV2@\\d+h_vs_mock@\\d+h")), ptmgroup_id)
     )))
 
 group_by(sel_ptmgroups.df, ptmgroup_id) %>% do({
