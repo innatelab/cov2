@@ -5,9 +5,9 @@
 
 project_id <- 'cov2'
 message('Project ID=', project_id)
-data_version <- "20200420"
-fit_version <- "20200420"
-ms_folder <- 'mq_apms_20200417'
+data_version <- "20200427"
+fit_version <- "20200427"
+ms_folder <- 'mq_apms_20200427'
 message('Dataset version is ', data_version)
 
 source("~/R/config.R")
@@ -32,7 +32,7 @@ data_info <- list(project_id = project_id,
                   data_ver = data_version, fit_ver = fit_version,
                   ms_folder = ms_folder,
                   instr_calib_protgroup_filename = "instr_protgroup_LFQ_calib_scaturro_qep5calib_20161110_borg.json",
-                  instr_calib_pepmodstate_filename = "instr_pepmod_intensity_raw_calib_laudenbach_pcp_20170128_borg.json",
+                  instr_calib_pepmodstate_filename = "instr_QEP5_intensity_pepmodstate_calib_cov2_20200425_borg.json",
                   quant_type = "LFQ", quant_col_prefix = "LFQ_Intensity",
                   pep_quant_type = "intensity")
 
@@ -46,7 +46,12 @@ msruns.df <- read_tsv(file.path(mqdata_path, "combined", "experimentalDesign.txt
                       col_names=TRUE, col_types = list(Fraction="i")) %>%
   rename(raw_file=Name, msfraction=Fraction, msrun=Experiment, is_ptm=PTM) %>%
   extract(msrun, c("batch", "bait_full_id", "replicate"), c("^APMS_B(\\d+)_(.+)_(\\d+)$"), remove = FALSE) %>%
-  left_join(select(baits_info.df, bait_full_id, bait_id, bait_type, orgcode))
+  left_join(select(baits_info.df, bait_full_id, bait_id, bait_type, orgcode)) %>%
+  # declare AP runs with bait sequence problems as controls
+  dplyr::mutate(bait_type = factor(if_else(str_detect(bait_full_id, "SARS_CoV2?\\?_"),
+                                           "control", as.character(bait_type)), levels=levels(bait_type)),
+                bait_id = relevel(factor(if_else(str_detect(bait_full_id, "SARS_CoV2?\\?_"), bait_full_id, as.character(bait_id))), "Ctrl_NT"))
+baits_info.df$bait_id = factor(baits_info.df$bait_id, levels=levels(msruns.df$bait_id))
 
 fasta.dfs <- list(
   CoV = read_innate_uniprot_fasta(file.path(data_path, "cov_baits_20200415.fasta")) %>%
@@ -289,7 +294,7 @@ effects.df <- dplyr::mutate(effects.df,
                             effect_type = case_when(!is.na(bait_id) & !is.na(orgcode) ~ "baitXvirus",
                                                     !is.na(bait_id) ~ "bait"),
                             effect_label = factor(effect_label, levels=effect_label)) %>%
-  dplyr::mutate(prior_tau = case_when(effect_type == "baitXvirus" ~ 0.5,
+  dplyr::mutate(prior_tau = case_when(effect_type == "baitXvirus" ~ 1.0,
                                       effect_type == "bait" ~ 1.0,
                                       TRUE ~ 5.0))
 # prior_mean is calculated after the normalization
@@ -325,7 +330,7 @@ for (cname in bait_conditions) {
 for (cname in allminus_metaconditions) {
   bait <- str_remove(cname, "^allminus_")
   conditionXmetacondition.mtx[, cname] <- TRUE
-  conditionXmetacondition.mtx[str_detect(rownames(conditionXmetacondition.mtx), str_c("_", bait, "$")), cname] <- FALSE
+  conditionXmetacondition.mtx[str_detect(rownames(conditionXmetacondition.mtx), str_c("_", bait, "$")) & conditions.df$bait_type == "sample", cname] <- FALSE
 }
 conditionXmetacondition.mtx[filter(conditions.df, bait_type == "control")$bait_full_id, "controls"] <- TRUE
 pheatmap(ifelse(conditionXmetacondition.mtx, 1.0, 0.0), cluster_rows=FALSE, cluster_cols=FALSE,
@@ -334,8 +339,7 @@ pheatmap(ifelse(conditionXmetacondition.mtx, 1.0, 0.0), cluster_rows=FALSE, clus
 
 conditionXmetacondition.df <- as_tibble(as.table(conditionXmetacondition.mtx)) %>%
   dplyr::filter(n != 0) %>% dplyr::select(-n) %>%
-  dplyr::left_join(dplyr::select(conditions.df, condition, bait_full_id)) %>%
-  dplyr::mutate(is_preserved_condition = condition %in% c("Ctrl_NT", "Ctrl_Gaussia_luci"))
+  dplyr::left_join(dplyr::select(conditions.df, condition, bait_full_id))
 
 contrasts.df <- bind_rows(
   transmute(filter(conditions.df, bait_type == "sample"),
@@ -370,9 +374,23 @@ contrastXmetacondition.df <- as_tibble(as.table(contrastXmetacondition.mtx)) %>%
   dplyr::left_join(select(contrasts.df, contrast, contrast_type)) %>%
   dplyr::mutate(condition_role = if_else(contrast_type == "filter" & weight < 0, "background", "signal"))
 
+# baits that have too many things in common, but when we dynamically exclude them,
+# the remaining baits don't provide the background enough to remove the shared proteins
+oversharing_baits_lhs <- c("SARS_CoV_M", "SARS_CoV2_M",
+                           "SARS_CoV_ORF7b", "SARS_CoV2_ORF7b",
+                           "HCoV_ORF3", "HCoV_ORF4a")
+oversharing_baits_rhs <- c("SARS_CoV2_M", "HCoV_ORF3", "HCoV_ORF4a")
+
 contrastXcondition.df <- conditionXmetacondition.df %>%
   dplyr::inner_join(contrastXmetacondition.df) %>%
-  dplyr::arrange(contrast, contrast_type, metacondition, condition)
+  dplyr::arrange(contrast, contrast_type, metacondition, condition) %>%
+  # don't remove from the background if top-enriched:
+  #   a) the negative controls;
+  #   b) the proteins 
+  dplyr::mutate(is_preserved_condition = (weight < 0) & (contrast_type == "filter") &
+                ((condition %in% c("Ctrl_NT", "Ctrl_Gaussia_luci", "SARS_CoV?_NSP1", "SARS_CoV?_NSP3_macroD")) |
+                 str_detect(contrast, paste0("^(", paste0(oversharing_baits_lhs, collapse="|"), ")_vs_")) & 
+                 (condition %in% oversharing_baits_rhs)))
 
 # prepare the data to use for MS runs normalization
 msrun_stats.df <- left_join(msdata_full$protgroup_intensities,
@@ -408,8 +426,8 @@ msruns_hnorm <- multilevel_normalize_experiments(instr_calib_pepmodstate,
     verbose=TRUE,
     norm_levels = list(msrun = list(cond_col = "msrun", max_objs=1000L, missing_exp.ratio=0.1),
                        bait_full_id = list(cond_col="batch_bait_full_id", max_objs=1000L, missing_exp.ratio=0.1),
-                       bait_id = list(cond_col="batch_bait_id", max_objs=300L, missing_exp.ratio=0.25),
-                       batch = list(cond_col="batch", max_objs=200L, missing_exp.ratio=0.25)
+                       bait_id = list(cond_col="batch_bait_id", max_objs=300L, missing_exp.ratio=0.3),
+                       batch = list(cond_col="batch", max_objs=200L, missing_exp.ratio=0.3)
                        ))
 
 # ignore all higher levels of normalization
@@ -433,22 +451,13 @@ global_pepmodstate_labu_shift <- 0.95*median(log(dplyr::filter(msdata$msruns) %>
 #msdata$msruns <- dplyr::arrange(msdata$msruns, bait_type, bait_id, orgcode) %>%
 #  mutate(msrun_ix = row_number())
 
-msdata_full$mschannels <- mutate(msdata_full$msruns,
-                                 mstag = "Sum",
-                                 mschannel = msrun,
-                                 msrun_mq = msrun)
-msdata_full$protgroup_tagintensities <- mutate(msdata_full$protgroup_intensities,
-  mschannel = msrun,
-  msrun_mq = msrun,
-  mstag = "Sum")
-
-msdata_full$mschannel_stats <- mschannel_statistics(msdata_full)
+msdata_full$msrun_stats <- msrun_statistics(msdata_full)
 set.seed(1232)
 msdata_full$protgroup_intensities_all <- expand(msdata_full$protgroup_intensities,
                                                 protgroup_id, msrun) %>%
   left_join(dplyr::select(msdata_full$protgroup_intensities, -total_msrun_shift)) %>%
   dplyr::mutate(mstag = "Sum") %>%
-  impute_intensities(msdata_full$mschannel_stats) %>%
+  impute_intensities(msdata_full$msrun_stats) %>%
   dplyr::left_join(dplyr::select(total_msrun_shifts.df, msrun, total_msrun_shift)) %>%
   dplyr::mutate(intensity_norm = intensity*exp(-total_msrun_shift),
                 intensity_imputed_norm = intensity_imputed*exp(-total_msrun_shift),
@@ -510,6 +519,8 @@ msruns_ordered <- filter(msdata$msruns, msrun %in% colnames(protgroup_intensitie
 protgroup_hclu = hclust(dist(protgroup_intensities_imp.mtx))
 pheatmap(log2(protgroup_intensities.mtx[, msruns_ordered]), cluster_cols=FALSE, cluster_rows=protgroup_hclu,
          file = file.path(analysis_path, "plots", ms_folder, paste0(project_id, "_", ms_folder, "_", data_version, "_heatmap_intensity.pdf")), width=30, height=100)
+pheatmap(log2(protgroup_intensities.mtx[, msruns_ordered]), cluster_cols=FALSE, cluster_rows=protgroup_hclu,
+         file = file.path(analysis_path, "plots", ms_folder, paste0(project_id, "_", ms_folder, "_", data_version, "_heatmap_intensity.png")), width=30, height=50)
 
 msrunXbatchEffect_orig.mtx <- model.matrix(
   ~ 1 + batch,

@@ -1,5 +1,5 @@
 Sys.setenv(TZ='Etc/GMT+1') # issue#612@rstan
-#job.args <- c("cov2", "ast_cov2_msglm", "mq_apms_20200417", "20200420", "20200420", "0", "174")
+#job.args <- c("cov2", "ast_cov2_msglm", "mq_apms_20200427", "20200427", "20200427", "0", "284")
 if (!exists('job.args')) {
   job.args <- commandArgs(trailingOnly = TRUE)
 }
@@ -31,7 +31,7 @@ if (Sys.getenv('SLURM_CPUS_PER_TASK') != '') {
 } else if (Sys.getenv('NSLOTS') != '') {
   mcmc_nchains <- as.integer(Sys.getenv('NSLOTS')) # SGE way
 } else {
-  mcmc_nchains <- 4
+  mcmc_nchains <- 8
 }
 
 require(dplyr)
@@ -160,7 +160,7 @@ min.iteration <- as.integer(1.5 * msglm.stan_fit@sim$warmup)
 
 background_contrasts <- unique(as.character(filter(contrastXmetacondition.df,
                                                    str_detect(contrast, "_vs_others") & weight < 0)$contrast))
-background_contrasts.quantiles_rhs <- lapply(background_contrasts, function(contr) c(0.25, 0.92))
+background_contrasts.quantiles_rhs <- lapply(background_contrasts, function(contr) c(0.5, 0.9))
 names(background_contrasts.quantiles_rhs) <- background_contrasts
 
 msglm_results <- process.stan_fit(msglm.stan_fit, dims_info,
@@ -170,13 +170,13 @@ res_prefix <- paste0(project_id, "_", ms_folder, "_msglm", modelobj_suffix)
 if (!dir.exists(file.path(scratch_path, res_prefix))) {
   dir.create(file.path(scratch_path, res_prefix))
 }
-rdata_filepath <- file.path(scratch_path, res_prefix, paste0(res_prefix, '_', fit_version, '_', job_chunk, '.RData'))
+rfit_filepath <- file.path(scratch_path, res_prefix, paste0(res_prefix, '_', fit_version, '_', job_chunk, '.RData'))
 message('Saving STAN results to ', rdata_filepath, '...')
 results_info <- list(project_id = project_id, ms_folder = ms_folder,
                      data_version = data_version, fit_version = fit_version,
                      job_name = job_name, job_chunk = job_chunk, modelobj = modelobj, quantobj = quantobj)
 save(data_info, results_info,
      model_data, msglm.stan_data, msglm_results,
-     dims_info, file = rdata_filepath)
+     dims_info, file = rfit_filepath)
 message('Done.')
 on.exit(unlink(tempdir(), force = TRUE), add=TRUE)
