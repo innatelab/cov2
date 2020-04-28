@@ -5,8 +5,8 @@
 
 project_id <- 'cov2'
 message('Project ID=', project_id)
-data_version <- "20200427"
-fit_version <- "20200427"
+data_version <- "20200428"
+fit_version <- "20200428"
 ms_folder <- 'cov2timecourse_phospho_dia_20200423'
 message('Dataset version is ', data_version)
 
@@ -33,7 +33,7 @@ msdata_path <- file.path(data_path, ms_folder)
 data_info <- list(project_id = project_id,
                   data_ver = data_version, fit_ver = fit_version,
                   ms_folder = ms_folder,
-                  instr_calib_ptm_filename = "instr_QX7_intensity_ptmgroup_calib_cov2_20200427_borg.json",
+                  instr_calib_ptm_filename = "instr_QX7_intensity_ptmgroup_calib_cov2_20200428_borg.json",
                   quant_type = "intensity", quant_col_prefix = "intensity",
                   ptm_quant_type = "intensity")
 
