@@ -1,3 +1,5 @@
+require(readxl)
+
 strlist_label <- function(strs) {
     str_c(strs[[1]], if_else(n_distinct(strs) > 1, '...', ''))
 }
@@ -12,11 +14,13 @@ orgcodes = list("SARS-CoV-2" = "SARS2",
                 "HCoV-229E" = "CVH22",
                 "ZIKV" = "ZIKV",
                 "Gaussia" = "9MAXI",
-                "HCV" = "9HEPC")
+                "HCV" = "9HEPC",
+                "HUMAN" = "HUMAN")
 
-baits_info.df <- read_tsv(file.path(analysis_path, "data", "baits_info.txt"))
+baits_info.df <- read_xlsx(file.path(analysis_path, "data", "baits_info.xlsx"))
 baits_info.df <- mutate(baits_info.df,
                         used_uniprot_ac = ifelse(!is.na(uniprot_ac), uniprot_ac, bait_id)) %>%
+  filter(!is.na(bait_id)) %>%
   rename(organism = virus, bait_full_id = bait_id, bait_id = short_name) %>%
   mutate(bait_id = relevel(factor(bait_id), "Ctrl_NT"),
          bait_type = factor(bait_type, c("sample", "control")),
