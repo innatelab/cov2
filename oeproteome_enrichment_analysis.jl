@@ -29,23 +29,16 @@ input_rdata = load(joinpath(scratch_path, "$(proj_info.id)_msglm_data_$(proj_inf
 full_rdata = load(joinpath(scratch_path, "$(proj_info.id)_msdata_full_$(proj_info.ms_folder)_$(proj_info.data_ver).RData"), convert=true)
 fit_rdata = load(joinpath(scratch_path, "$(proj_info.id)_msglm_fit_$(proj_info.ms_folder)_$(proj_info.fit_ver).RData"), convert=true)
 effects_df = copy(input_rdata["effects.df"]);
-effects_df = unique!(select!(copy(input_rdata["effectXmetacondition.df"]), [:effect, :effect_type]));
+contrasts_df = unique!(select!(copy(input_rdata["contrastXmetacondition.df"]), [:contrast, :contrast_type]));
 objects_df = copy(input_rdata["msdata"][string(proj_info.modelobj, "s")]) |> MSGLMUtils.fix_object_id!;
 protacs_df = copy(full_rdata["msdata_full"]["proteins"]);
-if proj_info.modelobj == "protregroup"
 obj2protac_df = select!(
-    join(full_rdata["msdata_full"]["protein2protgroup"],
-         input_rdata["msdata"]["protregroup2protgroup"], on=:protgroup_id, kind=:inner),
-    [objid_col, :protein_ac]) |> unique! |> MSGLMUtils.fix_object_id!; # is_majority?
-elseif proj_info.modelobj == "protgroup"
-    obj2protac_df = select!(
-        full_rdata["msdata_full"]["protein2protgroup"],
-        [objid_col, :protein_ac]) |> unique! |> MSGLMUtils.fix_object_id!; # is_majority?
-end
+         filter(r -> r.is_majority, full_rdata["msdata_full"][string("protein2", proj_info.modelobj)]),
+         [objid_col, :protein_ac]) |> unique! |> MSGLMUtils.fix_object_id!; # is_majority?
 #obj2protac_df = obj2protac_df[obj2protac_df.is_majority, [:object_id, :protein_ac]];
-obj_effects_df = copy(fit_rdata["object_effects.df"]);
-obj_effects_df = copy(fit_rdata["object_effects.df"]);
-for df in [obj_effects_df, obj_effects_df]
+obj_effs_df = copy(fit_rdata["object_effects.df"]);
+obj_contrasts_df = copy(fit_rdata["object_contrasts.df"]);
+for df in [obj_effs_df, obj_contrasts_df]
     df |> MSGLMUtils.fix_quantile_columns! |> MSGLMUtils.fix_object_id!
 end
 
