@@ -7,16 +7,14 @@ project_id <- 'cov2'
 message('Project ID=', project_id)
 data_version <- "20200423"
 fit_version <- "20200425"
-ms_folder <- 'cov2timecourse_dia'
+ms_folder <- 'cov2timecourse_dia_20200423'
 message("Assembling fit results for project ", project_id,
         " (dataset v", data_version, ", fit v", fit_version, ")")
 
 source("~/R/config.R")
 source(file.path(base_scripts_path, 'R/misc/setup_base_paths.R'))
 source(file.path(base_scripts_path, 'R/misc/setup_project_paths.R'))
-#require(msglm)
-library(devtools)
-load_all('~/projects/R/msglm/')
+require(msglm)
 
 mop.max_nprocesses <- 32
 mop.nprocesses <- 32
@@ -27,8 +25,8 @@ require(stringr)
 require(maxquantUtils)
 
 message('Loading data...')
-load(file.path(scratch_path, str_c(project_id, '_msglm_data_', ms_folder, '_', data_version,'_', data_version, '.RData')))
-load(file.path(scratch_path, str_c(project_id, '_msdata_full_', ms_folder, '_', data_version,'_', data_version, '.RData')))
+load(file.path(scratch_path, str_c(project_id, '_msglm_data_', ms_folder, '_', data_version, '.RData')))
+load(file.path(scratch_path, str_c(project_id, '_msdata_full_', ms_folder, '_', data_version, '.RData')))
 
 modelobj <- "protgroup"
 quantobj <- "protgroup"
@@ -37,8 +35,8 @@ source(file.path(project_scripts_path, 'setup_modelobj.R'))
 message('Loading MSGLM model fit results...')
 strip_samples <- TRUE
 
-fit_path <- file.path(scratch_path, str_c(project_id, '_', ms_folder, '_',data_version,'_msglm', modelobj_suffix))
-fit_files <- list.files(fit_path, str_c(project_id, '_', ms_folder, '_', data_version, '_msglm', modelobj_suffix, 
+fit_path <- file.path(scratch_path, str_c(project_id, '_', ms_folder, '_msglm', modelobj_suffix))
+fit_files <- list.files(fit_path, str_c(project_id, '_', ms_folder, '_msglm', modelobj_suffix, 
                                         '_', fit_version, '_\\d+\\.RData'))
 message('Found ', length(fit_files), ' model file(s)')
 fit_files.df <- tibble(filename = as.character(fit_files)) %>%
@@ -77,7 +75,8 @@ rm(fit_reports)
 
 if (modelobj == "protgroup") {
 # FIXME stats should be quantobj-dependent
-iactions.df <- msdata$protgroup_intensities %>%
+iactions.df <- tidyr::expand(msdata_full$protgroup_intensities, protgroup_id, msrun) %>%
+  dplyr::left_join(msdata_full$protgroup_intensities) %>%
   dplyr::inner_join(msdata$msruns) %>%
   dplyr::mutate(is_quanted = !is.na(intensity),
                 is_idented = replace_na(ident_type == "By MS/MS", FALSE)) %>%
@@ -90,7 +89,7 @@ iactions.df <- msdata$protgroup_intensities %>%
 modelobjs_df <- dplyr::mutate(modelobjs_df,
                               is_msvalid_object = TRUE)#(nprotgroups_sharing_proteins == 1 || nproteins_have_razor > 0))
 } else if (modelobj == "protregroup") {
-iactions.df <- msdata_full$pepmodstate_intensities %>%
+iactions.df <- msdata_full$pepmodstate_intensities_all %>%
   dplyr::mutate(is_quanted = !is.na(intensity)) %>%
   dplyr::inner_join(msdata$msruns) %>%
   dplyr::left_join(msdata$pepmodstates) %>%
@@ -146,7 +145,6 @@ pre_object_contrasts.df <- dplyr::inner_join(iactions.df, conditionXmetaconditio
                    nmsruns_idented_rhs_max = nmsruns_idented_max[!is_lhs]) %>%
   dplyr::ungroup()
 
-
 object_effects.df <- pre_object_effects.df %>% dplyr::inner_join(fit_stats$object_effects) %>%
   dplyr::left_join(select(modelobjs_df, object_id, is_msvalid_object)) %>%
   dplyr::filter(var %in% c('obj_effect', 'obj_effect_replCI')) %>%
@@ -155,17 +153,11 @@ object_effects.df <- pre_object_effects.df %>% dplyr::inner_join(fit_stats$objec
   dplyr::mutate(p_value_adj = p.adjust(p_value, method = "BY")) %>%
   dplyr::ungroup()
 
-weak_bait_ids <- c()
-strong_bait_ids <- c()
-
 object_effects_thresholds.df <- select(object_effects.df, effect, std_type) %>%
   distinct() %>%
-  mutate(p_value_threshold = case_when(#bait_id %in% weak_bait_ids ~ 0.01,
-                                       TRUE ~ 0.001),
-         median_log2_threshold = case_when(#bait_id %in% weak_bait_ids ~ 0.25,
-                                           TRUE ~ 0.5),
-         median_log2_max = case_when(#bait_id %in% strong_bait_ids ~ 8,
-                                     TRUE ~ 4))
+  mutate(p_value_threshold = case_when(TRUE ~ 0.001),
+         median_log2_threshold = case_when(TRUE ~ 0.5),
+         median_log2_max = case_when(TRUE ~ 4))
 
 object_effects.df <- object_effects.df %>%
   select(-any_of(c("p_value_threshold", "median_log2_threshold", "median_log2_max"))) %>%
@@ -174,12 +166,7 @@ object_effects.df <- object_effects.df %>%
                 median_log2_trunc = pmax(-median_log2_max, pmin(median_log2_max, median_log2)),
                 is_signif = p_value <= p_value_threshold & abs(median_log2) >= median_log2_threshold,
                 is_hit_nomschecks = is_signif & !is_contaminant & !is_reverse,
-                is_hit_nomschecks = ifelse(is.na(is_hit_nomschecks),FALSE,is_hit_nomschecks), #force NAs to False to avoid the headache in enrichment
-                is_hit = is_hit_nomschecks &
-                  #  if_else(median_log2 > 0,
-                  #          (nmsruns_idented_lhs_max>2) & (nmsruns_quanted_lhs_max>2),
-                  #          (nmsruns_idented_rhs_max>2) & (nmsruns_quanted_rhs_max>2)) &
-                  is_msvalid_object,
+                is_hit = is_hit_nomschecks & (nmsruns_quanted_min>=1) & (nmsruns_quanted_max>=2) & is_msvalid_object,
                 change = if_else(is_signif, if_else(median_log2 < 0, "-", "+"), "."))
 
 object_effect_stats.df <- dplyr::group_by(object_effects.df, effect, std_type) %>%
@@ -207,13 +194,9 @@ object_contrasts.df <- dplyr::inner_join(pre_object_contrasts.df, fit_contrasts$
 
 object_contrasts_thresholds.df <- select(object_contrasts.df, contrast, contrast_type, std_type) %>%
   distinct() %>%
-  mutate(#bait_full_id = str_extract(contrast, "FPMS_(.+)_vs_FPMS_(controls|others)")[,1],
-         p_value_threshold = case_when(#bait_full_id %in% weak_bait_ids ~ 0.05,
-                                       TRUE ~ 0.001),
-         median_log2_threshold = case_when(#bait_full_id %in% weak_bait_ids ~ 0.25,
-                                           TRUE ~ 0.5),
-         median_log2_max = case_when(#bait_full_id %in% strong_bait_ids ~ 8,
-                                       TRUE ~ 5))
+  mutate(p_value_threshold = case_when(TRUE ~ 0.001),
+         median_log2_threshold = case_when(TRUE ~ 0.5),
+         median_log2_max = case_when(TRUE ~ 5))
 
 object_contrasts.df <- object_contrasts.df %>%
   select(-any_of(c("p_value_threshold", "median_log2_threshold", "median_log2_max"))) %>%
@@ -223,10 +206,7 @@ object_contrasts.df <- object_contrasts.df %>%
                 is_signif = p_value <= p_value_threshold & abs(median_log2) >= median_log2_threshold,
                 is_hit_nomschecks = is_signif & !is_contaminant & !is_reverse &
                   ((contrast_type == "comparison") | (median_log2 >= 0.0)),
-                is_hit = is_hit_nomschecks &
-                #  if_else(median_log2 > 0,
-                #          (nmsruns_idented_lhs_max>2) & (nmsruns_quanted_lhs_max>2),
-                #          (nmsruns_idented_rhs_max>2) & (nmsruns_quanted_rhs_max>2)) &
+                is_hit = is_hit_nomschecks & ((nmsruns_quanted_lhs_max>=2) & (nmsruns_quanted_rhs_max>=2)) &
                   is_msvalid_object,
                 change = if_else(is_signif, if_else(median_log2 < 0, "-", "+"), "."))
 
