@@ -1,5 +1,5 @@
 Sys.setenv(TZ='Etc/GMT+1') # issue#612@rstan
-#job.args <- c("cov2", "ast_cov2_msglm", "mq_apms_20200427", "20200427", "20200427", "0", "284")
+#job.args <- c("cov2", "ast_cov2_msglm", "mq_apms_20200427", "20200503", "20200503", "0", "284")
 if (!exists('job.args')) {
   job.args <- commandArgs(trailingOnly = TRUE)
 }
@@ -147,7 +147,8 @@ gc()
 
 msglm.stan_data <- stan.prepare_data(instr_calib, model_data,
                                      global_labu_shift = global_labu_shift,
-                                     batch_tau=0.8, effect_repl_shift_tau=0.4)
+                                     batch_tau=0.25, batch_df=4, batch_df2=4, batch_slab_scale=0.1,
+                                     effect_repl_shift_tau=0.4)
 
 message('Running STAN in NUTS mode...')
 options(mc.cores=mcmc_nchains)
@@ -171,7 +172,7 @@ if (!dir.exists(file.path(scratch_path, res_prefix))) {
   dir.create(file.path(scratch_path, res_prefix))
 }
 rfit_filepath <- file.path(scratch_path, res_prefix, paste0(res_prefix, '_', fit_version, '_', job_chunk, '.RData'))
-message('Saving STAN results to ', rdata_filepath, '...')
+message('Saving STAN results to ', rfit_filepath, '...')
 results_info <- list(project_id = project_id, ms_folder = ms_folder,
                      data_version = data_version, fit_version = fit_version,
                      job_name = job_name, job_chunk = job_chunk, modelobj = modelobj, quantobj = quantobj)
