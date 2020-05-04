@@ -5,8 +5,8 @@
 
 project_id <- 'cov2'
 message('Project ID=', project_id)
-data_version <- "20200427"
-fit_version <- "20200427"
+data_version <- "20200503"
+fit_version <- "20200503"
 ms_folder <- 'mq_apms_20200427'
 message('Dataset version is ', data_version)
 
@@ -32,7 +32,9 @@ data_info <- list(project_id = project_id,
                   data_ver = data_version, fit_ver = fit_version,
                   ms_folder = ms_folder,
                   instr_calib_protgroup_filename = "instr_protgroup_LFQ_calib_scaturro_qep5calib_20161110_borg.json",
-                  instr_calib_pepmodstate_filename = "instr_QEP5_intensity_pepmodstate_calib_cov2_20200425_borg.json",
+                  #instr_calib_pepmodstate_filename = "instr_QEP5_intensity_pepmodstate_calib_cov2_20200428_borg.json",
+                  instr_calib_pepmodstate_filename = "instr_QEP5_intensity_pepmodstate_calib_cov2_20200430.json",
+                  #instr_calib_pepmodstate_filename = "instr_pepmod_intensity_raw_calib_laudenbach_pcp_20170128_borg.json",
                   quant_type = "LFQ", quant_col_prefix = "LFQ_Intensity",
                   pep_quant_type = "intensity")
 
@@ -264,23 +266,60 @@ msdata <- msdata_full[c('protgroup_intensities', 'protgroup_idents', 'protregrou
                         'protregroups', 'protein2protregroup', 'protregroup2pepmod')]
 
 # setup experimental design matrices
-conditionXeffect_orig.mtx <- model.matrix(
-  ~ 1 + bait_id + bait_id:orgcode,
-  mutate(conditions.df, orgcode = if_else(bait_type == "sample", orgcode, factor("SARS2", levels=levels(orgcode)))))
-conditionXeffect.mtx <- conditionXeffect_orig.mtx[, colSums(abs(conditionXeffect_orig.mtx)) != 0 &
+require(Matrix)
+
+require(purrr)
+bait_exp_designs <- group_by(conditions.df, bait_id) %>%
+mutate(n_homologs = n()) %>%
+ungroup() %>%
+mutate(has_homologs = n_homologs > 1) %>%
+group_by(has_homologs) %>% nest() %>%
+mutate(mtx = map(data, function(conds.df){
+   if (any(conds.df$n_homologs > 1)) {
+      res <- mutate(conds.df, bait_id_copy = bait_id) %>%
+      group_by(bait_id_copy) %>% nest() %>%
+      mutate(mtx = map(data, function(bait_conds.df){
+          bait_conds.df <- mutate(bait_conds.df, orgcode = relevel(factor(as.character(orgcode)), "SARS2"),
+                                  effect = str_c("bait_id", bait_id,
+                                                 if_else(orgcode == "SARS2", "", str_c(":orgcode", orgcode))))
+          res <- model.matrix(~ 1 + orgcode,
+                       contrasts.arg = list(orgcode = contr.sum),
+                       bait_conds.df)
+          dimnames(res) <- list(condition = bait_conds.df$condition,
+                                effect = bait_conds.df$effect)
+          return(res)
+      }))
+      mtx <- as.matrix(bdiag(res$mtx))
+      dimnames(mtx) <- list(condition = flatten_chr(map(res$mtx, rownames)),
+                            effect = flatten_chr(map(res$mtx, colnames)))
+      return(mtx)
+   } else {
+      mtx <- model.matrix(~ 1 + bait_id, conds.df)
+      dimnames(mtx) <- list(condition = conds.df$condition,
+                            effect = colnames(mtx))
+      return(mtx)
+   }
+}))
+
+conditionXeffect_orig.mtx <- as.matrix(bdiag(bait_exp_designs$mtx))
+dimnames(conditionXeffect_orig.mtx) <-
+    list(condition = flatten_chr(map(bait_exp_designs$mtx, rownames)),
+         effect = flatten_chr(map(bait_exp_designs$mtx, colnames)))
+conditionXeffect.mtx <- conditionXeffect_orig.mtx[as.character(conditions.df$condition),
+                                                  colSums(abs(conditionXeffect_orig.mtx)) != 0 &
                                                     !str_detect(colnames(conditionXeffect_orig.mtx), "\\(Intercept\\)|bait_idCtrl.+:orgcode")]
-dimnames(conditionXeffect.mtx) <- list(condition = conditions.df$condition,
-                                       effect = colnames(conditionXeffect.mtx))
 
 pheatmap(conditionXeffect.mtx, cluster_rows=FALSE, cluster_cols=FALSE, 
-         filename = file.path(analysis_path, 'plots', ms_folder, paste0(project_id, "_exp_design_", ms_folder, "_", fit_version, ".pdf")),
-         width = 8, height = 6)
+         filename = file.path(analysis_path, 'plots', str_c(ms_folder, "_", fit_version),
+                              paste0(project_id, "_exp_design_", ms_folder, "_", fit_version, ".pdf")),
+         width = 10, height = 10)
 
 effects.df <- tibble(effect=colnames(conditionXeffect.mtx)) %>%
   dplyr::mutate(orgcode = effect_factor(effect, "orgcode", levels(conditions.df$orgcode), NA),
                 bait_id = effect_factor(effect, "bait_id", levels(conditions.df$bait_id), NA),
                 is_positive = FALSE,#!is.na(bait_id) & is.na(orgcode),
-                prior_mean = 0.0)
+                prior_mean = 0.0,
+                prior_df2 = 4.0)
 effects.df$effect_label <- sapply(1:nrow(effects.df), function(i) {
   comps <- c()
   org <- as.character(effects.df$orgcode[[i]])
@@ -426,8 +465,8 @@ msruns_hnorm <- multilevel_normalize_experiments(instr_calib_pepmodstate,
     verbose=TRUE,
     norm_levels = list(msrun = list(cond_col = "msrun", max_objs=1000L, missing_exp.ratio=0.1),
                        bait_full_id = list(cond_col="batch_bait_full_id", max_objs=1000L, missing_exp.ratio=0.1),
-                       bait_id = list(cond_col="batch_bait_id", max_objs=300L, missing_exp.ratio=0.3),
-                       batch = list(cond_col="batch", max_objs=200L, missing_exp.ratio=0.3)
+                       bait_id = list(cond_col="batch_bait_id", max_objs=500L, missing_exp.ratio=0.3),
+                       batch = list(cond_col="batch", max_objs=300L, missing_exp.ratio=0.4)
                        ))
 
 # ignore all higher levels of normalization
