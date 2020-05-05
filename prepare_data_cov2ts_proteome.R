@@ -5,10 +5,9 @@
 
 project_id <- 'cov2'
 message('Project ID=', project_id)
-data_version <- "20200423"
-fit_version <- "20200425"
+data_version <- "20200503"
+fit_version <- "20200503"
 ms_folder <- 'cov2timecourse_dia_20200423'
-batch <- 'cov2ts'
 message('Dataset version is ', data_version)
 
 source("~/R/config.R")
@@ -34,7 +33,7 @@ msdata_path <- file.path(data_path, ms_folder)
 data_info <- list(project_id = project_id,
                   data_ver = data_version, fit_ver = fit_version,
                   ms_folder = ms_folder,
-                  instr_calib_protgroup_filename = "instr_QX8_intensity_protgroup_calib_cov2_20200411_borg.json",
+                  instr_calib_protgroup_filename = "instr_QX7_intensity_protgroup_calib_cov2_20200430.json",
                   quant_type = "intensity", quant_col_prefix = "intensity",
                   pep_quant_type = "intensity")
 
@@ -155,10 +154,12 @@ effects.df <- left_join(effects.df,
                                   effect_type == "timepoint" ~ str_c(timepoint, "h"),
                                   TRUE ~ NA_character_),
          prior_mean = 0,
-         prior_tau = case_when(effect_type == "treatmentXtimepoint" ~ 0.5,
+         prior_tau = case_when(effect_type == "treatmentXtimepoint" ~ 0.25,
                                effect_type == "treatment" ~ 0.5,
                                effect_type == "timepoint" ~ 1.0,
                                TRUE ~ NA_real_),
+         prior_df2 = case_when(effect_type == "treatmentXtimepoint" ~ 4.0,
+                               TRUE ~ 1.0),
          is_positive = FALSE)
 
 conditionXeffect.df <- conditionXeffect_frame(conditionXeffect.mtx, effects.df)
@@ -248,107 +249,20 @@ msdata4norm.df <- msdata$protgroup_intensities %>% ungroup() %>%
   dplyr::inner_join(select(msdata$msruns, msrun, condition, treatment, timepoint)) #%>% #WHY???
   #mutate(timepoint=factor(timepoint))
 
-msdata4lev1norm.df <- msdata4norm.df
-
 options(mc.cores=8)
 
-## level 1: msruns level (replicates within condition)
-msruns_lev1norm <- normalize_experiments(instr_calib, msdata4lev1norm.df,
-                                         quant_col = "intensity", obj_col = "protgroup_id", mschan_col = "msrun",
-                                         cond_col="msrun", condgroup_col='condition',
-                                         mcmc.iter = 2000L, stan_method="mcmc",
-                                         mcmc.adapt_delta=0.95,
-                                         verbose=TRUE, max_objs=1000L)
-## level 2: condition level (timepoints within treatment) using the unregulated proteins
-### find unreg. proteins
+msruns_hnorm <- multilevel_normalize_experiments(instr_calib_protgroup, msdata$msruns,
+                                                 msdata4norm.df,
+                                                 quant_col = "intensity", obj_col = "protgroup_id", mschan_col = "msrun",
+                                                 mcmc.iter = 2000L,
+                                                 #mcmc.chains = 6,
+                                                 verbose=TRUE,
+                                                 norm_levels = list(msrun = list(cond_col = "msrun", max_objs=2000L, missing_exp.ratio=0.1),
+                                                                    condition = list(cond_col="condition", max_objs=2000L, missing_exp.ratio=0.1),
+                                                                    timepoint = list(cond_col="timepoint", max_objs=1000L, missing_exp.ratio=0.3)
+                                                 ))
 
-# 1. impute to generate UMAP
-
-# impute intensities
-protgroup_intensities.df <- impute_intensities(msdata_full$protgroup_intensities,
-                                               msdata_full$msrun_stats) %>%
-  dplyr::mutate(log2_intensity_imputed = log2(intensity_imputed))
-
-#msdata4norm_2.df has imputed values and excluding bad runs
-msdata4lev2norm.df <- protgroup_intensities.df %>%
-  dplyr::semi_join(dplyr::filter(msdata$protgroups, !is_reverse & !is_contaminant & !is_viral)) %>%
-  dplyr::inner_join(select(msdata$msruns, msrun, condition)) %>%
-  dplyr::inner_join(select(conditions.df, condition, treatment, timepoint, timepoint_num)) %>%
-#apply runs normalization to the intensities
-  dplyr::left_join(dplyr::select(msruns_lev1norm, msrun, shift)) %>%
-  dplyr::mutate(intensity_lev1norm = intensity*exp(-shift),
-                intensity_lev1norm_imputed = intensity_imputed*exp(-shift))
-
-# normalize the rows (for each protgroup: intensity/median(mock))
-protgroup_stats.df <- group_by(filter(msdata4lev2norm.df, treatment=="mock" & timepoint_num==min(timepoint_num)), protgroup_id) %>%
-  summarise(intensity_pg = median(intensity_lev1norm, na.rm=TRUE),
-            intensity_pg_imputed = median(intensity_lev1norm_imputed, na.rm=TRUE)) %>%
-  dplyr::ungroup() %>%
-  mutate(intensity_pg = if_else(!is.na(intensity_pg), intensity_pg, intensity_pg_imputed))
-msdata4lev2norm.df <- left_join(msdata4lev2norm.df, protgroup_stats.df) %>%
-  mutate(intensity_norm_pg = intensity_lev1norm / intensity_pg,
-         intensity_norm_pg_imputed = intensity_lev1norm_imputed / intensity_pg)
-
-### find stable proteins
-
-# select proteins quantified in 75% of replicates of each condition
-protgroupXcond_stats.df <- msdata4lev2norm.df %>% 
-  group_by(protgroup_id, condition) %>% 
-  summarise(quant_freq = sum(!is.na(intensity_norm_pg))/n()) %>% 
-  ungroup()
-protgroup_stats.df <- left_join(protgroup_stats.df,
-  group_by(protgroupXcond_stats.df, protgroup_id) %>%
-  summarise(quant_freq_min = min(quant_freq)) %>%
-  ungroup())
-
-#list protgroups_id with #peptides>4
-#protgroups_4peps.list <- msdata.wide %>% filter(n_peptides>=4) %>% pull(protgroup_id)
-
-# apply simple linear model
-
-#lm_res.df <- normed_filtered.df  %>% filter(protgroup_id %in% protgroups_4peps.list,all_conds_pres) %>%  group_by(protgroup_id)
-# lm_res.df <- group_by(msdata4stable.df, protgroup_id) %>%
-#   do({
-#     df <- .
-#     #message("Processing ", df$protgroup_id[[1]])
-#     lmres <- lm(log2(intensity_norm_imp_row) ~ treatment * timepoint, df) 
-#     tidy(lmres)
-#   })
-# filtered_lm_res <- lm_res.df %>% filter(term %>% str_detect('.+timepoint*'),term!='(Intercept)') 
-# %>% %>% filter(p.value>0.05)
-
-msdata4lev2norm.df <- semi_join(msdata4norm.df, filter(msdata_full$protgroups, is_expected_stable)) %>%
-  semi_join(filter(protgroup_stats.df, quant_freq_min>=0.75))
-
-stableprots_lev2norm <- normalize_experiments(instr_calib, msdata4lev2norm.df,
-                                              quant_col = "intensity", obj_col = "protgroup_id", mschan_col = "msrun",
-                                              cond_col='condition', condgroup_col='treatment', 
-                                              mcmc.iter = 2000L, stan_method="mcmc", mcmc.adapt_delta=0.95,
-                                              verbose=TRUE, max_objs=500L,
-                                              mschan_preshifts = msruns_lev1norm,
-                                              preshift_col = 'shift')
-
-## level 3: normalize all treatments at earliest timepoint
-inicond_norm <- normalize_experiments(instr_calib, semi_join(msdata4norm.df, filter(conditions.df, timepoint_num==min(timepoint_num))),
-                                      quant_col = "intensity", obj_col = "protgroup_id", mschan_col = "msrun",
-                                      cond_col="treatment", condgroup_col=NULL, 
-                                      mcmc.iter = 2000L, stan_method="mcmc",
-                                      mcmc.adapt_delta=0.95,
-                                      verbose=TRUE, max_objs=1000L,
-                                      mschan_preshifts = left_join(select(msruns_lev1norm, msrun, condition, shift_lev1 = shift),
-                                                                   select(stableprots_lev2norm, condition, shift_lev2 = shift)) %>% 
-                                         mutate(shift_total = shift_lev1 + shift_lev2),
-                                      preshift_col = 'shift_total')
-
-## assemble all normalization levels
-msruns_hnorm <- list(msruns = msruns_lev1norm,
-                     timepoints = stableprots_lev2norm,
-                     treatments = inicond_norm)
-
-total_msrun_shifts.df <- select(msruns_hnorm$msruns, msrun, condition, msrun_shift = shift) %>%
-  left_join(select(msruns_hnorm$timepoints, condition, treatment, timepoint_shift = shift)) %>%
-  left_join(select(msruns_hnorm$treatments, treatment, treatment_shift = shift)) %>%
-  mutate(total_msrun_shift = msrun_shift + timepoint_shift + treatment_shift)
+total_msrun_shifts.df <- msruns_hnorm$mschannel_shifts
 
 ## apply normalization
 msdata$protgroup_intensities <- dplyr::left_join(msdata$protgroup_intensities,
@@ -373,7 +287,7 @@ batch_effects.df <- tibble(batch_effect = character(0),
 rmsglmdata_filepath <- file.path(scratch_path, str_c(project_id, '_msglm_data_', ms_folder, '_', data_version, '.RData'))
 message('Saving MS data for MSGLM to ', rmsglmdata_filepath, '...')
 save(data_info, msdata,
-     conditions.df, effects.df,
+     conditions.df, effects.df, contrasts.df,
      conditionXeffect.mtx, inv_conditionXeffect.mtx, conditionXeffect.df,
      conditionXmetacondition.mtx, conditionXmetacondition.df,
      contrastXmetacondition.mtx, contrastXmetacondition.df, contrastXcondition.df,
@@ -464,7 +378,7 @@ objects_umap.df <- as_tibble(pg_umap2d, .name_repair="minimal") %>%
   #dplyr::left_join(
   #  as_tibble(objects.umap3d, .name_repair="minimal") %>%
   #    set_names(c("x_3d", "y_3d", "z_3d")) %>%
-  #    mutate(object_id = unique(object_tagintensities4pca.df$object_id))    
+  #    mutate(object_id = unique(object_intensities4pca.df$object_id))    
   #) %>%
   dplyr::inner_join(select(msdata$protgroups, object_id=protgroup_id, object_label=protgroup_label,
                            majority_protein_acs, gene_names, protein_descriptions,
@@ -512,8 +426,9 @@ p <- ggplot(filter(msdata_full$protgroups, str_detect(gene_names, "(^|;)(?:TUB[A
        left_join(msdata_full$msruns) %>%
        aes(x = timepoint_num, y = intensity_imputed_norm, color=treatment, fill=treatment)) +
   geom_smooth(alpha=0.25) +
-  geom_point() +
+  geom_point(aes(shape=is_imputed)) +
   scale_x_continuous(breaks = unique(conditions.df$timepoint_num)) +
+  scale_shape_manual(values = c("FALSE"=16L, "TRUE"=1L)) +
   scale_color_manual(values=c("mock"="gray", "SARS_COV2"="red")) +
   scale_fill_manual(values=c("mock"="gray", "SARS_COV2"="red")) +
   facet_wrap(~ gene_names, ncol = 3, scales = "free_y") +
