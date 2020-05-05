@@ -5,8 +5,8 @@
 
 project_id <- 'cov2'
 message('Project ID=', project_id)
-data_version <- "20200417"
-fit_version <- "20200417"
+data_version <- "20200429"
+fit_version <- "20200429"
 ms_folder <- 'mq_apms_20200417'
 message("Assembling fit results for project ", project_id,
         " (dataset v", data_version, ", fit v", fit_version, ")")
@@ -47,7 +47,7 @@ fit_files.df[sort(c(id_range_breaks, id_range_breaks+1L)), ]
 #fit_files.df <- dplyr::filter(fit_files.df, protgroup_id <= 520)
 
 #write_lines(setdiff(1:nrow(modelobjs_df), fit_files.df$chunk_id),
-#            path=file.path(scratch_path, str_c(project_id, "_", fit_version, "_pending_chunk_ids")))
+#            path=file.path(scratch_path, str_c(project_id, "_", ms_folder, '_', fit_version, "_pending_chunk_ids")))
 
 #load(file.path(fit_path, fit_files[1]))
 
@@ -72,7 +72,7 @@ rm(fit_reports)
 
 if (modelobj == "protgroup") {
 # FIXME stats should be quantobj-dependent
-iactions.df <- msdata$protgroup_intensities %>%
+iactions.df <- msdata_full$protgroup_intensities_all %>%
   dplyr::left_join(msdata$protgroup_idents) %>%
   dplyr::inner_join(msdata$msruns) %>%
   dplyr::mutate(is_quanted = !is.na(intensity),
@@ -86,7 +86,8 @@ iactions.df <- msdata$protgroup_intensities %>%
 modelobjs_df <- dplyr::mutate(modelobjs_df,
                               is_msvalid_object = (nprotgroups_sharing_proteins == 1 || nproteins_have_razor > 0))
 } else if (modelobj == "protregroup") {
-iactions.df <- msdata_full$pepmodstate_intensities %>%
+iactions.df <- tidyr::expand(msdata_full$pepmodstate_intensities, pepmodstate_id, msrun) %>%
+  dplyr::left_join(msdata_full$pepmodstate_intensities) %>%
   dplyr::mutate(is_quanted = !is.na(intensity)) %>%
   dplyr::inner_join(msdata$msruns) %>%
   dplyr::left_join(msdata$pepmodstates) %>%
@@ -161,8 +162,29 @@ object_effects.df <- pre_object_effects.df %>% dplyr::inner_join(fit_stats$objec
                          (nmsruns_idented_max>2) & (nmsruns_quanted_max>2) & (is_msvalid_object),
                 change = if_else(is_signif, if_else(mean_log2 < prior_mean_log2, "-", "+"), "."))
 
+object_effects_stats.df <- dplyr::group_by(object_effects.df, effect, std_type) %>%
+  dplyr::summarise(p_value_001 = quantile(p_value, 0.001),
+                   p_value_01 = quantile(p_value, 0.01),
+                   p_value_05 = quantile(p_value, 0.05),
+                   median_log2_abs_50 = quantile(abs(median_log2[p_value <= 0.1]), 0.5),
+                   median_log2_abs_95 = quantile(abs(median_log2[p_value <= 0.1]), 0.95),
+                   median_log2_abs_99 = quantile(abs(median_log2[p_value <= 0.1]), 0.99),
+                   n_hits = sum(is_hit_nomschecks, na.rm = TRUE),
+                   n_plus = sum(change == "+"),
+                   n_minus = sum(change == "-")) %>%
+  dplyr::ungroup()
+
+View(filter(fit_stats$object_batch_effects, var=="obj_batch_effect") %>%
+  group_by(object_id) %>%
+  mutate(has_batcheffects = any(abs(median_log2) >= 1 & p_value <= 0.05)) %>%
+  ungroup())
+
 object_contrasts.df <- dplyr::inner_join(pre_object_contrasts.df, fit_contrasts$iactions) %>%
   dplyr::left_join(select(modelobjs_df, object_id, is_msvalid_object)) %>%
+  dplyr::left_join(filter(fit_stats$object_batch_effects, var=="obj_batch_effect") %>%
+                   group_by(object_id) %>%
+                   summarise(has_batcheffects = any(abs(median_log2) >= 1 & p_value <= 0.05)) %>%
+                   ungroup()) %>%
   dplyr::filter(var %in% c('iaction_labu', 'iaction_labu_replCI')) %>%
   dplyr::mutate(std_type = if_else(str_detect(var, "_replCI$"), "replicate", "median")) %>%
   dplyr::mutate(p_value = pmin(prob_nonpos, prob_nonneg) * if_else(contrast_type == "comparison", 2, 1)) %>%
@@ -171,56 +193,27 @@ object_contrasts.df <- dplyr::inner_join(pre_object_contrasts.df, fit_contrasts$
                                    p.adjust(c(prob_nonneg, prob_nonpos), method = "BY")[1:n()])) %>%
   dplyr::ungroup()
 
-weak_bait_ids <- c("SARS_CoV_E", "SARS_CoV2_E",
-                   "HCoV_ORF4",
-                   "SARS_CoV_ORF3b", 
-                   "SARS_CoV_ORF6", "SARS_CoV2_ORF6",
-                   "SARS_CoV_ORF7a", "SARS_CoV2_ORF7a",
-                   "SARS_CoV_ORF8",
-                   "SARS_CoV_ORF8a",
-                   "SARS_CoV_ORF9b", "SARS_CoV2_ORF9b",
-                   "SARS_CoV2_N",
-                   "SARS_CoV2_NSP1",
-                   "SARS_CoV_NSP2", "SARS_CoV2_NSP2",
-                   "SARS_CoV_NSP3_macroD", "SARS_CoV2_NSP3_macroD",
-                   "SARS_CoV_NSP4", "SARS_CoV2_NSP4",
-                   "SARS_CoV_NSP7", "SARS_CoV2_NSP7",
-                   "SARS_CoV_NSP8", "SARS_CoV2_NSP8",
-                   "SARS_CoV_NSP9", "SARS_CoV2_NSP9",
-                   "SARS_CoV_NSP10",
-                   "SARS_CoV2_NSP13",
-                   "SARS_CoV2_NSP14",
-                   "SARS_CoV_NSP15", "SARS_CoV2_NSP15",
-                   "SARS_CoV2_NSP16"
+weak_bait_ids <- c("ORF3b", "ORF4", "ORF6",
+                   "ORF7a", "ORF8", "ORF8a", "ORF9b",
+                   "E", "N", "S",
+                   "NSP1", "NSP2", "NSP3_macroD",
+                   "NSP4", "NSP7", "NSP8", "NSP9", "NSP10",
+                   "NSP12", "NSP13", "NSP14", "NSP15", "NSP16"
                    )
-
-strong_bait_ids <- c(
-                   "SARS_CoV2_ORF3",
-                   "HCoV_ORF3",
-                   "SARS_CoV_ORF3a", "HCoV_ORF4a",
-                   "SARS_CoV_ORF7b", "SARS_CoV2_ORF7b",
-                   "SARS_CoV_ORF8", "SARS_CoV2_ORF8",
-                   "SARS_CoV_ORF8b",
-                   "SARS_CoV2_M", "SARS_CoV_M",
-                   "SARS_CoV_NSP1",
-                   "SARS_CoV_NSP6", "SARS_CoV2_NSP6")
 
 object_contrasts_thresholds.df <- select(object_contrasts.df, contrast, contrast_type, std_type, bait_full_id) %>%
   distinct() %>%
-  mutate(p_value_threshold = case_when(contrast_type == "filter" & bait_full_id %in% weak_bait_ids ~ 0.005,
+  dplyr::left_join(select(conditions.df, bait_full_id, bait_id)) %>%
+  mutate(p_value_threshold = case_when(contrast_type == "filter" & bait_id %in% weak_bait_ids ~ 0.005,
                                        TRUE ~ 0.001),
-         median_log2_threshold = case_when(bait_full_id %in% weak_bait_ids ~ 1,
-                                           TRUE ~ 2),
-         median_log2_max = case_when(bait_full_id %in% strong_bait_ids ~ 13,
-                                       TRUE ~ 8))
+         median_log2_threshold = case_when(bait_id %in% weak_bait_ids ~ 1,
+                                           TRUE ~ 2))
 
 object_contrasts.df <- object_contrasts.df %>%
   select(-any_of(c("p_value_threshold", "median_log2_threshold", "median_log2_max"))) %>%
   left_join(object_contrasts_thresholds.df) %>%
-  dplyr::mutate(mean_log2_trunc = pmax(-median_log2_max, pmin(median_log2_max, mean_log2)),
-                median_log2_trunc = pmax(-median_log2_max, pmin(median_log2_max, median_log2)),
-                is_signif = p_value <= p_value_threshold & abs(median_log2) >= median_log2_threshold,
-                is_hit_nomschecks = is_signif & !is_contaminant & !is_reverse &
+  dplyr::mutate(is_signif = p_value <= p_value_threshold & abs(median_log2) >= median_log2_threshold,
+                is_hit_nomschecks = is_signif & !is_contaminant & !is_reverse & !has_batcheffects &
                   ((contrast_type == "comparison") | (median_log2 >= 0.0)),
                 is_hit = is_hit_nomschecks &
                   if_else(median_log2 > 0,
@@ -249,6 +242,7 @@ object_contrast_stats.df <- dplyr::group_by(object_contrasts.df, contrast, bait_
   dplyr::ungroup() %>%
   dplyr::left_join(dplyr::select(msdata$msruns, bait_full_id, batch) %>%
                    dplyr::group_by(bait_full_id) %>% dplyr::summarise(batches = str_c(unique(batch), collapse=" ")) %>% dplyr::ungroup())
+View(filter(object_contrast_stats.df, std_type == "median" & str_detect(contrast, "_vs_others")) %>% dplyr::arrange(desc(batches), desc(n_hits)))
 View(filter(object_contrast_stats.df, std_type == "replicate" & str_detect(contrast, "_vs_others")) %>% dplyr::arrange(desc(batches), desc(n_hits)))
 
 object_effects_wide.df <- pivot_wider(object_effects.df,

@@ -1,47 +1,35 @@
 source(file.path(misc_scripts_path, 'ggplot_ext.R'))
 
+require(Cairo)
 require(ggrastr)
 require(ggrepel)
 
 bait_checks.df <- get(str_c("bait_checks_", modelobj, ".df"))
 bait_checks.df$object_id <- bait_checks.df[[modelobj_idcol]]
 
-mlog10_pvalue_compress <- function(x, threshold = 10) {
-    if (x < threshold) {
-        return (x)
-    } else if (is.finite(x)) {
-        t <- x - threshold
-        return (threshold + sqrt(t))
-    } else {
-        return (2.5*threshold)
-    }
-}
+narrow_bait_ids <- c()
 
 object_contrasts_4show.df <- object_contrasts.df %>%
     dplyr::left_join(dplyr::select(bait_checks.df, object_id, obj_bait_full_id = bait_full_id, obj_organism = bait_organism)) %>%
     dplyr::mutate(p_value_compressed = 10^(-sapply(-log10(p_value), mlog10_pvalue_compress)),
                   p_value_capped = pmax(1E-20, p_value),
                   p_value_range = if_else(p_value <= 1E-7, "high", "low"),
-                  object_annotation = is_viral,
-                  object_label = if_else(is_viral & !is.na(obj_bait_full_id), obj_bait_full_id, object_label),
                   show_label = is_viral | is_hit_nomschecks,
-                  truncation = case_when(#p_value < p_value_capped ~ "p_value",
-                                         median_log2 > median_log2_trunc & is_hit ~ "median_right hit",
-                                         median_log2 > median_log2_trunc & !is_hit ~ "median_right nonhit",
-                                         median_log2 < median_log2_trunc & is_hit ~ "median_left hit",
-                                         median_log2 < median_log2_trunc & !is_hit ~ "median_left nonhit",
-                                         is_signif & !is_hit ~ "significant nonhit",
-                                         is_hit ~ "hit",
-                                         TRUE ~ "none"),
-                  truncation_type = case_when(truncation == "none" ~ "insignif",
-                                              truncation %in% c("hit", "significant nonhit") ~ "signif",
-                                              is_signif ~ "truncated signif",
-                                              TRUE ~ "truncated insignif"))
+                  median_log2_max = case_when(bait_full_id %in% narrow_bait_ids ~ 8,
+                                              TRUE ~ 18),
+                  mean_log2_trunc = pmax(-median_log2_max, pmin(median_log2_max, mean_log2)),
+                  median_log2_trunc = pmax(-median_log2_max, pmin(median_log2_max, median_log2)),
+                  truncation = volcano_truncation(median_log2, median_log2_trunc, p_value, p_value, is_hit, is_signif),
+                  truncation_type = volcano_truncation_type(truncation, is_signif)) %>%
+    dplyr::group_by(std_type, contrast) %>%
+    dplyr::mutate(show_label = if_else(rep.int(sum(show_label) >= 300L, n()), rep.int(FALSE, n()), show_label)) %>%
+    dplyr::ungroup()
 
 object_contrasts_4show.df %>%
 group_by(contrast, std_type) %>% do({
     sel_object_contrast.df <- .
-    sel_object_contrast_thresholds.df <- semi_join(object_contrasts_thresholds.df, sel_object_contrast.df)
+    sel_object_contrast_thresholds.df <- semi_join(object_contrasts_thresholds.df,
+                                                   dplyr::select(sel_object_contrast.df, std_type, contrast))
     message("Plotting ", sel_object_contrast_thresholds.df$contrast[[1]], " std_type=", sel_object_contrast.df$std_type[[1]])
     nlabels <- nrow(dplyr::filter(sel_object_contrast.df, is_signif & show_label))
 
@@ -70,20 +58,16 @@ group_by(contrast, std_type) %>% do({
                   show.legend = FALSE, segment.color = "gray") +
         scale_y_continuous(trans=mlog10_trans(), limits=c(1.0, NA)) +
         scale_color_manual(values=c("TRUE" = "red", "FALSE" = "black"), na.value="black") +
-        scale_shape_manual(values=c("p_value"=-9650,
-                                    "median_left hit"=-9664, "median_left nonhit"=-9665,
-                                    "median_right hit"=-9654, "median_right nonhit"=-9655,
-                                    "significant nonhit"=1L, "hit"=16L, "none"=16L), guide="none") +
         #scale_fill_gradient(low="gray75", high="black") +
-        scale_size_manual(values=c("insignif"=1, "signif"=2,
-                                   "truncated insignif"=2, "truncated signif"=4), guide="none") +
         #scale_alpha_manual(values=c("TRUE"=1.0, "FALSE"=0.5)) +
+        scale_shape_manual(values=volcano_truncation_shape_palette, guide="none") +
+        scale_size_manual(values=volcano_truncation_size_palette, guide="none") +
         #facet_grid(p_value_range ~ contrast, scales = "free_y") +
         ggtitle(sel_object_contrast_thresholds.df$contrast[[1]],
                 subtitle=str_c("std_type=", sel_object_contrast_thresholds.df$std_type[[1]])) +
         theme_bw_ast()
-    ggsave(filename = file.path(analysis_path, 'plots', ms_folder,
-                                str_c("volcanos_", sel_object_contrast_thresholds.df$std_type[[1]], modelobj_suffix),
+    ggsave(filename = file.path(analysis_path, 'plots', str_c(ms_folder,'_', fit_version),
+                                str_c("volcanos_contrasts_", sel_object_contrast_thresholds.df$std_type[[1]], modelobj_suffix),
                                 paste0(project_id, '_', fit_version, '_volcano_',
                                        sel_object_contrast_thresholds.df$contrast[[1]], '.pdf')),
            plot = p, width=15, height=18, device=cairo_pdf, family="Arial")
