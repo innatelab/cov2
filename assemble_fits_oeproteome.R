@@ -75,7 +75,7 @@ rm(fit_reports)
 
 if (modelobj == "protgroup") {
 # FIXME stats should be quantobj-dependent
-iactions.df <- msdata$protgroup_intensities %>%
+iactions.df <- msdata$protgroup_intensities_all %>%
   dplyr::inner_join(msdata$msruns) %>%
   dplyr::mutate(is_quanted = !is.na(intensity),
                 is_idented = replace_na(ident_type == "By MS/MS", FALSE)) %>%
@@ -88,7 +88,7 @@ iactions.df <- msdata$protgroup_intensities %>%
 modelobjs_df <- dplyr::mutate(modelobjs_df,
                               is_msvalid_object = TRUE)#(nprotgroups_sharing_proteins == 1 || nproteins_have_razor > 0))
 } else if (modelobj == "protregroup") {
-iactions.df <- msdata_full$pepmodstate_intensities %>%
+iactions.df <- msdata_full$pepmodstate_intensities_all %>%
   dplyr::mutate(is_quanted = !is.na(intensity)) %>%
   dplyr::inner_join(msdata$msruns) %>%
   dplyr::left_join(msdata$pepmodstates) %>%
