@@ -1,8 +1,9 @@
 proj_info = (id = "cov2",
-             data_ver = "20200417",
-             fit_ver = "20200417",
-             ms_folder = "mq_apms_20200417",
-             network_ver = "20200417")
+             data_ver = "20200429",
+             fit_ver = "20200429",
+             msfolder = "mq_apms_20200427",
+             prev_network_ver = "20200420",
+             network_ver = "20200429")
 using Pkg
 Pkg.activate(@__DIR__)
 using Revise
@@ -18,7 +19,7 @@ const plots_path = joinpath(analysis_path, "plots")
 
 Revise.includet(joinpath(misc_scripts_path, "clustering_utils.jl"))
 
-network_rdata = load(joinpath(networks_path, "$(proj_info.id)_4graph_$(proj_info.ms_folder)_$(proj_info.fit_ver).RData"))
+network_rdata = load(joinpath(networks_path, "$(proj_info.id)_4graph_$(proj_info.msfolder)_$(proj_info.fit_ver).RData"))
 
 objects_orig_df = network_rdata["objects_4graphml.df"]
 iactions_orig_df = network_rdata["iactions_ex_4graphml.df"]
@@ -64,6 +65,8 @@ end
 using LightGraphs
 
 Revise.includet(joinpath(misc_scripts_path, "forceatlas3_layout.jl"))
+includet(joinpath(misc_scripts_path, "graphml_writer.jl"))
+
 FA = ForceAtlas3
 
 gr_apms = SimpleGraph(FA.Graph(iactions_df[ismissing.(iactions_df.ppi_type), :], objects_df,
@@ -76,8 +79,12 @@ gr_apms = SimpleGraph(FA.Graph(iactions_df[ismissing.(iactions_df.ppi_type), :],
 
 node_dislikes = FA.socioaffinity(gr_apms, p=(0.0, 1.0), q=1.0)
 node_dislikes_baits = FA.socioaffinity(gr_apms, p=(1.25, 1.25), q=2.0)
-baits_mask = objects_df.exp_role .== "bait"
-node_dislikes[baits_mask, baits_mask] .= 4 * node_dislikes_baits[baits_mask, baits_mask]
+for (i, r1) in enumerate(eachrow(objects_df)), (j, r2) in enumerate(eachrow(objects_df))
+    if r1.exp_role == "bait" && r2.exp_role == "bait" &&
+       r1.gene_label != r2.gene_label
+       node_dislikes[i, j] = 5 * node_dislikes_baits[i, j]
+    end
+end
 
 gr = FA.Graph(iactions_df, objects_df,
               src_node_col=:src_object_id, dest_node_col=:dest_object_id, weight_col=:edge_weight,
@@ -94,17 +101,15 @@ FA.layout!(gr, FA.ForceAtlas3Settings(gr,
             nsteps=1000, progressbar=true)
 FA.layout!(gr, FA.ForceAtlas3Settings(gr,
             outboundAttractionDistribution=false,
-            attractionStrength=8.0, attractionEdgeWeightInfluence=0.5, jitterTolerance=0.1,
-            repulsionStrength=4.0.*(1.0 .+ node_dislikes),
+            attractionStrength=8.0, attractionEdgeWeightInfluence=0.75, jitterTolerance=0.1,
+            repulsionStrength=3 .* (1.0 .+ node_dislikes),
             repulsionNodeModel=:Circle,
-            gravity=1.5, gravityFalloff=1.3, gravityShape=:Rod,
-            gravityRodCorners=((0.0, -4.0), (0.0, 4.0)), gravityRodCenterWeight=0.1),
+            gravity=1.5, gravityFalloff=1.2, gravityShape=:Rod,
+            gravityRodCorners=((0.0, -6.0), (0.0, 6.0)), gravityRodCenterWeight=0.1),
             nsteps=5000, progressbar=true)
 
 objects_df.layout_x = FA.extract_layout(gr)[1] .* 30
 objects_df.layout_y = FA.extract_layout(gr)[2] .* 30
-
-includet(joinpath(misc_scripts_path, "graphml_writer.jl"))
 
 objects_df.object_idstr = string.(objects_df.object_id)
 iactions_df.src_object_idstr = string.(iactions_df.src_object_id)
@@ -127,8 +132,16 @@ apms_graph = GraphML.import_graph(objects_df, iactions_df,
                                            :crispr_plasmid_ids => "CRISPR Plasmid IDs",
                                            :oeproteome_is_hit => "OE Proteome Hit",
                                            :oeproteome_bait_full_ids => "OE Proteome Baits",
-                                           :oeproteome_p_value => "OE Proteome Most Signif. P-value",
-                                           :oeproteome_median_log2 => "OE Proteome Most Signif. Median Log2",
+                                           :oeproteome_p_value => "OE Proteome: Most Signif. P-value",
+                                           :oeproteome_median_log2 => "OE Proteome: Most Signif. Median Log2",
+                                           :cov2ts_proteome_timepoints => "CoV-2 Proteome: Timepoints of Significant Changes",
+                                           :cov2ts_proteome_p_value => "CoV-2 Proteome: Most Signif. P-value",
+                                           :cov2ts_proteome_median_log2 => "CoV-2 Proteome: Most Signif. Median Log2",
+                                           :cov2ts_proteome_is_hit => "CoV-2 Proteome: Is Hit",
+                                           :cov2ts_phospho_ptms => "CoV-2 Phospho: PTMs and Timepoints of Significant Changes",
+                                           :cov2ts_phospho_p_value => "CoV-2 Phospho: Most Signif. P-value",
+                                           :cov2ts_phospho_median_log2 => "CoV-2 Phospho: Most Signif. Median Log2",
+                                           :cov2ts_phospho_is_hit => "CoV-2 Phospho: Is Hit",
                                            :layout_x, :layout_y],
                              edge_attrs = [Symbol("prob_nonpos_min_vs_background") => "P-value (vs Background)",
                                            Symbol("median_log2_vs_background") => "Enrichment (vs Background)",
@@ -137,7 +150,7 @@ apms_graph = GraphML.import_graph(objects_df, iactions_df,
                                            :oeproteome_is_hit => "OE Proteome Hit",
                                            :oeproteome_p_value => "OE Proteome P-value",
                                            :oeproteome_median_log2 => "OE Proteome Median Log2",
-                                           :is_in_20200402_network => "Is In 20200409 Network",
+                                           Symbol(string("is_in_", proj_info.prev_network_ver, "_apms")) => "Is In $(proj_info.prev_network_ver) AP-MS Network",
                                            :krogan_is_hit => "Krogan hit",
                                            :krogan_MIST => "Krogan MIST score",
                                            :krogan_avg_spec => "Krogan Average SC",
@@ -155,6 +168,6 @@ apms_graph = GraphML.import_graph(objects_df, iactions_df,
  #                 `Weight` = 'weight',
  #                 `type` = "type" )
                              # verbose=verbose)
-open(joinpath(networks_path, "$(proj_info.id)_4graph_$(proj_info.ms_folder)_$(proj_info.fit_ver)_FA3.graphml"), "w") do io
+open(joinpath(networks_path, "$(proj_info.id)_4graph_$(proj_info.msfolder)_$(proj_info.fit_ver)_FA3.graphml"), "w") do io
     write(io, apms_graph)
 end
