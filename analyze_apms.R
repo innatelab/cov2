@@ -74,6 +74,127 @@ group_by(contrast, std_type) %>% do({
     tibble()
 })
 
+object_iactions_4show.df <- filter(object_contrasts.df, contrast_type=="comparison" & std_type=="replicate") %>%
+    dplyr::select(std_type, contrast, contrast_median_log2 = median_log2, contrast_p_value = p_value,
+                  is_signif, is_hit_nomschecks, is_hit, is_viral, object_id, object_label) %>%
+    dplyr::inner_join(dplyr::select(dplyr::filter(contrastXcondition.df, weight>0), contrast, condition_lhs=condition, bait_full_id_lhs=bait_full_id)) %>%
+    dplyr::inner_join(dplyr::select(dplyr::filter(contrastXcondition.df, weight<0), contrast, condition_rhs=condition, bait_full_id_rhs=bait_full_id)) %>%
+    dplyr::mutate(contrast_lhs = str_c(bait_full_id_lhs, "_vs_others"),
+                  contrast_rhs = str_c(bait_full_id_rhs, "_vs_others")) %>%
+    dplyr::left_join(dplyr::filter(object_contrasts.df, contrast_type=="filter" & std_type == "replicate") %>%
+                     dplyr::select(contrast_lhs = contrast, object_id, contrast_lhs_p_value = p_value, contrast_lhs_median_log2 = median_log2,
+                                   is_signif_lhs = is_signif, is_hit_nomschecks_lhs = is_hit_nomschecks, is_hit_lhs = is_hit)) %>%
+    dplyr::left_join(dplyr::filter(object_contrasts.df, contrast_type=="filter" & std_type == "replicate") %>%
+                     dplyr::select(contrast_rhs = contrast, object_id, contrast_rhs_p_value = p_value, contrast_rhs_median_log2 = median_log2,
+                                   is_signif_rhs = is_signif, is_hit_nomschecks_rhs = is_hit_nomschecks, is_hit_rhs = is_hit)) %>%
+    dplyr::left_join(dplyr::transmute(dplyr::filter(fit_stats$iactions, var=="iaction_labu_replCI"),
+                                      object_id, condition_lhs=condition, lhs_median_log2=median_log2 + global_pepmodstate_labu_shift)) %>%
+    dplyr::left_join(dplyr::transmute(dplyr::filter(fit_stats$iactions, var=="iaction_labu_replCI"),
+                                      object_id, condition_rhs=condition, rhs_median_log2=median_log2 + global_pepmodstate_labu_shift)) %>%
+    dplyr::mutate(is_hilite = is_hit_nomschecks_lhs | is_hit_nomschecks_rhs,
+                  show_label = (is_hit_nomschecks_lhs | is_hit_nomschecks_rhs) & (is_hit_nomschecks | is_viral)) %>%
+    dplyr::filter(is_hilite | lhs_median_log2 >= quantile(lhs_median_log2, na.rm = TRUE, 0.01) &
+                      rhs_median_log2 >= quantile(rhs_median_log2, na.rm = TRUE, 0.01))
+
+object_iactions_4show.df %>%
+group_by(contrast, std_type) %>% do({
+    sel_object_contrast.df <- .
+    sel_object_contrast_thresholds.df <- semi_join(object_contrasts_thresholds.df, sel_object_contrast.df)
+    message("Plotting ", sel_object_contrast_thresholds.df$contrast[[1]], " std_type=", sel_object_contrast.df$std_type[[1]])
+
+    p <- ggplot(sel_object_contrast.df,
+       aes(x = lhs_median_log2, y = rhs_median_log2, color=is_viral)) +
+    geom_abline(slope=1, intercept=0, color="firebrick", linetype="dashed") +
+    geom_abline(slope=1, intercept=sel_object_contrast_thresholds.df$median_log2_threshold[[1]],
+                color="firebrick", linetype="dotted", linewidth=0.5) +
+    geom_abline(slope=1, intercept=-sel_object_contrast_thresholds.df$median_log2_threshold[[1]],
+                color="firebrick", linetype="dotted", linewidth=0.5) +
+    geom_point_rast(data=dplyr::filter(sel_object_contrast.df, !is_hilite),
+                    alpha=0.1, size=0.5, color="darkgray", shape=16L) +
+    geom_point(data=dplyr::filter(sel_object_contrast.df, is_hilite),
+               aes(shape=show_label, size=show_label)) +
+    geom_text_repel(data=dplyr::filter(sel_object_contrast.df, show_label),
+                    aes(label = object_label),
+                    vjust=-0.5,
+                    size=3.5,
+                    show.legend = FALSE, segment.color = "gray") +
+    scale_color_manual(values=c("TRUE" = "red", "FALSE" = "black"), na.value="black") +
+    scale_shape_manual(values=c("TRUE" = 16L, "FALSE" = 1L)) +
+    scale_size_manual(values=c("TRUE" = 2, "FALSE" = 1)) +
+    coord_fixed() +
+    theme_bw_ast()
+    ggsave(filename = file.path(analysis_path, 'plots', str_c(ms_folder,'_', fit_version),
+                                str_c("scatter_", sel_object_contrast_thresholds.df$std_type[[1]], modelobj_suffix),
+                                paste0(project_id, '_', fit_version, '_scatter_',
+                                       sel_object_contrast_thresholds.df$contrast[[1]], '.pdf')),
+           plot = p, width=10, height=10, device=cairo_pdf, family="Arial")
+    tibble()
+})
+
+object_contrasts.df %>% #filter(std_type == "replicate") %>%
+    dplyr::left_join(dplyr::select(bait_checks.df, object_id, obj_bait_full_id = bait_full_id, obj_organism = bait_organism)) %>%
+    dplyr::mutate(p_value_compressed = 10^(-sapply(-log10(p_value), mlog10_pvalue_compress)),
+                  p_value_capped = pmax(1E-20, p_value),
+                  p_value_range = if_else(p_value <= 1E-7, "high", "low"),
+                  show_label = is_viral | is_hit_nomschecks,
+                  truncation = volcano_truncation(median_log2, median_log2_trunc, p_value, p_value, is_hit, is_signif),
+                  truncation_type = volcano_truncation_type(truncation, is_signif)) %>%
+    dplyr::group_by(std_type, contrast) %>%
+    dplyr::mutate(show_label = if_else(rep.int(sum(show_label) >= 300L, n()), rep.int(FALSE, n()), show_label)) %>%
+    dplyr::ungroup()
+
+object_contrasts_4show.df %>%
+    group_by(contrast, std_type) %>% do({
+        sel_object_contrast.df <- .
+        sel_object_contrast_thresholds.df <- semi_join(object_contrasts_thresholds.df, sel_object_contrast.df)
+        message("Plotting ", sel_object_contrast_thresholds.df$contrast[[1]], " std_type=", sel_object_contrast.df$std_type[[1]])
+        nlabels <- nrow(dplyr::filter(sel_object_contrast.df, is_signif & show_label))
+
+        p <- ggplot(sel_object_contrast.df,
+                    aes(x=median_log2_trunc, y=p_value_compressed, color=is_viral, shape=truncation, size=truncation_type)) +
+            geom_hline(data=sel_object_contrast_thresholds.df,
+                       aes(yintercept = p_value_threshold), linetype=2, color="darkgray") +
+            #geom_hline(data=sel_object_contrast_thresholds.df,
+            #           aes(yintercept = p_value_max), linetype=1, color="darkgray") +
+            geom_vline(data=sel_object_contrast_thresholds.df,
+                       aes(xintercept = 0), linetype=1, color="darkgray") +
+            geom_vline(data=sel_object_contrast_thresholds.df,
+                       aes(xintercept = median_log2_threshold), linetype=2, color="darkgray") +
+            geom_vline(data=sel_object_contrast_thresholds.df,
+                       aes(xintercept = -median_log2_threshold), linetype=2, color="darkgray") +
+            geom_point_rast(data=dplyr::filter(sel_object_contrast.df, !is_signif),
+                            alpha=0.1, size=0.5, color="darkgray") +
+            geom_point(data=dplyr::filter(sel_object_contrast.df, is_signif & !is_hit)) +
+            geom_point(data=dplyr::filter(sel_object_contrast.df, is_signif & is_hit)) +
+            geom_text_repel(data=dplyr::filter(sel_object_contrast.df, is_signif & show_label),
+                            aes(label = object_label),
+                            vjust=-0.5,
+                            size=if_else(nlabels > 20, 2.5, 3.5),
+                            force=if_else(nlabels > 20, 0.25, 1.0),
+                            label.padding=if_else(nlabels > 20, 0.1, 0.25),
+                            show.legend = FALSE, segment.color = "gray") +
+            scale_y_continuous(trans=mlog10_trans(), limits=c(1.0, NA)) +
+            scale_color_manual(values=c("TRUE" = "red", "FALSE" = "black"), na.value="black") +
+            #scale_fill_gradient(low="gray75", high="black") +
+            #scale_alpha_manual(values=c("TRUE"=1.0, "FALSE"=0.5)) +
+            scale_shape_manual(values=volcano_truncation_shape_palette, guide="none") +
+            scale_size_manual(values=volcano_truncation_size_palette, guide="none") +
+            #facet_grid(p_value_range ~ contrast, scales = "free_y") +
+            ggtitle(sel_object_contrast_thresholds.df$contrast[[1]],
+                    subtitle=str_c("std_type=", sel_object_contrast_thresholds.df$std_type[[1]])) +
+            theme_bw_ast()
+        ggsave(filename = file.path(analysis_path, 'plots', str_c(ms_folder,'_', fit_version),
+                                    str_c("volcanos_contrasts_", sel_object_contrast_thresholds.df$std_type[[1]], modelobj_suffix),
+                                    paste0(project_id, '_', fit_version, '_volcano_',
+                                           sel_object_contrast_thresholds.df$contrast[[1]], '.pdf')),
+               device=cairo_pdf, plot = p, width=15, height=18, device=cairo_pdf, family="Arial")
+        tibble()
+    })
+
+filter(msdata_full$proteins, str_detect(gene_name, "(^|;)EXO")) %>%
+    dplyr::inner_join(msdata_full$protein2object) %>% View()
+
+# plot peptide heatmaps
 candidate_genes <- c("ATL2", "MAVS", "AIFM1", "SHC1", "NELFB", "ILF3", "C14orf166", "PRAF2", "UNC93B1",
                      "EIF4H", "G3BP1", "PIP4K2C", "HLA-E", "TNFAIP2", "MARC1", "JAK1",
                      "TNFRSF10B", "TNFRSF10A", "TNFRSF21", "IFITM10", "SQSTM1")
