@@ -286,3 +286,28 @@ ggsave(filename = fname,
        device=cairo_pdf, family="Arial")
     tibble()
 })
+
+# bait expression
+bait_intensities.df = dplyr::select(bait_checks.df, bait_full_id, bait_id, bait_orgcode, bait_object_id=object_id) %>%
+    dplyr::inner_join(select(conditions.df, condition, bait_type, bait_full_id)) %>%
+    dplyr::left_join(select(filter(fit_stats$iactions, var=="iaction_labu_replCI"),
+                            condition, object_id, median_log2, ends_with("%"), bait_full_id = object_label)) %>%
+    dplyr::arrange(bait_type, bait_id, bait_orgcode) %>%
+    dplyr::mutate(bait_full_id = factor(bait_full_id, levels=unique(bait_full_id)),
+                  bait_orgcode = if_else(bait_type == "control", "control", as.character(bait_orgcode)),
+                  median_log2 = median_log2 + global_labu_shift) %>%
+    dplyr::mutate_at(vars(ends_with("%")), ~./log(2)+global_labu_shift) %>%
+    dplyr::filter(bait_full_id != "Ctrl_Gaussia_luci")
+
+bait_orgcode_palette <- c("SARS2"="red", "CVHSA"="orange", "CVHNL"="darkgreen", "CVH22"="darkgreen", "HUMAN"="darkblue", "control"="gray")
+p <- ggplot(bait_intensities.df,
+       aes(x = bait_full_id, group = bait_full_id, color=bait_orgcode, fill=bait_orgcode)) +
+    geom_boxplot(aes(middle=median_log2,
+                     lower=`25%`, upper=`75%`, ymin = `2.5%`, ymax=`97.5%`), stat="identity", alpha=0.5) +
+    scale_color_manual(values=bait_orgcode_palette) +
+    scale_fill_manual(values=bait_orgcode_palette) +
+    theme_bw_ast() +
+    theme(axis.text.x = element_text(angle=-45, hjust=0))
+ggsave(filename = file.path(analysis_path, "plots", str_c(ms_folder, "_", data_version),
+                            paste0(project_id, "_", ms_folder, '_', fit_version, "_bait_expression.pdf")),
+       plot = p, width=15, height=8, device=cairo_pdf, family="Arial")
