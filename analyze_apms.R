@@ -202,22 +202,36 @@ sel_objects.df <- dplyr::semi_join(modelobjs_df,
                                    dplyr::filter(msdata_full$proteins, gene_name %in% candidate_genes) %>%
                                    dplyr::inner_join(msdata_full[[str_c("protein2", modelobj)]]) %>%
                                    dplyr::select(!!modelobj_idcol))
+sel_objects.df <- dplyr::semi_join(modelobjs_df,
+                                   dplyr::filter(msdata_full$proteins, str_detect(gene_name, "(^|;)(CD320)($|;)")) %>%
+                                   dplyr::inner_join(msdata_full[[str_c("protein2", modelobj)]]) %>%
+                                   dplyr::select(!!modelobj_idcol))
+sel_objects.df <- dplyr::semi_join(modelobjs_df, dplyr::select(iactions_4graphml_pre.df, !!modelobj_idcol := object_id))
+sel_objects.df <- dplyr::filter(modelobjs_df, is_viral)
 
 sel_pepmodstates.df <- dplyr::inner_join(sel_objects.df, msdata_full[[str_c(modelobj, "2pepmod")]]) %>%
     dplyr::filter(is_specific) %>%
     dplyr::inner_join(msdata_full$pepmodstates) %>%
-    dplyr::select(object_id, pepmod_id, majority_protein_acs, protac_label, gene_label, gene_names, charge, pepmodstate_id) %>%
-    dplyr::group_by(object_id) %>%
-    dplyr::mutate(glm_subobject_ix = row_number()) %>%
-#sel_pepmodstates.df <- dplyr::inner_join(fit_stats$subobjects, sel_protregroups.df) %>%
-#    dplyr::select(protregroup_id, pepmod_id, protgroup_ids, majority_protein_acs, gene_names,
-#                  glm_object_ix, glm_subobject_ix, pepmodstate_id) %>%
-    dplyr::ungroup() %>%
-    dplyr::mutate(pepmodstate_ext = factor(paste0(pepmodstate_id, "(", pepmod_id, ")")))
-
+    dplyr::inner_join(select(msdata_full$pepmods, pepmod_id, peptide_id, mod_seq=seq)) %>%
+    dplyr::inner_join(select(msdata_full$peptides, peptide_id, unmod_seq=seq)) %>%
+    dplyr::select(object_id, pepmod_id, majority_protein_acs, protac_label, gene_label, gene_names,
+                  mod_seq, unmod_seq, charge, pepmodstate_id)
+if (exists("fit_stats") && has_name(fit_stats, "subobjects")) {
+    sel_pepmodstates.df <- dplyr::left_join(sel_pepmodstates.df,
+                                             dplyr::select(filter(fit_stats$subobjects, var=="suo_shift_unscaled"),
+                                                           pepmodstate_id, pms_median_log2 = median_log2)) %>%
+        dplyr::arrange(object_id, desc(coalesce(pms_median_log2, min(pms_median_log2, na.rm=TRUE))), unmod_seq, mod_seq, charge)
+} else {
+    sel_pepmodstates.df <- dplyr::arrange(sel_pepmodstates.df, object_id, unmod_seq, mod_seq, charge) %>%
+        mutate(pms_median_log2 = NA_real_)
+}
+sel_pepmodstates.df <- dplyr::mutate(sel_pepmodstates.df,
+                                     # FIXME remove pepmod_id once mod_seq is really mod_seq
+                                     pepmodstate_ext = paste0(mod_seq, ".", charge, " (", pepmod_id, ")", if_else(is.na(pms_median_log2), "", "*"))
+                                                              %>% factor(., levels=.))
 
 sel_pepmod_intens.df <- dplyr::inner_join(dplyr::select(sel_pepmodstates.df, object_id, protac_label, gene_label, gene_names,
-                                                        pepmod_id, pepmodstate_id, charge, pepmodstate_ext) %>%
+                                                        pepmod_id, pepmodstate_id, charge, pepmodstate_ext, pms_median_log2) %>%
                                                  dplyr::distinct(),
                                              msdata_full$pepmodstate_intensities) %>%
     dplyr::inner_join(distinct(select(msdata$msruns, msrun, batch, replicate, bait_type, bait_full_id, bait_id, condition)) %>%
@@ -226,7 +240,10 @@ sel_pepmod_intens.df <- dplyr::inner_join(dplyr::select(sel_pepmodstates.df, obj
                       dplyr::mutate(msrun.2 = factor(msrun, levels=msrun))) %>%
     dplyr::mutate(intensity_norm = exp(-total_msrun_shift)*intensity,
                   msrun = msrun.2,
-                  msrun.2 = NULL)
+                  msrun.2 = NULL) %>%
+    dplyr::group_by(pepmodstate_id) %>%
+    dplyr::mutate(intensity_norm_trunc = pmin(intensity_norm, quantile(intensity_norm, 0.95, na.rm=TRUE))) %>%
+    dplyr::ungroup()
 
 sel_pepmods.df <- dplyr::group_by(sel_pepmod_intens.df, pepmod_id) %>%
     dplyr::summarize(n_pepmod_quants = sum(!is.na(intensity)),
@@ -248,7 +265,7 @@ group_by(sel_pepmod_intens.df, object_id) %>% do({
     message("Plotting ", gene_name)
 p <- ggplot(shown_pepmod_intens.df) +
     geom_tile(aes(x=msrun, y=pepmodstate_ext,
-                  fill=log10(intensity_norm), color=ident_type), size=0.5, width=0.85, height=0.85) +
+                  fill=intensity_norm, color=ident_type), size=0.5, width=0.85, height=0.85) +
     theme_bw_ast(base_family = "", base_size = 10) +
     theme(axis.text.x = element_text(angle = -90, hjust=0, vjust=0)) +
     facet_grid(object_id + gene_label ~ ., scales = "free_y", space="free_y") +
@@ -261,9 +278,11 @@ p <- ggplot(shown_pepmod_intens.df) +
                        values=c("MULTI-MSMS"="black", "MULTI-MATCH-MSMS"="khaki",
                                 "MSMS"="cornflowerblue", "MULTI-SECPEP"="firebrick",
                                 "MULTI-MATCH"="gray"))
-ggsave(filename = file.path(analysis_path, "plots", ms_folder, str_c("peptide_heatmaps", if_else(is_viral, "/viral", "")),
-                            paste0(project_id, "_", ms_folder, '_', data_version, "_pepmod_heatmap_", gene_name, "_", obj_id, ".pdf")),
-       plot = p, width=20, height=3 + n_distinct(shown_pepmod_intens.df$object_id) + min(20, 0.1*n_distinct(shown_pepmod_intens.df$pepmodstate_id)),
+  fname <- file.path(analysis_path, "plots", str_c(ms_folder, "_", data_version), str_c("peptide_heatmaps", if_else(is_viral, "/viral", "")),
+                     paste0(project_id, "_", ms_folder, '_', data_version, "_pepmod_heatmap_", gene_name, "_", obj_id, ".pdf"))
+  message(fname)
+ggsave(filename = fname,
+       plot = p, width=30, height=3 + n_distinct(shown_pepmod_intens.df$object_id) + min(20, 0.1*n_distinct(shown_pepmod_intens.df$pepmodstate_id)),
        device=cairo_pdf, family="Arial")
     tibble()
 })
