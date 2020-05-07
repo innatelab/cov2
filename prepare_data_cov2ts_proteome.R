@@ -122,8 +122,9 @@ conditionXeffect_orig.mtx <- model.matrix(
   formula(str_c("~ 1 + (", str_c(str_subset(colnames(conditions.df), "^after\\d+h"), collapse =" + "), ") * treatment")),
   conditions.df
 )
-conditionXeffect.mtx <- conditionXeffect_orig.mtx[, str_subset(colnames(conditionXeffect_orig.mtx),
-                                                               str_c("^(\\(Intercept\\)|treatment[^:]+)$"), negate=TRUE)]
+conditionXeffect.mtx <- conditionXeffect_orig.mtx[, str_detect(colnames(conditionXeffect_orig.mtx),
+                                                               "^treatment[^:]+$", negate=TRUE) &
+                                                    apply(conditionXeffect_orig.mtx, 2, min) == 0] # remove intercept and afterT0
 dimnames(conditionXeffect.mtx) <- list(condition = as.character(conditions.df$condition),
                                        effect = colnames(conditionXeffect.mtx))
 
@@ -154,11 +155,11 @@ effects.df <- left_join(effects.df,
                                   effect_type == "timepoint" ~ str_c(timepoint, "h"),
                                   TRUE ~ NA_character_),
          prior_mean = 0,
-         prior_tau = case_when(effect_type == "treatmentXtimepoint" ~ 0.25,
+         prior_tau = case_when(effect_type == "treatmentXtimepoint" ~ 0.5,
                                effect_type == "treatment" ~ 0.5,
                                effect_type == "timepoint" ~ 1.0,
                                TRUE ~ NA_real_),
-         prior_df2 = case_when(effect_type == "treatmentXtimepoint" ~ 4.0,
+         prior_df2 = case_when(effect_type == "treatmentXtimepoint" ~ 2.0,
                                TRUE ~ 1.0),
          is_positive = FALSE)
 
