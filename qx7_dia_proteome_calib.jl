@@ -1,16 +1,16 @@
 proj_info = (id = "cov2",
-             data_ver = "20200428",
-             calib_ver = "20200430",
+             data_ver = "20200506",
+             calib_ver = "20200506",
              modelobj = :protgroup,
              msinstrument = "QX7",
              quantobj = :protgroup,
              quanttype = :intensity,
              quantcol = :intensity,
-             ms_folder = "cov2timecourse_dia_20200423")
+             msfolder = "cov2timecourse_dia_20200423")
 using Pkg
 Pkg.activate(@__DIR__)
 using Revise
-using StatsBase, DataFrames, BlackBoxOptim, CodecZlib, JSON, CSV, FileIO
+using RData, StatsBase, DataFrames, BlackBoxOptim, CodecZlib, JSON, CSV, FileIO
 
 const misc_scripts_path = joinpath(base_scripts_path, "misc_jl")
 const analysis_path = joinpath(base_analysis_path, proj_info.id)
@@ -30,7 +30,7 @@ Revise.includet(joinpath(misc_scripts_path, "spectronaut_utils.jl"));
 data_path = joinpath(base_analysis_path, proj_info.id, "data")
 scratch_path = joinpath(base_analysis_path, proj_info.id, "scratch")
 
-protgroup_data, report_colinfo = SpectronautUtils.read_proteins_report(joinpath(data_path, proj_info.ms_folder, "COVID proteome NO normalization_Report.txt"),
+protgroup_data, report_colinfo = SpectronautUtils.read_proteins_report(joinpath(data_path, proj_info.msfolder, "COVID proteome NO normalization_Report.txt"),
                 import_data=[:quantity], delim='\t')
 quantity_colinfo_df = SpectronautUtils.metrics_colinfo(report_colinfo[:quantity])
 msruns_df = unique!(select(quantity_colinfo_df, [:msrun_ix, :rawfile]))
@@ -101,6 +101,50 @@ save_results(BlackBoxOptim.problem(bbox_opt), bbox_res, res_jld_file, res_json_f
 Revise.includet(joinpath(misc_scripts_path, "plots", "plotly_utils.jl"))
 @load("/pool/analysis/astukalov/cov2/scratch/instr_QX7_intensity_ptmgroup_calib_cov2_20200428_borg.jld2", calib_model)
 instr_calib_model = calib_model
+
+instr_calib_model = MSInstrumentCalibration.params2model(BlackBoxOptim.problem(bbox_opt).factory, best_candidate(bbox_res))
+
+ref_intensities = MSInstrumentCalibration.reference_intensities(mscalib_data)
+plot_intensities = exp.((log(first(ref_intensities))-3):0.01:(log(last(ref_intensities))+3))
+PlotlyUtils.MSInstrument.plot_rel_sd(instr_calib_model, intensity_range = plot_intensities)
+PlotlyUtils.MSInstrument.plot_sd(instr_calib_model, intensity_range = plot_intensities)
+PlotlyUtils.MSInstrument.plot_detection(instr_calib_model, intensity_range = plot_intensities)
+
+msdata_rdata = load(joinpath(scratch_path, "$(proj_info.id)_msdata_full_$(proj_info.msfolder)_$(proj_info.data_ver).RData"))
+msdata_dict = msdata_rdata["msdata_full"]
+pepmods_df = copy(msdata_rdata["msdata_full"]["pepmods"])
+pepmods_df[!, :use_for_calib] .= true # FIXME exclude contaminants
+
+pepmod_mscalib_data = MSInstrumentCalibration.MSErrorCalibrationData(
+    msdata_dict["pepmod_intensities"], pepmods_df, msdata_dict["msruns"],
+    object_col=:pepmod_id, msrun_col=:msrun, exp_col=:condition,
+    missed_intensity_factor = 1.0, # assume intensity was missed in replicate because it was really less abundant
+    bin_oversize=2, nbins=40, max_objXexp=5000, error_scale=0.33) # assume 1/3 of variation comes from measurement
+
+ini_population = Matrix{Float64}(undef, 0, 0)
+MaxTime = 200.0
+min_ini_sigma = 1E-2
+ini_sigma = 1.0
+ini_lnB = nothing
+
+using BlackBoxOptim
+
+@info "Noise Model Calibration..."
+bbox_opt = bbsetup(pepmod_mscalib_data; PopulationSize=1000,
+                   MaxTime=MaxTime, MaxSteps=10^8, NThreads=Threads.nthreads()-1,
+                   MaxStepsWithoutProgress=50000,
+                   TraceMode=:verbose, TraceInterval=5.0,
+                   #fitness_scheme=ScalarFitnessScheme{false}(),
+                   detectionMaxMin=0.98,
+                   ϵ=[1.0, 1.0], Population=ini_population);
+bbox_res = bboptimize(bbox_opt)
+ini_population = BBOUtils.popmatrix(bbox_res)
+@info "Done Calibration..."
+
+instr_calib_filename = "instr_$(proj_info.msinstrument)_$(proj_info.quanttype)_pepmod_calib_$(proj_info.id)_$(proj_info.calib_ver)"
+save_results(BlackBoxOptim.problem(bbox_opt), bbox_res,
+    joinpath(scratch_path, "$(instr_calib_filename).jld2"),
+    joinpath(scratch_path, "$(instr_calib_filename).json"))
 
 instr_calib_model = MSInstrumentCalibration.params2model(BlackBoxOptim.problem(bbox_opt).factory, best_candidate(bbox_res))
 

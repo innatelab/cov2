@@ -5,8 +5,8 @@
 
 project_id <- 'cov2'
 message('Project ID=', project_id)
-data_version <- "20200503"
-fit_version <- "20200503"
+data_version <- "20200506"
+fit_version <- "20200506"
 ms_folder <- 'cov2timecourse_dia_20200423'
 message('Dataset version is ', data_version)
 
@@ -34,11 +34,13 @@ data_info <- list(project_id = project_id,
                   data_ver = data_version, fit_ver = fit_version,
                   ms_folder = ms_folder,
                   instr_calib_protgroup_filename = "instr_QX7_intensity_protgroup_calib_cov2_20200430.json",
+                  instr_calib_pepmod_filename = "instr_QX7_intensity_pepmod_calib_cov2_20200506.json",
                   quant_type = "intensity", quant_col_prefix = "intensity",
                   pep_quant_type = "intensity")
 
 message('Loading MS instrument calibration data from ', data_info$instr_calib_filename, '...')
 instr_calib_protgroup <- fromJSON(file = file.path(data_path, data_info$instr_calib_protgroup_filename))$instr_calib
+instr_calib_pepmod <- fromJSON(file = file.path(data_path, data_info$instr_calib_pepmod_filename))$instr_calib
 instr_calib <- instr_calib_protgroup
 
 source(file.path(project_scripts_path, 'prepare_data_common.R'))
@@ -53,15 +55,42 @@ bad_msruns <- c()
 #filter out msruns with >35% missing values in msdata4norm.df
 #msdata4lev1norm.df <- semi_join(msdata4norm.df, filter(msdata_full$msrun_stats, na_ratio <= 0.35))
 
-msdata.wide <- read.Spectronaut.ProteinsReport(file.path(msdata_path, "20200422_193114_20200422 COVID proteome NO normalization_Report.txt"),
+pgdata.wide <- read.Spectronaut.ProteinsReport(file.path(msdata_path, "20200422_193114_20200422 COVID proteome NO normalization_Report.txt"),
                                                import_data = "quantity", delim='\t')
-msdata_colgroups <- attr(msdata.wide, "column_groups")
+pgdata_colgroups <- attr(pgdata.wide, "column_groups")
+pmsdata.wide <- read.Spectronaut.PepmodstatesReport(file.path(msdata_path, "COVID proteome normalization_peptide_Report.txt"),
+                                                    import_data = "quantity", delim='\t')
+pmsdata_colgroups <- attr(pmsdata.wide, "column_groups")
 
 msdata_full <- list(
-  protgroups = msdata.wide[, msdata_colgroups$protgroup],
-  protgroup_intensities = dplyr::rename(pivot_longer.Spectronaut.ProtgroupIntensities(msdata.wide), sn_msrun_ix = msrun_ix)
+    protgroups = pgdata.wide[pgdata_colgroups$protgroup] %>%
+        dplyr::mutate(protgroup_id = row_number()),
+    protgroup_intensities = filter(pivot_longer.Spectronaut.ProtgroupIntensities(msdata.wide), is.finite(intensity)),
+    pepmodstate_intensities = filter(pivot_longer.Spectronaut.PepmodstateIntensities(pmsdata.wide), is.finite(intensity)),
+    pepmodstates = dplyr::select(pmsdata.wide[pmsdata_colgroups$pepmodstate], protgroup_sn_id,
+                                 pepmod_seq, charge, peptide_seq, q_value) %>%
+        dplyr::mutate(pepmodstate_id = row_number() - 1L)
 )
-msdata_full$msruns <- dplyr::select(msdata_full$protgroup_intensities, sn_msrun_ix, raw_file) %>% dplyr::distinct() %>%
+msdata_full$pepmods <- dplyr::select(msdata_full$pepmodstates, pepmod_seq, peptide_seq) %>%
+    distinct() %>%
+    mutate(pepmod_id = row_number() - 1L)
+msdata_full$peptides <- dplyr::select(msdata_full$pepmods, peptide_seq) %>%
+    distinct() %>%
+    mutate(peptide_id = row_number() - 1L)
+msdata_full$pepmods <- left_join(msdata_full$pepmods, dplyr::select(msdata_full$peptides, peptide_id, peptide_seq)) %>%
+    dplyr::arrange(pepmod_id)
+msdata_full$pepmodstates <- left_join(msdata_full$pepmodstates,
+                                      dplyr::select(msdata_full$pepmods, pepmod_id, pepmod_seq)) %>%
+    dplyr::select(-pepmod_seq, -peptide_seq) %>%
+    dplyr::left_join(dplyr::select(msdata_full$protgroups, protgroup_sn_id, protgroup_id)) %>%
+    #dplyr::mutate(is_used = !is.na(protgroup_id)) %>%
+    dplyr::arrange(pepmodstate_id)
+msdata_full$peptide2protein <- dplyr::distinct(dplyr::select(pmsdata.wide, majority_protein_acs, protgroup_sn_id, peptide_seq)) %>%
+    expand_collapsed(collapsed_col = "majority_protein_acs", separated_col = "protein_ac", extra_cols = "peptide_seq") %>%
+    dplyr::select(-majority_protein_acs) %>%
+    dplyr::left_join(msdata_full$peptides)
+
+msdata_full$msruns <- dplyr::select(msdata_full$protgroup_intensities, msrun_ix, raw_file) %>% dplyr::distinct() %>%
   dplyr::mutate(msrun = str_remove(str_remove(raw_file, "^20200418_QX7_MaTa_SA_proteome_A549_"), "(?:_\\d{3,})?.raw$")) %>% 
   tidyr::extract(msrun, c("treatment", "timepoint", "replicate"), "(.*)_(\\d+)hpi_(\\d+)$", remove=FALSE) %>%
   dplyr::mutate(replicate = parse_integer(replicate), timepoint_num = parse_double(timepoint)) %>%
@@ -77,15 +106,23 @@ msdata_full$msruns <- dplyr::select(msdata_full$protgroup_intensities, sn_msrun_
 
 msdata_full$protgroup_intensities <- dplyr::select(msdata_full$protgroup_intensities, -raw_file) %>%
   dplyr::mutate(ident_type = factor(if_else(nevidences > 0L, "By MS/MS", "By matching"), levels = c("By MS/MS", "By matching"))) %>%
-  left_join(dplyr::select(msdata_full$msruns, sn_msrun_ix, msrun)) %>%
-  dplyr::select(-sn_msrun_ix)
-msdata_full <- append_protgroups_info(msdata_full, msdata.wide,
-                                      proteins_info = dplyr::bind_rows(
-                                        dplyr::mutate(fasta.dfs$CoV, is_viral=TRUE, is_contaminant=FALSE, is_expected_stable=FALSE),
-                                        dplyr::mutate(fasta.dfs$human, is_viral=FALSE, is_contaminant=FALSE,
-                                                      # define stable proteins based on our expectations of their biology and how their timeseries look like
-                                                      is_expected_stable = str_detect(gene_name, "^(M?RP[LS]\\d+|GAPDH|ACT[ABNR]\\d+|TUB[AB]\\d?\\w?|CCT\\d?\\w?)$")),
-                                        dplyr::mutate(fasta.dfs$contaminants, is_viral=FALSE, is_contaminant=TRUE, is_expected_stable=FALSE)),
+  left_join(dplyr::select(msdata_full$msruns, msrun_ix, msrun)) %>%
+  dplyr::select(-msrun_ix)
+msdata_full$pepmodstate_intensities <- dplyr::select(msdata_full$pepmodstate_intensities, -raw_file) %>%
+    left_join(dplyr::select(msdata_full$msruns, msrun_ix, msrun)) %>%
+    left_join(dplyr::select(msdata_full$pepmodstates, protgroup_id, pepmodstate_id, pepmod_id)) %>%
+    dplyr::select(-msrun_ix)
+msdata_full$pepmod_intensities <- dplyr::select(msdata_full$pepmodstate_intensities, -pepmodstate_id) %>%
+    dplyr::distinct()
+
+all_proteins.df <- dplyr::bind_rows(
+    dplyr::mutate(fasta.dfs$CoV, is_viral=TRUE, is_contaminant=FALSE, is_expected_stable=FALSE),
+    dplyr::mutate(fasta.dfs$human, is_viral=FALSE, is_contaminant=FALSE,
+                  # define stable proteins based on our expectations of their biology and how their timeseries look like
+                  is_expected_stable = str_detect(gene_name, "^(M?RP[LS]\\d+|GAPDH|ACT[ABNR]\\d+|TUB[AB]\\d?\\w?|CCT\\d?\\w?)$")),
+    dplyr::mutate(fasta.dfs$contaminants, is_viral=FALSE, is_contaminant=TRUE, is_expected_stable=FALSE))
+msdata_full <- append_protgroups_info(msdata_full, pgdata.wide,
+                                      proteins_info = all_proteins.df,
                                       import_columns = c("is_viral", "is_contaminant", "is_expected_stable"))
 msdata_full$proteins <- mutate(msdata_full$proteins,
                                protein_ac_noiso = str_remove(protein_ac, "-\\d+$"))
@@ -100,6 +137,84 @@ msdata_full$protgroups <- dplyr::mutate(msdata_full$protgroups,
                                 !is.na(protac_label) ~ protac_label,
                                 TRUE ~ str_c('#', protgroup_id)))
 
+# redefine protein groups (protregroups) considering only peptides that are clicked
+pepmods.df <- dplyr::left_join(pmsdata.wide, dplyr::select(msdata_full$pepmods, pepmod_id, pepmod_seq)) %>%
+    dplyr::select(pepmod_id, majority_protein_acs, protein_acs, pepmod_seq, peptide_seq, q_value) %>%
+    dplyr::mutate(is_used = coalesce(q_value, 1.0) <= 0.01)
+save(file = file.path(msdata_path, str_c(project_id, "_", ms_folder, '_', data_version, "_pepmods.RData")),
+     pepmods.df, all_proteins.df)
+# .. run protregroup_cov2ts_proteome.jl
+msdata_full$protregroups <- read_tsv(file.path(data_path, ms_folder,
+                                               str_c(project_id, "_", ms_folder, '_', data_version, "_protregroups_acs.txt")),
+                                     col_types = list(protregroup_id = "i")) %>%
+  dplyr::mutate(is_contaminant = str_detect(majority_protein_acs, "(;|^)CON__"),
+                is_reverse = str_detect(majority_protein_acs, "(;|^)REV__"))
+
+msdata_full$protein2protregroup <- dplyr::select(msdata_full$protregroups, protregroup_id, protein_ac=majority_protein_acs) %>%
+  separate_rows(protein_ac, sep=fixed(";"), convert=TRUE) %>%
+  dplyr::mutate(is_majority = TRUE) %>%
+  dplyr::group_by(protregroup_id) %>%
+  dplyr::mutate(protein_ac_rank = row_number()) %>%
+  dplyr::ungroup()
+
+msdata_full$protregroup2pepmod <- bind_rows(
+  select(msdata_full$protregroups, protregroup_id, pepmod_id=spec_pepmod_ids) %>%
+    separate_rows(pepmod_id, sep=fixed(";"), convert=TRUE) %>%
+    mutate(is_specific = TRUE),
+  select(msdata_full$protregroups, protregroup_id, pepmod_id=pepmod_ids) %>%
+    separate_rows(pepmod_id, sep=fixed(";"), convert=TRUE) %>%
+    mutate(is_specific = FALSE)) %>%
+  dplyr::group_by(protregroup_id, pepmod_id) %>%
+  dplyr::summarise(is_specific = any(is_specific)) %>%
+  dplyr::ungroup()
+
+msdata_full$protregroups <- dplyr::inner_join(msdata_full$protregroups,
+  dplyr::inner_join(msdata_full$protregroups, msdata_full$protein2protregroup) %>%
+  dplyr::inner_join(msdata_full$proteins) %>%
+  dplyr::arrange(protregroup_id, protein_ac_rank) %>%
+  dplyr::group_by(protregroup_id) %>%
+  dplyr::summarise(gene_names = str_c(gene_name, collapse=';'),
+                   gene_label = strlist_label(gene_name),
+                   protein_names = str_c(protein_name, collapse=';'),
+                   protein_label = strlist_label(protein_name),
+                   protein_descriptions = str_c(protein_description, collapse=';'),
+                   protein_description = strlist_label(protein_description),
+                   organism = str_c(unique(organism), collapse=';'),
+                   is_viral = any(coalesce(is_viral, FALSE))) %>%
+  dplyr::ungroup()) %>%
+  dplyr::mutate(protac_label = sapply(str_split(majority_protein_acs, fixed(";")), strlist_label),
+                protregroup_label = case_when(is_viral ~ protein_label,
+                                              !is.na(gene_label) ~ gene_label,
+                                              !is.na(protac_label) ~ protac_label,
+                                              TRUE ~ str_c('#', protregroup_id))) %>%
+  dplyr::left_join(dplyr::inner_join(msdata_full$protregroup2pepmod, msdata_full$pepmods) %>%
+                   dplyr::group_by(protregroup_id) %>%
+                   dplyr::summarise(npeptides = n_distinct(peptide_id),
+                                    npepmods = n_distinct(pepmod_id),
+                                    npeptides_unique = n_distinct(peptide_id[is_specific]),
+                                    npepmods_unique = n_distinct(pepmod_id[is_specific])) %>%
+                   dplyr::ungroup() %>%
+                   dplyr::mutate(npeptides_unique_razor = npeptides_unique,
+                                 npeptides_razor = 0L,
+                                 npepmods_unique_razor = npepmods_unique,
+                                 npepmods_razor = 0L))
+# prepare protgroup intensities (wider format: all mstags in one row)
+intensity_prespec_df <- tibble(.name = msdata_colgroups$LFQ) %>%
+  extract(.name, c("mstag", "msrun"), remove=FALSE,
+          str_c("^", data_info$quant_col_prefix, "\\.(\\S+)\\s(\\S+)")) %>%
+  mutate(.value = str_c("intensity.", mstag)) %>%
+  dplyr::inner_join(select(msruns.df, msrun, raw_file))
+
+msdata_full$protregroup_idents <- dplyr::inner_join(msdata_full$protregroup2pepmod, msdata_full$pepmodstate_intensities) %>%
+  dplyr::mutate(is_idented = !is.na(intensity)) %>%
+  dplyr::group_by(msrun, protregroup_id) %>%
+  dplyr::summarise(npepmods_quanted = sum(!is.na(intensity)),
+                   nspecpepmods_quanted = sum(!is.na(intensity) & is_specific),
+                   npepmods_idented = sum(is_idented),
+                   nspecpepmods_idented = sum(is_idented & is_specific)) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(ident_type = factor(if_else(nspecpepmods_idented > 0, "By MS/MS", "By matching")))
+
 # condition = treatment X timepoint
 conditions.df <- dplyr::select(msdata_full$msruns, condition, treatment, timepoint, timepoint_num) %>%
   dplyr::distinct()
@@ -113,9 +228,11 @@ conditions.df <- dplyr::left_join(conditions.df,
 msdata_full$msrun_stats <- msrun_statistics(msdata_full) %>%
   dplyr::mutate(na_ratio = n_missing / n)
   
-msdata <- msdata_full[c('protgroup_intensities',
-                        'msruns', 'protgroups', 'protein2protgroup')]
+msdata <- msdata_full[c('protgroup_intensities', 'pepmod_intensities', 'pepmods',
+                        'msruns', 'protgroups', 'protregroups', 'protein2protregroup',
+                        'protein2pepmod', 'protregroup2pepmod')]
 msdata$protgroup_intensities <- semi_join(msdata$protgroup_intensities, filter(msdata$msruns, is_used))
+msdata$pepmod_intensities <- semi_join(msdata$pepmod_intensities, filter(msdata$msruns, is_used))
 
 # setup experimental design matrices
 conditionXeffect_orig.mtx <- model.matrix(
@@ -263,7 +380,8 @@ msruns_hnorm <- multilevel_normalize_experiments(instr_calib_protgroup, msdata$m
                                                                     timepoint = list(cond_col="timepoint", max_objs=1000L, missing_exp.ratio=0.3)
                                                  ))
 
-total_msrun_shifts.df <- msruns_hnorm$mschannel_shifts
+#total_msrun_shifts.df <- msruns_hnorm$mschannel_shifts
+total_msrun_shifts.df <- transmute(msdata$msruns, msrun, total_msrun_shift=0.0) # no normalization
 
 ## apply normalization
 msdata$protgroup_intensities <- dplyr::left_join(msdata$protgroup_intensities,
@@ -274,6 +392,9 @@ msdata$protgroup_intensities <- dplyr::left_join(msdata$protgroup_intensities,
 global_protgroup_labu_shift <- 0.95*median(log(dplyr::filter(msdata$msruns, TRUE) %>%
                                                dplyr::select(msrun) %>% dplyr::distinct() %>%
                                                dplyr::inner_join(msdata$protgroup_intensities) %>% .$intensity), na.rm=TRUE)
+global_pepmod_labu_shift <- 0.95*median(log(dplyr::filter(msdata$msruns, TRUE) %>%
+                                        dplyr::select(msrun) %>% dplyr::distinct() %>%
+                                        dplyr::inner_join(msdata$pepmod_intensities) %>% .$intensity), na.rm=TRUE)
 
 ############################
 # batch effects
@@ -285,6 +406,13 @@ batch_effects.df <- tibble(batch_effect = character(0),
                            is_positive = logical(0),
                            prior_mean = double(0))
 
+# no subbatch effects so far
+msrunXsubbatchEffect.mtx <- zero_matrix(msrun = rownames(msrunXreplEffect.mtx),
+                                        subbatch_effect = c())
+
+subbatch_effects.df <- tibble(subbatch_effect=character(0),
+                              is_positive=logical(0))
+
 rmsglmdata_filepath <- file.path(scratch_path, str_c(project_id, '_msglm_data_', ms_folder, '_', data_version, '.RData'))
 message('Saving MS data for MSGLM to ', rmsglmdata_filepath, '...')
 save(data_info, msdata,
@@ -292,11 +420,12 @@ save(data_info, msdata,
      conditionXeffect.mtx, inv_conditionXeffect.mtx, conditionXeffect.df,
      conditionXmetacondition.mtx, conditionXmetacondition.df,
      contrastXmetacondition.mtx, contrastXmetacondition.df, contrastXcondition.df,
-     instr_calib_protgroup,
-     global_protgroup_labu_shift,
-     msruns_hnorm, total_msrun_shifts.df,
+     instr_calib_protgroup, instr_calib_pepmod,
+     global_protgroup_labu_shift, global_pepmod_labu_shift,
+     total_msrun_shifts.df, #msruns_hnorm, 
      msrunXreplEffect.mtx,
      batch_effects.df, msrunXbatchEffect.mtx,
+     subbatch_effects.df, msrunXsubbatchEffect.mtx,
      file = rmsglmdata_filepath)
 
 rfulldata_filepath <- file.path(scratch_path, str_c(project_id, '_msdata_full_', ms_folder, '_', data_version, '.RData'))

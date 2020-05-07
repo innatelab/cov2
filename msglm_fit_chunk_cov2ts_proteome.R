@@ -1,5 +1,5 @@
 Sys.setenv(TZ='Etc/GMT+1') # issue#612@rstan
-#job.args <- c("cov2", "ast_cov2_msglm", "cov2timecourse_dia_20200423", "20200423", "20200425", "0", "1235")
+#job.args <- c("cov2", "ast_cov2_msglm", "cov2timecourse_dia_20200423", "20200506", "20200506", "0", "1235")
 if (!exists('job.args')) {
   job.args <- commandArgs(trailingOnly = TRUE)
 }
@@ -40,8 +40,10 @@ require(rstan)
 require(tidyr)
 require(stringr)
 
-modelobj <- "protgroup"
-quantobj <- "protgroup"
+#modelobj <- "protgroup"
+#quantobj <- "protgroup"
+modelobj <- "protregroup"
+quantobj <- "pepmod"
 source(file.path(project_scripts_path, 'setup_modelobj.R'))
 
 sel_object_ids <- modelobjs_df[[modelobj_idcol]][[job_chunk]]
@@ -49,8 +51,8 @@ message(sel_object_ids, " ", modelobj, " ID(s): ",
         paste0(sort(unique(dplyr::pull(modelobjs_df[modelobjs_df[[modelobj_idcol]] %in% sel_object_ids, ], object_label))), collapse=' '))
 if (modelobj == "protregroup") {
 msdata.df <- dplyr::filter(msdata$protregroup2pepmod, protregroup_id %in% sel_object_ids & is_specific) %>%
-  dplyr::inner_join(dplyr::select(msdata$pepmodstates, pepmod_id, pepmodstate_id)) %>%
-  dplyr::inner_join(dplyr::select(msdata$pepmodstate_intensities, pepmodstate_id, msrun, intensity)) %>%
+  dplyr::inner_join(dplyr::select(msdata[[str_c(quantobj, "s")]], pepmod_id, any_of(quantobj_idcol))) %>%
+  dplyr::inner_join(dplyr::select(msdata[[str_c(quantobj, "_intensities")]], !!quantobj_idcol, msrun, intensity)) %>%
   dplyr::mutate(object_id = protregroup_id)
 } else if (modelobj == "protgroup") {
 msdata.df <- dplyr::filter(msdata$protgroups, protgroup_id %in% sel_object_ids) %>%
@@ -97,16 +99,26 @@ model_data$objects <- dplyr::mutate(model_data$objects, protregroup_id = object_
 
 # arrange pepmodstates by object and by the number of quantitations
 model_data$subobjects <- msdata.df %>%
-    dplyr::inner_join(msdata$pepmodstates) %>%
-    dplyr::inner_join(msdata$protregroup2pepmod) %>%
-    dplyr::group_by(protregroup_id, pepmod_id, pepmodstate_id, charge, is_specific) %>%
+    dplyr::inner_join(msdata[[str_c(quantobj, "s")]]) %>%
+    dplyr::inner_join(msdata[[str_c("protregroup2", quantobj)]])
+if (has_name(model_data$subobjects, "is_specific")) {
+    model_data$subobjects <- filter(model_data$subobjects, is_specific)
+} else {
+    model_data$subobjects <- mutate(model_data$subobjects, is_specific=TRUE)
+}
+if (!has_name(model_data$subobjects, "charge")) {
+    model_data$subobjects <- mutate(model_data$subobjects, charge=NA_integer_)
+}
+model_data$subobjects <- model_data$subobjects %>%
+    dplyr::group_by_at(intersect(c("protregroup_id", "pepmod_id", quantobj_idcol, "charge", "is_specific"),
+                                 names(model_data$subobjects))) %>%
     dplyr::summarise(n_quant = sum(!is.na(intensity)),
                      intensity_med = median(intensity, na.rm=TRUE)) %>% ungroup() %>%
     dplyr::inner_join(dplyr::select(model_data$objects, protregroup_id, glm_object_ix)) %>%
     dplyr::arrange(glm_object_ix, desc(is_specific), desc(n_quant), desc(intensity_med),
                    pepmod_id, charge) %>%
     dplyr::mutate(glm_subobject_ix = row_number()) %>%
-    dplyr::filter(glm_subobject_ix <= 30) # remove less abundant subobjects of rich objects
+    dplyr::filter(glm_subobject_ix <= 50) # remove less abundant subobjects of rich objects
 } else if (modelobj == "protgroup") {
 model_data$objects <- dplyr::mutate(model_data$objects, protgroup_id = object_id) %>%
                       dplyr::inner_join(dplyr::select(modelobjs_df, protgroup_id, protgroup_label, object_label,
@@ -120,7 +132,7 @@ model_data$observations <- dplyr::inner_join(model_data$interactions, model_data
   dplyr::arrange(glm_object_ix, glm_iaction_ix, mschannel_ix) %>%
   dplyr::mutate(glm_observation_ix = seq_len(n()))
 
-if (quantobj == "pepmodstate") {
+if (quantobj != "protgroup") {
   model_data$msdata <- dplyr::inner_join(model_data$observations, model_data$subobjects) %>%
     dplyr::left_join(msdata.df) %>%
     dplyr::arrange(glm_observation_ix, glm_subobject_ix) %>%
@@ -151,12 +163,12 @@ msglm.stan_data <- stan.prepare_data(instr_calib, model_data,
 
 message('Running STAN in NUTS mode...')
 options(mc.cores=mcmc_nchains)
-msglm.stan_fit <- stan.sampling(msglm.stan_data, adapt_delta=0.99, max_treedepth=13L,
-                                iter=4000L, chains=mcmc_nchains)
+msglm.stan_fit <- stan.sampling(msglm.stan_data, adapt_delta=0.85, max_treedepth=15L,
+                                stepsize=1E-5, iter=6000L, chains=mcmc_nchains)
 #require(shinystan)
 #launch_shinystan(shinystan::as.shinystan(msglm.stan_fit))
 
-min.iteration <- as.integer(1.5 * msglm.stan_fit@sim$warmup)
+min.iteration <- as.integer(1.25 * msglm.stan_fit@sim$warmup)
 
 msglm_results <- process.stan_fit(msglm.stan_fit, dims_info)
 

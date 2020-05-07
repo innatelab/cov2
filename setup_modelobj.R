@@ -8,6 +8,7 @@ quantobj <- "pepmodstate"
 
 modelobjs_df <- msdata[[str_c(modelobj, "s")]]
 modelobj_idcol <- str_c(modelobj, "_id")
+quantobj_idcol <- str_c(quantobj, "_id")
 # FIXME should be done in prepare_data
 modelobjs_df$object_id <- modelobjs_df[[modelobj_idcol]]
 modelobjs_df$object_label <- modelobjs_df[[str_c(modelobj, "_label")]]
