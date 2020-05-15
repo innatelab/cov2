@@ -5,8 +5,8 @@
 
 project_id <- 'cov2'
 message('Project ID=', project_id)
-data_version <- "20200511"
-fit_version <- "20200511"
+data_version <- "20200514"
+fit_version <- "20200514"
 ms_folder <- 'cov2earlylate_fp_phos_ubi_dda_20200429'
 message('Dataset version is ', data_version)
 
@@ -26,7 +26,6 @@ require(stringr)
 require(readr)
 require(pheatmap)
 require(tidyr)
-#require(broom)
 
 msdata_path <- file.path(data_path, ms_folder, "combined quanting/SARS-COV2_Phospho_Ubi_FP_DDA_diff-exp-names_noPTM")
 
@@ -53,9 +52,11 @@ msruns.df <- read_tsv(file.path(msdata_path, "combined", "experimentalDesign.txt
     extract(msrun, c("ptm", "treatment", "timepoint", "replicate"),
             c("^(?:(.+)_)?(SARS_COV2|mock)_(\\d+)h_(\\d+)$"), remove = FALSE) %>%
     dplyr::mutate(replicate = parse_integer(replicate), timepoint_num = parse_double(timepoint)) %>%
-    mutate(condition = str_remove(msrun, '_\\d+$'),
-           treatment = relevel(factor(treatment), "mock"),
-           timepoint = factor(timepoint_num))
+    mutate(treatment = relevel(factor(treatment), "mock"),
+           timepoint = factor(timepoint_num),
+           condition = str_c(treatment, "_", timepoint, "h"),
+           sample = str_c(condition, "_", replicate),
+           is_used = !(msrun %in% bad_msruns))
 
 fasta.dfs <- list(
     CoV = read_innate_uniprot_fasta(file.path(data_path, "cov_baits_20200415.fasta")) %>%
@@ -85,11 +86,10 @@ msdata_colgroups <- attr(msdata.wide, "column_groups")
 
 msdata_full <- list()
 
-#msruns.df <- mutate(msruns.df, is_used = TRUE)
-msruns.df <- mutate(msruns.df, is_used = msrun %in% mqevidence$mschannels$msrun & is.na(ptm))
 msdata_full$msruns <- filter(msruns.df, is_used) %>%
-    dplyr::arrange(treatment, timepoint, replicate) %>%
+    dplyr::arrange(treatment, timepoint, replicate, ptm) %>%
     dplyr::mutate(msrun = factor(msrun, levels=msrun),
+                  sample = factor(sample, levels=unique(sample)),
                   condition = factor(condition, levels=unique(condition)))
 
 msdata_full <- append_protgroups_info(msdata_full, msdata.wide,
@@ -134,8 +134,11 @@ msdata_full$peptides <- mqevidence$peptides %>%
 msdata_full$pepmods <- mqevidence$pepmods %>%
     dplyr::left_join(select(msdata_full$peptides, peptide_id, is_viral)) %>%
     dplyr::mutate(is_used = TRUE,
+                  has_phospho = str_detect(modifs, "Phospho"),
+                  has_ubi = str_detect(modifs, "GlyGly"),
+                  has_modifs = has_phospho | has_ubi,
                   pepmod_rank = case_when(!is_used ~ -1L,
-                                          str_detect(modifs, "Phospho|GlyGly") ~ 2L, # modified pepmods don't define protgroups unless proteins are only seen with these pepmods
+                                          has_modifs ~ 2L, # modified pepmods don't define protgroups unless proteins are only seen with these pepmods
                                           TRUE ~ 1L))
 msdata_full$pepmodstates <- mqevidence$pepmodstates
 
@@ -170,6 +173,8 @@ msdata_full$protregroup2pepmod <- bind_rows(
     dplyr::group_by(protregroup_id, pepmod_id) %>%
     dplyr::summarise(is_specific = any(is_specific)) %>%
     dplyr::ungroup()
+msdata_full$protregroup2pepmodstate <- dplyr::select(inner_join(msdata_full$protregroup2pepmod, msdata_full$pepmodstates),
+                                                protregroup_id, pepmodstate_id, is_specific)
 
 msdata_full$protregroups <- dplyr::inner_join(msdata_full$protregroups,
                                               dplyr::inner_join(msdata_full$protregroups, msdata_full$protein2protregroup) %>%
@@ -263,10 +268,16 @@ msdata_full$msrun_stats <- msrun_statistics(msdata_full) %>%
 msdata <- msdata_full[c('protgroup_intensities', 'pepmodstate_intensities', 'pepmods', 'pepmodstates',
                         'msruns', 'protgroups', 'protregroups', 'protein2protregroup',
                         'protein2pepmod', 'protregroup2pepmod')]
+msdata$msruns <- filter(msdata$msruns, is_used & is.na(ptm)) %>% # exclude phospho and ubi
+    mutate(msrun = factor(msrun, levels=as.character(msrun)))
+msdata$pepmods <- filter(msdata$pepmods, is_used & !has_modifs) # exclude phospho and ubi
+msdata$pepmodstates <- semi_join(msdata$pepmodstates, msdata$pepmods) # exclude phospho and ubi
 msdata$protregroup2pepmodstate <- dplyr::select(inner_join(msdata$protregroup2pepmod, msdata$pepmodstates),
                                                 protregroup_id, pepmodstate_id, is_specific)
-msdata$protgroup_intensities <- semi_join(msdata$protgroup_intensities, filter(msdata$msruns, is_used))
-msdata$pepmodstate_intensities <- semi_join(msdata$pepmodstate_intensities, filter(msdata$msruns, is_used))
+msdata$protregroups <- semi_join(msdata$protregroups, msdata$protregroup2pepmodstate)
+msdata$protgroup_intensities <- semi_join(msdata$protgroup_intensities, msdata$msrun)
+msdata$pepmodstate_intensities <- semi_join(semi_join(msdata$pepmodstate_intensities, msdata$msruns),
+                                            msdata$pepmodstates)
 
 # setup experimental design matrices
 conditionXeffect_orig.mtx <- model.matrix(
@@ -428,7 +439,7 @@ global_pepmodstate_labu_shift <- 0.95*median(log(dplyr::filter(msdata$msruns, TR
 ############################
 # batch effects
 # no batch effects so far
-msrunXbatchEffect.mtx <- zero_matrix(msrun = rownames(msrunXreplEffect.mtx),
+msrunXbatchEffect.mtx <- zero_matrix(msrun = msdata$msruns$msrun,
                                      batch_effect = c())
 
 batch_effects.df <- tibble(batch_effect = character(0),
@@ -436,7 +447,7 @@ batch_effects.df <- tibble(batch_effect = character(0),
                            prior_mean = double(0))
 
 # no subbatch effects so far
-msrunXsubbatchEffect.mtx <- zero_matrix(msrun = rownames(msrunXreplEffect.mtx),
+msrunXsubbatchEffect.mtx <- zero_matrix(msrun = rownames(msrunXbatchEffect.mtx),
                                         subbatch_effect = c())
 
 subbatch_effects.df <- tibble(subbatch_effect=character(0),

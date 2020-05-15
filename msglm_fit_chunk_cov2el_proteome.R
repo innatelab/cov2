@@ -1,5 +1,5 @@
 Sys.setenv(TZ='Etc/GMT+1') # issue#612@rstan
-#job.args <- c("cov2", "ast_cov2_msglm", "cov2earlylate_fp_phos_ubi_dda_20200429", "20200511", "20200511", "0", "2227")
+#job.args <- c("cov2", "ast_cov2_msglm", "cov2earlylate_fp_phos_ubi_dda_20200429", "20200514", "20200514", "0", "2227")
 if (!exists('job.args')) {
   job.args <- commandArgs(trailingOnly = TRUE)
 }
@@ -159,7 +159,8 @@ gc()
 
 msglm.stan_data <- stan.prepare_data(instr_calib, model_data,
                                      global_labu_shift = global_labu_shift,
-                                     base_repl_shift_tau = 0.03, effect_repl_shift_tau = 0.03)
+                                     obj_labu_min_scale = 3,
+                                     iact_repl_shift_tau = 0.05, iact_repl_shift_df = 2)
 
 message('Running STAN in NUTS mode...')
 options(mc.cores=mcmc_nchains)
