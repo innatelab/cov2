@@ -667,11 +667,12 @@ pheatmap(log2(protgroup_intensities.mtx[, msruns_ordered]), cluster_cols=FALSE, 
                           paste0(project_id, "_", ms_folder, "_", data_version, "_heatmap_intensity.png")), width=50, height=60)
 
 msrunXbatchEffect_orig.mtx <- model.matrix(
-  ~ 1 + batch,
+  ~ 1 + batch + batch:sample_type,
   mutate(msdata$msruns, batch = factor(batch)))
-msrunXbatchEffect.mtx <- msrunXbatchEffect_orig.mtx[, colnames(msrunXbatchEffect_orig.mtx) != "(Intercept)", drop=FALSE]
+batch_effects_mask <- str_detect(colnames(msrunXbatchEffect_orig.mtx), "\\(Intercept\\)|batch1", negate = TRUE)
+msrunXbatchEffect.mtx <- msrunXbatchEffect_orig.mtx[, batch_effects_mask, drop=FALSE]
 dimnames(msrunXbatchEffect.mtx) <- list(msrun = msdata$msruns$msrun,
-                                        batch_effect = colnames(msrunXbatchEffect_orig.mtx)[colnames(msrunXbatchEffect_orig.mtx) != "(Intercept)"])
+                                        batch_effect = colnames(msrunXbatchEffect_orig.mtx)[batch_effects_mask])
 pheatmap(msrunXbatchEffect.mtx, cluster_rows=FALSE, cluster_cols=FALSE,
         file = file.path(analysis_path, "plots", str_c(ms_folder, "_", fit_version),
                          paste0(project_id, "_", ms_folder, "_", fit_version, "_batch_effects.pdf")), width=12, height=40)
