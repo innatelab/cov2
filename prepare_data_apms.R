@@ -374,9 +374,13 @@ effects.df <- dplyr::mutate(effects.df,
 
 conditionXeffect.df <- conditionXeffect_frame(conditionXeffect.mtx, effects.df)
 
+batch_complements.df <- distinct(select(filter(msdata$msruns, sample_type=="APMS" & bait_kind == "sample"), batch, bait_homid)) %>%
+  dplyr::mutate(allminus_metacondition = paste0("B", batch, "_allminus_", bait_homid))
+
 bait_conditions <- as.character(filter(conditions.df, sample_type == "APMS" & bait_kind == "sample")$bait_full_id)
 allminus_metaconditions <- paste0("allminus_", unique(filter(conditions.df, sample_type == "APMS" & bait_kind == "sample")$bait_homid))
-compound_metaconditions <- c(allminus_metaconditions, "controls")
+compound_metaconditions <- c(allminus_metaconditions, "controls",
+                             batch_complements.df$allminus_metacondition)
 all_metaconditions <- c("FPMS", bait_conditions, compound_metaconditions)
 conditionXmetacondition.mtx <- false_matrix(condition = levels(conditions.df$condition),
                                             metacondition = all_metaconditions)
@@ -388,10 +392,17 @@ for (cname in allminus_metaconditions) {
   minus_conditions.df <- filter(conditions.df, sample_type == "APMS" & ((!str_detect(bait_id, "\\?$") & bait_homid != hombait) | bait_kind == "control"))
   conditionXmetacondition.mtx[as.character(minus_conditions.df$condition), cname] <- TRUE
 }
+# don't include controls because they are not batch-specific
+for (i in 1:nrow(batch_complements.df)) {
+  minus_conditions.df <- filter(msdata$msruns, batch==batch_complements.df$batch[[i]] & 
+                                sample_type=="APMS" & bait_kind=="sample" & bait_homid != batch_complements.df$bait_homid[[i]]) %>% select(condition) %>% distinct()
+  conditionXmetacondition.mtx[as.character(minus_conditions.df$condition), batch_complements.df$allminus_metacondition[[i]]] <- TRUE
+}
 
 # exclude S from the background of ACE2 and vice versa
-conditionXmetacondition.mtx[as.character(filter(conditions.df, bait_id == "S" & bait_kind == "sample" & sample_type == "APMS")$condition), "allminus_ACE2"] <- FALSE
-conditionXmetacondition.mtx["APMS_HUMAN_ACE2", "allminus_S"] <- FALSE
+conditionXmetacondition.mtx[as.character(filter(conditions.df, bait_id == "S" & bait_kind == "sample" & sample_type == "APMS")$condition),
+                            str_detect(colnames(conditionXmetacondition.mtx), "allminus_ACE2")] <- FALSE
+conditionXmetacondition.mtx["APMS_HUMAN_ACE2", str_detect(colnames(conditionXmetacondition.mtx), "allminus_S")] <- FALSE
 
 conditionXmetacondition.mtx[as.character(filter(conditions.df, sample_type=="APMS" & bait_kind == "control")$condition), "controls"] <- TRUE
 conditionXmetacondition.mtx[as.character(filter(conditions.df, sample_type=="FPMS")$condition), "FPMS"] <- TRUE
@@ -399,7 +410,7 @@ conditionXmetacondition.mtx[as.character(filter(conditions.df, sample_type=="FPM
 pheatmap(ifelse(conditionXmetacondition.mtx, 1.0, 0.0), cluster_rows=FALSE, cluster_cols=FALSE,
          filename = file.path(analysis_path, 'plots', str_c(ms_folder, "_", fit_version),
                               paste0(project_id, "_metaconditions_", ms_folder, "_", fit_version, ".pdf")),
-         width = 15, height = 12)
+         width = 20, height = 12)
 
 conditionXmetacondition.df <- as_tibble(as.table(conditionXmetacondition.mtx)) %>%
   dplyr::filter(n != 0) %>% dplyr::select(-n) %>%
@@ -423,10 +434,15 @@ contrasts.df <- bind_rows(
               bait_version = if_else(str_detect(bait_full_id, "\\?$"), "0", "1"))
   ) %>% filter(as.integer(orgcode_lhs) < as.integer(orgcode_rhs)) %>%
   mutate(contrast_type = "comparison") %>%
-  select(-orgcode_lhs, -orgcode_rhs, -bait_homid)) %>%
-  mutate(contrast = str_c(metacondition_lhs, "_vs_", ifelse(str_starts(metacondition_rhs, "allminus"), "others", metacondition_rhs)),
-         metacondition_lhs = factor(metacondition_lhs, levels=all_metaconditions),
-         metacondition_rhs = factor(metacondition_rhs, levels=all_metaconditions))
+  select(-orgcode_lhs, -orgcode_rhs, -bait_homid),
+  transmute(filter(msdata$msruns, sample_type=="APMS" & bait_kind == "sample"),
+            metacondition_lhs = bait_full_id,
+            metacondition_rhs = str_c("B", batch, "_allminus_", bait_homid),
+            contrast_type = "filter") %>% distinct()
+) %>%
+mutate(contrast = str_c(metacondition_lhs, "_vs_", str_replace(metacondition_rhs, "allminus.+", "others")),
+       metacondition_lhs = factor(metacondition_lhs, levels=all_metaconditions),
+       metacondition_rhs = factor(metacondition_rhs, levels=all_metaconditions))
 
 all_contrasts <- contrasts.df$contrast
 contrastXmetacondition.mtx <- zero_matrix(contrast = all_contrasts, metacondition = all_metaconditions)
@@ -438,16 +454,16 @@ for (i in 1:nrow(contrasts.df)) {
 pheatmap(contrastXmetacondition.mtx, cluster_rows=FALSE, cluster_cols=FALSE,
          filename = file.path(analysis_path, 'plots', str_c(ms_folder, "_", fit_version),
                               paste0(project_id, "_exp_design_contrasts_", ms_folder, "_", fit_version, ".pdf")),
-         width = 18, height = 26)
+         width = 18, height = 30)
 
 contrastXmetacondition.df <- as_tibble(as.table(contrastXmetacondition.mtx)) %>% dplyr::filter(n != 0) %>%
   dplyr::rename(weight = n) %>%
   dplyr::left_join(select(contrasts.df, contrast, contrast_type)) %>%
   dplyr::mutate(condition_role = if_else(contrast_type == "filter" & weight < 0, "background", "signal"),
                 # define the rule to dynamically select control baits for _vs_others comparison based on the protein abundance
-                # select the baits with abundance within 50%-90% percentalizes
-                quantile_min = if_else(condition_role == "background" & str_detect(contrast, "_vs_others"), 0.5, NA_real_),
-                quantile_max = if_else(condition_role == "background" & str_detect(contrast, "_vs_others"), 0.9, NA_real_))
+                # select the baits with abundance within 50%-90% percentiles
+                quantile_min = if_else(condition_role == "background" & str_detect(contrast, "_vs_(B\\d+_)?others"), 0.5, NA_real_),
+                quantile_max = if_else(condition_role == "background" & str_detect(contrast, "_vs_(B\\d+_)?others"), 0.9, NA_real_))
 
 contrastXcondition.df <- dplyr::select(contrastXmetacondition.df, -starts_with("quantile")) %>%
   dplyr::inner_join(conditionXmetacondition.df) %>%
@@ -459,11 +475,12 @@ contrastXcondition.df <- dplyr::select(contrastXmetacondition.df, -starts_with("
                 ((condition %in% c("APMS_Ctrl_NT", "APMS_Ctrl_Gaussia_luci", "APMS_Ctrl_SARS_CoV_NSP1?", "APMS_Ctrl_SARS_CoV_NSP3_macroD?")) |
                    # baits that have too many things in common, but when we dynamically exclude them,
                    # the remaining baits don't provide the background enough to remove the shared proteins
-                 (contrast %in% str_c(c("SARS_CoV_M", "SARS_CoV2_M"), "_vs_others")) &
+                 (str_detect(contrast, "SARS_CoV2?_M_vs_(B\\d+_)?others")) &
                     bait_homid %in% c("ORF3")) | #, "ORF7b")) |
-                 (contrast %in% str_c(filter(conditions.df, bait_homid=="ORF3")$bait_full_id, "_vs_others") &
+                 (str_detect(contrast, str_c("(", str_c(str_replace(filter(conditions.df, bait_homid=="ORF3")$bait_full_id, fixed("?"), fixed("\\?")), collapse="|"),
+                                             ")_vs_(B\\d+_)?others")) &
                     bait_homid %in% c("M")) | #, "ORF7b")) |
-                 (contrast %in% str_c(c("SARS_CoV_ORF7b", "SARS_CoV2_ORF7b"), "_vs_others") &
+                 (str_detect(contrast, "SARS_CoV2?_ORF7b_vs_(B\\d+_)?others") &
                     bait_homid %in% c()))#"M", "ORF3"))))
 
 # prepare the data to use for MS runs normalization
