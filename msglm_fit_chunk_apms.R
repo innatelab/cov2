@@ -152,7 +152,7 @@ gc()
 msglm.stan_data <- stan.prepare_data(instr_calib, model_data,
                                      global_labu_shift = global_labu_shift,
                                      obj_labu_min = obj_labu_min, obj_labu_min_scale = 2,
-                                     batch_tau=0.25, batch_df=4, batch_df2=4, batch_slab_scale=0.1)
+                                     batch_effect_sigma=0.1)
 
 message('Running STAN in NUTS mode...')
 options(mc.cores=mcmc_nchains)
