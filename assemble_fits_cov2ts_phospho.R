@@ -227,3 +227,28 @@ save(results_info, fit_stats, fit_contrasts,
      object_contrasts_thresholds.df,
      file = rfit_filepath)
 message('Done.')
+
+msdata$ptmgroups$EG.PTMLocalizationProbabilities
+object_effects_report.df <- left_join(object_effects.df, effects.df) %>%
+  left_join(select(msdata$ptmgroups, ptmgroup_id, ptmseq = EG.PTMLocalizationProbabilities, protein_descriptions)) %>%
+  select(ptmgroup_id=object_id, ptmseq, majority_protein_acs, protein_descriptions,
+         std_type, effect, effect_label, timepoint, treatment,
+         median_log2, mean_log2, sd_log2, any_of(c("prob_nonpos", "prob_nonneg", "p_value")),
+         Rhat,
+         is_signif, is_hit_nomschecks, is_hit, change)
+write_tsv(object_effects_report.df, file.path(analysis_path, "reports", paste0(project_id, '_', ms_folder, '_effects_report_', fit_version, '.txt')))
+
+ptm_annots.df <- read_tsv(file.path(data_path, ms_folder, "COV2_DIA_phospho_0.75probablity_no normalization_psitep_nodata.txt"))
+object_contrasts_report.df <- filter(object_contrasts.df, str_detect(contrast, "SARS_COV2.+_vs_mock")) %>%
+  left_join(select(msdata$ptmgroups, ptmgroup_id, ptmseq = EG.PTMLocalizationProbabilities, protein_descriptions)) %>%
+  left_join(rename(ptm_annots.df, ptmgroup_id=PTM_collapse_key)) %>%
+  select(ptmgroup_id, gene_name=PTM_collapse_gene_name, protein_ac, ptm_pos = data_ptm_pos, ptmseq,
+         majority_protein_acs, protein_descriptions,
+         flanking_15AAs, psitep_ptm_pos,
+         std_type, contrast,
+         median_log2, mean_log2, sd_log2, any_of(c("prob_nonpos", "prob_nonneg", "p_value")),
+         is_signif, is_hit_nomschecks, is_hit, change)
+write_tsv(object_contrasts_report.df, file.path(analysis_path, "reports", paste0(project_id, '_', ms_folder, '_contrasts_report_', fit_version, '.txt.gz')))
+
+View(select(filter(object_effects.df, object_id==5400 & std_type == "median"), object_id, object_label, std_type, effect, median_log2, mean_log2, sd_log2, ends_with("%"), Rhat, any_of(c("prob_nonpos", "prob_nonneg", "p_value"))))
+
