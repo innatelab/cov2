@@ -1,9 +1,9 @@
 proj_info = (id = "cov2",
-             data_ver = "20200429",
-             fit_ver = "20200429",
+             data_ver = "20200503",
+             fit_ver = "20200503",
              msfolder = "mq_apms_20200427",
              prev_network_ver = "20200420",
-             network_ver = "20200429")
+             network_ver = "20200503")
 using Pkg
 Pkg.activate(@__DIR__)
 using Revise
@@ -37,7 +37,7 @@ ppi_weight_scales = Dict("ppi_low" => 0.05,
                          "ppi_medium" => 0.05,
                          "ppi_strong" => 0.05,
                          "complex" => 0.05,
-                         "homology" => 0.05,
+                         "homology" => 1.0,
                          "experiment" => 1.0)
 iactions_df = filter(r -> r.src_object_id != r.dest_object_id, iactions_orig_df)
 iactions_df.src_object_id = convert(Vector{Int}, iactions_df.src_object_id)
