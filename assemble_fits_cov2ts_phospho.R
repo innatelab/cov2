@@ -5,8 +5,8 @@
 
 project_id <- 'cov2'
 message('Project ID=', project_id)
-data_version <- "20200423"
-fit_version <- "20200425"
+data_version <- "20200428"
+fit_version <- "20200428"
 ms_folder <- 'cov2timecourse_phospho_dia_20200423'
 message("Assembling fit results for project ", project_id,
         " (dataset v", data_version, ", fit v", fit_version, ")")
@@ -139,7 +139,7 @@ object_effects.df <- pre_object_effects.df %>% dplyr::inner_join(fit_stats$objec
 
 object_effects_thresholds.df <- select(object_effects.df, effect, std_type) %>%
   distinct() %>%
-  mutate(p_value_threshold = 0.005,
+  mutate(p_value_threshold = 0.01,
          median_log2_threshold = 0.5,
          median_log2_max = 15)
 
@@ -178,7 +178,7 @@ object_contrasts.df <- dplyr::inner_join(pre_object_contrasts.df, fit_contrasts$
 
 object_contrasts_thresholds.df <- select(object_contrasts.df, contrast, contrast_type, std_type) %>%
   distinct() %>%
-  mutate(p_value_threshold = 0.005,
+  mutate(p_value_threshold = 0.01,
          median_log2_threshold = 0.5,
          median_log2_max = 15)
 
