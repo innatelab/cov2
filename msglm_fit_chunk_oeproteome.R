@@ -1,5 +1,5 @@
 Sys.setenv(TZ='Etc/GMT+1') # issue#612@rstan
-#job.args <- c("cov2", "ast_cov2_msglm", "spectronaut_oeproteome_20200411", "20200411", "20200411", "0", "1235")
+#job.args <- c("cov2", "ast_cov2_oeproteome", "spectronaut_oeproteome_20200519", "20200519", "20200519", "0", "1235")
 if (!exists('job.args')) {
   job.args <- commandArgs(trailingOnly = TRUE)
 }
@@ -34,11 +34,13 @@ if (Sys.getenv('SLURM_CPUS_PER_TASK') != '') {
   mcmc_nchains <- 8
 }
 
+require(rlang)
 require(dplyr)
 require(msglm)
 require(rstan)
 require(tidyr)
 require(stringr)
+require(maxquantUtils)
 
 modelobj <- "protgroup"
 quantobj <- "protgroup"
@@ -96,7 +98,7 @@ model_data$objects <- dplyr::mutate(model_data$objects, protregroup_id = object_
   #dplyr::select(-is_fit) %>%
   dplyr::arrange(glm_object_ix)
 
-# arrange pepmodstates by object and by the number of quantitations
+# arrange pepmodstates by object, by profile cluster and by the number of quantitations
 model_data$subobjects <- msdata.df %>%
     dplyr::inner_join(msdata$pepmodstates) %>%
     dplyr::inner_join(msdata$protregroup2pepmod) %>%
@@ -104,7 +106,9 @@ model_data$subobjects <- msdata.df %>%
     dplyr::summarise(n_quant = sum(!is.na(intensity)),
                      intensity_med = median(intensity, na.rm=TRUE)) %>% ungroup() %>%
     dplyr::inner_join(dplyr::select(model_data$objects, protregroup_id, glm_object_ix)) %>%
-    dplyr::arrange(glm_object_ix, desc(is_specific), desc(n_quant), desc(intensity_med),
+    # FIXME cluster per object
+    dplyr::inner_join(cluster_msprofiles(msdata.df, msdata$msrun_pepmodstate_stats, obj_col='pepmodstate_id', msrun_col='msrun')) %>%
+    dplyr::arrange(glm_object_ix, desc(is_specific), desc(nsimilar_profiles), desc(n_quant), desc(intensity_med),
                    pepmod_id, charge) %>%
     dplyr::mutate(glm_subobject_ix = row_number()) %>%
     dplyr::filter(glm_subobject_ix <= 30) # remove less abundant subobjects of rich objects
@@ -137,9 +141,20 @@ model_data$msdata <- mutate(model_data$msdata,
 
 model_data <- prepare_effects(model_data, underdefined_iactions=FALSE)
 
+dims_info <- msglm.prepare_dims_info(model_data, object_cols=c('object_id', modelobj_idcol, "object_label",
+                                                               "majority_protein_acs", "gene_names",
+                                                               "is_viral", "is_contaminant", "is_reverse",
+                                                               "protein_names"
+))
+
+# remove unneeded data to free some memory
+msdata <- NULL
+gc()
+
 msglm.stan_data <- stan.prepare_data(instr_calib, model_data,
                                      global_labu_shift = global_labu_shift,
-                                     batch_tau=0.8, effect_repl_shift_tau=0.4)
+                                     obj_labu_min = obj_labu_min, obj_labu_min_scale = 2,
+                                     batch_effect_sigma=0.1)
 
 message('Running STAN in NUTS mode...')
 options(mc.cores=mcmc_nchains)
@@ -148,32 +163,22 @@ msglm.stan_fit <- stan.sampling(msglm.stan_data, adapt_delta=0.9, max_treedepth=
 #require(shinystan)
 #launch_shinystan(shinystan::as.shinystan(msglm.stan_fit))
 
-min.iteration <- as.integer(1.5 * msglm.stan_fit@sim$warmup)
-dims_info <- msglm.prepare_dims_info(model_data, object_cols=c('object_id', modelobj_idcol, "object_label",
-                                                               "majority_protein_acs", "gene_names",
-                                                               "is_viral", "is_contaminant", "is_reverse",
-                                                               "protein_names"
-                                                               ))
-
-background_contrasts <- unique(as.character(filter(contrastXmetacondition.df,
-                                                   str_detect(contrast, "_vs_others") & weight < 0)$contrast))
-background_contrasts.quantiles_rhs <- lapply(background_contrasts, function(contr) c(0.1, 0.9))
-names(background_contrasts.quantiles_rhs) <- background_contrasts
+min.iteration <- as.integer(1.25 * msglm.stan_fit@sim$warmup)
 
 msglm_results <- process.stan_fit(msglm.stan_fit, dims_info,
-                                  condition.quantiles_rhs = background_contrasts.quantiles_rhs)
+                                  condition.quantiles_rhs = prepare_contrast_quantiles(contrastXmetacondition.df)$rhs)
 
 res_prefix <- paste0(project_id, "_", ms_folder, "_msglm", modelobj_suffix)
 if (!dir.exists(file.path(scratch_path, res_prefix))) {
   dir.create(file.path(scratch_path, res_prefix))
 }
-rdata_filepath <- file.path(scratch_path, res_prefix, paste0(res_prefix, '_', fit_version, '_', job_chunk, '.RData'))
-message('Saving STAN results to ', rdata_filepath, '...')
+rfit_filepath <- file.path(scratch_path, res_prefix, paste0(res_prefix, '_', fit_version, '_', job_chunk, '.RData'))
+message('Saving STAN results to ', rfit_filepath, '...')
 results_info <- list(project_id = project_id, ms_folder = ms_folder,
                      data_version = data_version, fit_version = fit_version,
                      job_name = job_name, job_chunk = job_chunk, modelobj = modelobj, quantobj = quantobj)
 save(data_info, results_info,
      model_data, msglm.stan_data, msglm_results,
-     dims_info, file = rdata_filepath)
+     dims_info, file = rfit_filepath)
 message('Done.')
 on.exit(unlink(tempdir(), force = TRUE), add=TRUE)
