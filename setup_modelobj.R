@@ -22,4 +22,5 @@ modelobj_suffix <- case_when(modelobj == "protgroup" ~ "_pg",
                              TRUE ~ NA_character_)
 
 global_labu_shift <- get(str_c("global_", quantobj, "_labu_shift"))
+obj_labu_min <- get(str_c(quantobj, "_labu_min"))
 instr_calib <- get(str_c("instr_calib_", quantobj))
