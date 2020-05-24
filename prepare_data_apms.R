@@ -723,7 +723,7 @@ bait_checks_protregroup.df <- dplyr::select(baits_info.df, bait_full_id, bait_id
   dplyr::mutate(idented_in_msruns = if_else(idented_in_msruns == "", NA_character_, idented_in_msruns),
                 idented_in_AP_of = if_else(idented_in_AP_of == "", NA_character_, idented_in_AP_of))
 
-obj_labu_min <- inner_join(msdata$pepmodstate_intensities, total_msrun_shifts.df) %>%
+pepmodstate_labu_min <- inner_join(msdata$pepmodstate_intensities, total_msrun_shifts.df) %>%
   mutate(intensity_norm = intensity * exp(-total_msrun_shift)) %>%
   .$intensity_norm %>% log() %>%
   quantile(0.001, na.rm=TRUE) - global_pepmodstate_labu_shift - 5
@@ -736,7 +736,7 @@ save(data_info, msdata,
      conditionXmetacondition.mtx, conditionXmetacondition.df,
      contrastXmetacondition.mtx, contrastXmetacondition.df, contrastXcondition.df,
      instr_calib_protgroup, instr_calib_pepmodstate,
-     global_protgroup_labu_shift, global_pepmodstate_labu_shift, obj_labu_min,
+     global_protgroup_labu_shift, global_pepmodstate_labu_shift, pepmodstate_labu_min,
      msruns_hnorm, total_msrun_shifts.df,
      batch_effects.df, msrunXbatchEffect.mtx,
      subbatch_effects.df, msrunXsubbatchEffect.mtx,
