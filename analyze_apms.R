@@ -69,12 +69,23 @@ group_by(contrast, std_type) %>% do({
     ggsave(filename = file.path(analysis_path, 'plots', str_c(ms_folder,'_', fit_version),
                                 str_c("volcanos_contrasts_", sel_object_contrast_thresholds.df$std_type[[1]], modelobj_suffix),
                                 paste0(project_id, '_', fit_version, '_volcano_',
-                                       sel_object_contrast_thresholds.df$contrast[[1]], '.pdf')),
+                                       str_replace_all(sel_object_contrast_thresholds.df$contrast[[1]], '\\?', 'alt'), '.pdf')),
            plot = p, width=15, height=18, device=cairo_pdf, family="Arial")
     tibble()
 })
 
-object_iactions_4show.df <- filter(object_contrasts.df, contrast_type=="comparison" & std_type=="replicate") %>%
+baitXvirus_effects.df <- inner_join(effects.df, conditionXeffect.df) %>%
+group_by(effect, bait_id, prior_mean) %>%
+summarise(condition_lhs = condition[mult > 0][[1]],
+          n_w = sum(mult > 0),
+          n_mw = sum(mult < 0),
+          condition_rhs = if(any(mult<0)) condition[mult < 0][[1]] else NA_character_) %>%
+ungroup() %>%
+filter(n_w == 1 & n_mw == 1)
+
+object_effects.df$effect_type
+
+object_iactions_4show.df <- filter(object_effects.df, effcontrast_type=="comparison" & std_type=="replicate") %>%
     dplyr::select(std_type, contrast, contrast_median_log2 = median_log2, contrast_p_value = p_value,
                   is_signif, is_hit_nomschecks, is_hit, is_viral, object_id, object_label) %>%
     dplyr::inner_join(dplyr::select(dplyr::filter(contrastXcondition.df, weight>0), contrast, condition_lhs=condition, bait_full_id_lhs=bait_full_id)) %>%
@@ -126,7 +137,7 @@ group_by(contrast, std_type) %>% do({
     ggsave(filename = file.path(analysis_path, 'plots', str_c(ms_folder,'_', fit_version),
                                 str_c("scatter_", sel_object_contrast_thresholds.df$std_type[[1]], modelobj_suffix),
                                 paste0(project_id, '_', fit_version, '_scatter_',
-                                       sel_object_contrast_thresholds.df$contrast[[1]], '.pdf')),
+                                       str_replace_all(sel_object_contrast_thresholds.df$contrast[[1]], '\\?', 'alt'), '.pdf')),
            plot = p, width=10, height=10, device=cairo_pdf, family="Arial")
     tibble()
 })
@@ -187,7 +198,7 @@ object_contrasts_4show.df %>%
                                     str_c("volcanos_contrasts_", sel_object_contrast_thresholds.df$std_type[[1]], modelobj_suffix),
                                     paste0(project_id, '_', fit_version, '_volcano_',
                                            sel_object_contrast_thresholds.df$contrast[[1]], '.pdf')),
-               device=cairo_pdf, plot = p, width=15, height=18, device=cairo_pdf, family="Arial")
+               plot = p, width=15, height=18, device=cairo_pdf, family="Arial")
         tibble()
     })
 
@@ -212,13 +223,12 @@ sel_objects.df <- dplyr::filter(modelobjs_df, is_viral)
 sel_pepmodstates.df <- dplyr::inner_join(sel_objects.df, msdata_full[[str_c(modelobj, "2pepmod")]]) %>%
     dplyr::filter(is_specific) %>%
     dplyr::inner_join(msdata_full$pepmodstates) %>%
-    dplyr::inner_join(select(msdata_full$pepmods, pepmod_id, peptide_id, mod_seq=seq)) %>%
-    dplyr::inner_join(select(msdata_full$peptides, peptide_id, unmod_seq=seq)) %>%
+    dplyr::inner_join(select(msdata_full$pepmods, pepmod_id, peptide_id, mod_seq=mod_seq, unmod_seq=seq)) %>%
     dplyr::select(object_id, pepmod_id, majority_protein_acs, protac_label, gene_label, gene_names,
                   mod_seq, unmod_seq, charge, pepmodstate_id)
 if (exists("fit_stats") && has_name(fit_stats, "subobjects")) {
     sel_pepmodstates.df <- dplyr::left_join(sel_pepmodstates.df,
-                                             dplyr::select(filter(fit_stats$subobjects, var=="suo_shift_unscaled"),
+                                             dplyr::select(filter(fit_stats$subobjects, var=="suo_shift"),
                                                            pepmodstate_id, pms_median_log2 = median_log2)) %>%
         dplyr::arrange(object_id, desc(coalesce(pms_median_log2, min(pms_median_log2, na.rm=TRUE))), unmod_seq, mod_seq, charge)
 } else {
@@ -230,13 +240,15 @@ sel_pepmodstates.df <- dplyr::mutate(sel_pepmodstates.df,
                                      pepmodstate_ext = paste0(mod_seq, ".", charge, " (", pepmod_id, ")", if_else(is.na(pms_median_log2), "", "*"))
                                                               %>% factor(., levels=.))
 
-sel_pepmod_intens.df <- dplyr::inner_join(dplyr::select(sel_pepmodstates.df, object_id, protac_label, gene_label, gene_names,
-                                                        pepmod_id, pepmodstate_id, charge, pepmodstate_ext, pms_median_log2) %>%
-                                                 dplyr::distinct(),
-                                             msdata_full$pepmodstate_intensities) %>%
-    dplyr::inner_join(distinct(select(msdata$msruns, msrun, batch, replicate, bait_type, bait_full_id, bait_id, condition)) %>%
+sel_pepmod_intens.df <- tidyr::crossing(pepmodstate_id = sel_pepmodstates.df$pepmodstate_id,
+                                        msrun = unique(msdata_full$pepmodstate_intensities$msrun)) %>%
+    dplyr::inner_join(dplyr::select(sel_pepmodstates.df, object_id, protac_label, gene_label, gene_names,
+                                    pepmod_id, pepmodstate_id, charge, pepmodstate_ext, pms_median_log2) %>%
+                      dplyr::distinct()) %>%
+    dplyr::left_join(msdata_full$pepmodstate_intensities) %>%
+    dplyr::inner_join(distinct(select(msdata$msruns, sample_type, msrun, batch, replicate, bait_kind, bait_full_id, bait_id, condition)) %>%
                       dplyr::left_join(dplyr::select(total_msrun_shifts.df, msrun, total_msrun_shift)) %>%
-                      dplyr::arrange(bait_type, bait_id, bait_full_id, batch, replicate) %>%
+                      dplyr::arrange(sample_type, bait_kind, batch, bait_id, bait_full_id, replicate) %>%
                       dplyr::mutate(msrun.2 = factor(msrun, levels=msrun))) %>%
     dplyr::mutate(intensity_norm = exp(-total_msrun_shift)*intensity,
                   msrun = msrun.2,
@@ -265,7 +277,7 @@ group_by(sel_pepmod_intens.df, object_id) %>% do({
     message("Plotting ", gene_name)
 p <- ggplot(shown_pepmod_intens.df) +
     geom_tile(aes(x=msrun, y=pepmodstate_ext,
-                  fill=intensity_norm, color=ident_type), size=0.5, width=0.85, height=0.85) +
+                  fill=intensity_norm, color=ident_type), na.rm = FALSE, size=0.5, width=0.85, height=0.85) +
     theme_bw_ast(base_family = "", base_size = 10) +
     theme(axis.text.x = element_text(angle = -90, hjust=0, vjust=0)) +
     facet_grid(object_id + gene_label ~ ., scales = "free_y", space="free_y") +
@@ -282,26 +294,28 @@ p <- ggplot(shown_pepmod_intens.df) +
                      paste0(project_id, "_", ms_folder, '_', data_version, "_pepmod_heatmap_", gene_name, "_", obj_id, ".pdf"))
   message(fname)
 ggsave(filename = fname,
-       plot = p, width=30, height=3 + n_distinct(shown_pepmod_intens.df$object_id) + min(20, 0.1*n_distinct(shown_pepmod_intens.df$pepmodstate_id)),
+       plot = p, width=40, height=2 + n_distinct(shown_pepmod_intens.df$object_id) + min(20, 0.12*n_distinct(shown_pepmod_intens.df$pepmodstate_id)),
        device=cairo_pdf, family="Arial")
     tibble()
 })
 
 # bait expression
 bait_intensities.df = dplyr::select(bait_checks.df, bait_full_id, bait_id, bait_orgcode, bait_object_id=object_id) %>%
-    dplyr::inner_join(select(conditions.df, condition, bait_type, bait_full_id)) %>%
+    dplyr::inner_join(select(filter(conditions.df, sample_type=="APMS"), condition, bait_kind, bait_full_id) %>%
+                        mutate(bait_full_id_alt = bait_full_id,
+                               bait_full_id = str_remove_all(bait_full_id, "\\?"))) %>%
     dplyr::left_join(select(filter(fit_stats$iactions, var=="iaction_labu_replCI"),
                             condition, object_id, median_log2, ends_with("%"), bait_full_id = object_label)) %>%
-    dplyr::arrange(bait_type, bait_id, bait_orgcode) %>%
-    dplyr::mutate(bait_full_id = factor(bait_full_id, levels=unique(bait_full_id)),
-                  bait_orgcode = if_else(bait_type == "control", "control", as.character(bait_orgcode)),
+    dplyr::arrange(bait_kind, bait_id, bait_orgcode) %>%
+    dplyr::mutate(bait_full_id_alt = factor(bait_full_id_alt, levels=unique(bait_full_id_alt)),
+                  bait_orgcode = if_else(bait_kind == "control", "control", as.character(bait_orgcode)),
                   median_log2 = median_log2 + global_labu_shift) %>%
     dplyr::mutate_at(vars(ends_with("%")), ~./log(2)+global_labu_shift) %>%
     dplyr::filter(bait_full_id != "Ctrl_Gaussia_luci")
 
 bait_orgcode_palette <- c("SARS2"="red", "CVHSA"="orange", "CVHNL"="darkgreen", "CVH22"="darkgreen", "HUMAN"="darkblue", "control"="gray")
 p <- ggplot(bait_intensities.df,
-       aes(x = bait_full_id, group = bait_full_id, color=bait_orgcode, fill=bait_orgcode)) +
+       aes(x = bait_full_id_alt, group = bait_full_id_alt, color=bait_orgcode, fill=bait_orgcode)) +
     geom_boxplot(aes(middle=median_log2,
                      lower=`25%`, upper=`75%`, ymin = `2.5%`, ymax=`97.5%`), stat="identity", alpha=0.5) +
     scale_color_manual(values=bait_orgcode_palette) +
