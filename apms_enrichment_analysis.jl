@@ -1,9 +1,9 @@
 proj_info = (id = "cov2",
-             data_ver = "20200417",
-             fit_ver = "20200417",
-             oesc_ver = "20200417",
+             data_ver = "20200515",
+             fit_ver = "20200515",
+             oesc_ver = "20200522",
              modelobj = "protregroup",
-             ms_folder = "mq_apms_20200417")
+             ms_folder = "mq_apms_20200510")
 using Pkg
 Pkg.activate(@__DIR__)
 
@@ -28,7 +28,7 @@ objid_col = Symbol(string(proj_info.modelobj, "_id"));
 input_rdata = load(joinpath(scratch_path, "$(proj_info.id)_msglm_data_$(proj_info.ms_folder)_$(proj_info.data_ver).RData"), convert=true)
 full_rdata = load(joinpath(scratch_path, "$(proj_info.id)_msdata_full_$(proj_info.ms_folder)_$(proj_info.data_ver).RData"), convert=true)
 fit_rdata = load(joinpath(scratch_path, "$(proj_info.id)_msglm_fit_$(proj_info.ms_folder)_$(proj_info.fit_ver).RData"), convert=true)
-effects_df = copy(input_rdata["effects.df"]);
+network_rdata = load(joinpath(analysis_path, "networks", "$(proj_info.id)_4graph_$(proj_info.ms_folder)_$(proj_info.fit_ver).RData"), convert=true)
 contrasts_df = unique!(select!(copy(input_rdata["contrastXmetacondition.df"]), [:contrast, :contrast_type]));
 objects_df = copy(input_rdata["msdata"][string(proj_info.modelobj, "s")]) |> MSGLMUtils.fix_object_id!;
 protacs_df = copy(full_rdata["msdata_full"]["proteins"]);
@@ -36,9 +36,9 @@ obj2protac_df = select!(
          filter(r -> r.is_majority, full_rdata["msdata_full"][string("protein2", proj_info.modelobj)]),
          [objid_col, :protein_ac]) |> unique! |> MSGLMUtils.fix_object_id!; # is_majority?
 #obj2protac_df = obj2protac_df[obj2protac_df.is_majority, [:object_id, :protein_ac]];
-obj_effs_df = copy(fit_rdata["object_effects.df"]);
+obj_effects_df = filter(r -> r.var == "obj_effect", fit_rdata["object_effects.df"]);
 obj_contrasts_df = copy(fit_rdata["object_contrasts.df"]);
-for df in [obj_effs_df, obj_contrasts_df]
+for df in [obj_effects_df, obj_contrasts_df]
     df |> MSGLMUtils.fix_quantile_columns! |> MSGLMUtils.fix_object_id!
 end
 
@@ -56,7 +56,8 @@ pcomplexes_df, pcomplex_iactors_df, pcomplex_iactor2ac_df =
     OmicsCollections.ppicollection(joinpath(party3rd_data_path, "complexes_20191217.RData"), seqdb=:uniprot);
 pcomplexes_df[!, :coll_id] .= "protein_complexes";
 # make complexes collections, keep complexes with at least 2 participants
-pcomplex_coll = FrameUtils.frame2collection(join(pcomplex_iactors_df, pcomplex_iactor2ac_df, on=[:file, :entry_index, :interaction_id, :interactor_id], kind=:inner),
+pcomplex_coll = FrameUtils.frame2collection(join(pcomplex_iactors_df, pcomplex_iactor2ac_df,
+            on=[:file, :entry_index, :interaction_id, :interactor_id], kind=:inner),
             set_col=:complex_id, obj_col=:protein_ac, min_size=2)
 protac_sets = merge!(genesets_coll, pcomplex_coll)
 
@@ -76,11 +77,11 @@ protac_colls = FrameUtils.frame2collections(protac2term_df, obj_col=:protein_ac,
 obj_colls = FrameUtils.frame2collections(obj2term_df, obj_col=objid_col,
                                          set_col=:term_id, coll_col=:coll_id)
 
-@info "Preparing effect sets"
+@info "Preparing hit sets"
 ObjectType = eltype(obj2protac_df.object_id)
-obj_contrast_sets = Dict{Tuple{String, String, String}, Set{ObjectType}}()
-for contrast_df in groupby(obj_contrasts_df[obj_contrasts_df.is_hit, :], [:std_type, :contrast, :change])
-    obj_contrast_sets[(string.(contrast_df[1, :std_type], "_std"), contrast_df[1, :contrast], contrast_df[1, :change])] = Set(skipmissing(contrast_df.object_id))
+obj_hit_sets = Dict{Tuple{String, String, String}, Set{ObjectType}}()
+for contrast_df in groupby(filter(r -> coalesce(r.is_hit, false), obj_contrasts_df), [:std_type, :contrast, :change])
+    obj_hit_sets[(string.(contrast_df[1, :std_type], "_std"), contrast_df[1, :contrast], contrast_df[1, :change])] = Set(skipmissing(contrast_df.object_id))
 end
 # leave only true interactors in bait-to-bait comparison
 for ((std_type, contrast, change), objs) in obj_contrast_sets
@@ -98,8 +99,8 @@ end
 sel_std_type = "replicate"
 obj_contrast_selsets = filter(kv ->
     (kv[1][1] == sel_std_type*"_std") &&
-    !occursin(r"_vs_controls$", kv[1][2]),
-    obj_contrast_sets);
+    occursin(r"_vs_others$", kv[1][2]),
+    obj_contrast_sets)
 
 @info "Preparing mosaics..."
 observed_protacs = Set(obj2protac_df.protein_ac) # all annotation ACs observed in the data
@@ -110,7 +111,7 @@ obj_mosaics = OptCoverUtils.collections2mosaics(obj_colls, protac_colls, observe
 obj_contrast_mosaics = Dict(begin
     @info "Masking $mosaic_name dataset by contrasts..."
     mosaic_name => OptCoverUtils.automask(mosaic, obj_contrast_selsets,
-                                          max_sets=2000, min_nmasked=2, max_setsize=2000)
+                                          max_sets=2000, min_nmasked=2, max_setsize=150)
     end for (mosaic_name, mosaic) in pairs(obj_mosaics));
 
 using OptEnrichedSetCover
@@ -159,7 +160,7 @@ obj_contrast_covers_df = join(OptCoverUtils.covers_report(
     maskedset_col_prefix="contrast"),
     contrasts_df, on=[:contrast], kind=:inner)
 
-obj_contrast_covers_signif_df = by(obj_contrast_covers_df, :term_collection) do coll_df
+obj_contrast_covers_signif_df = combine(groupby(obj_contrast_covers_df, :term_collection)) do coll_df
     @info "Processing $(coll_df.term_collection[1])..."
     return select!(OptCoverUtils.filter_multicover(coll_df, set_cols=[:std_type, :contrast, :change],
                                                    max_term_pvalue=1E-4, max_set_pvalue=1E-3, max_entry_pvalue=1.0),
@@ -201,7 +202,7 @@ stylize_contrast(str) = foldl(replace, [
     r"SARS_CoV_(\w+)" => s"\1<sub><span style=\"color: orange;\">CoV</span></sub>",
     r"HCoV_(\w+)" => s"\1<sub><span style=\"color: seagreen;\">HCoV</span></sub>",
     "controls" => "<span style=\"color: #808080;\">controls</span>",
-    "others" => "<span style=\"color: #404040;\">others</span>",
+    "others" => "<span style=\"color: #808080;\">others</span>",
     ],
     init = str)
 
@@ -233,7 +234,7 @@ for term_coll in unique(obj_contrast_covers_df.term_collection), signif in (fals
                    :yaxis_tickfont_size=>12, :xaxis_tickangle=>45]
         coll_heatmap.plot.layout[k] = v
     end
-    plotname = joinpath(plots_path, "$(proj_info.ms_folder)", "oesc_$(sel_std_type)",
+    plotname = joinpath(plots_path, "$(proj_info.ms_folder)_$(proj_info.fit_ver)", "oesc_$(sel_std_type)",
                         "$(proj_info.id)_$(proj_info.oesc_ver)_$(term_coll)_X_contrast$(signif ? "_signif" : "")_heatmap")
     PlotlyJS.savehtml(coll_heatmap, "$(plotname).html", :embed);
     try
