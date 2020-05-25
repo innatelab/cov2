@@ -1,9 +1,9 @@
 proj_info = (id = "cov2",
-             data_ver = "20200411",
-             fit_ver = "20200411",
-             oesc_ver = "20200411",
+             data_ver = "20200519",
+             fit_ver = "20200519",
+             oesc_ver = "20200524",
              modelobj = "protgroup",
-             ms_folder = "spectronaut_oeproteome_20200411")
+             msfolder = "spectronaut_oeproteome_20200519")
 using Pkg
 Pkg.activate(@__DIR__)
 
@@ -11,7 +11,7 @@ using Revise
 using RData, DataFrames
 using StatsBase
 
-@info "Project '$(proj_info.id)' dataset version=$(proj_info.data_ver)"
+@info "Project '$(proj_info.id)' dataset $(proj_info.msfolder) version=$(proj_info.data_ver)"
 
 const misc_scripts_path = joinpath(base_scripts_path, "misc_jl");
 const analysis_path = joinpath(base_analysis_path, proj_info.id)
@@ -25,9 +25,9 @@ Revise.includet(joinpath(misc_scripts_path, "msglm_utils.jl"));
 
 objid_col = Symbol(string(proj_info.modelobj, "_id"));
 
-input_rdata = load(joinpath(scratch_path, "$(proj_info.id)_msglm_data_$(proj_info.ms_folder)_$(proj_info.data_ver).RData"), convert=true)
-full_rdata = load(joinpath(scratch_path, "$(proj_info.id)_msdata_full_$(proj_info.ms_folder)_$(proj_info.data_ver).RData"), convert=true)
-fit_rdata = load(joinpath(scratch_path, "$(proj_info.id)_msglm_fit_$(proj_info.ms_folder)_$(proj_info.fit_ver).RData"), convert=true)
+input_rdata = load(joinpath(scratch_path, "$(proj_info.id)_msglm_data_$(proj_info.msfolder)_$(proj_info.data_ver).RData"), convert=true)
+full_rdata = load(joinpath(scratch_path, "$(proj_info.id)_msdata_full_$(proj_info.msfolder)_$(proj_info.data_ver).RData"), convert=true)
+fit_rdata = load(joinpath(scratch_path, "$(proj_info.id)_msglm_fit_$(proj_info.msfolder)_$(proj_info.fit_ver).RData"), convert=true)
 effects_df = copy(input_rdata["effects.df"]);
 contrasts_df = unique!(select!(copy(input_rdata["contrastXmetacondition.df"]), [:contrast, :contrast_type]));
 objects_df = copy(input_rdata["msdata"][string(proj_info.modelobj, "s")]) |> MSGLMUtils.fix_object_id!;
@@ -36,9 +36,9 @@ obj2protac_df = select!(
          filter(r -> r.is_majority, full_rdata["msdata_full"][string("protein2", proj_info.modelobj)]),
          [objid_col, :protein_ac]) |> unique! |> MSGLMUtils.fix_object_id!; # is_majority?
 #obj2protac_df = obj2protac_df[obj2protac_df.is_majority, [:object_id, :protein_ac]];
-obj_effs_df = copy(fit_rdata["object_effects.df"]);
+obj_effects_df = filter(r -> r.var == "obj_effect", fit_rdata["object_effects.df"]);
 obj_contrasts_df = copy(fit_rdata["object_contrasts.df"]);
-for df in [obj_effs_df, obj_contrasts_df]
+for df in [obj_effects_df, obj_contrasts_df]
     df |> MSGLMUtils.fix_quantile_columns! |> MSGLMUtils.fix_object_id!
 end
 
@@ -56,7 +56,8 @@ pcomplexes_df, pcomplex_iactors_df, pcomplex_iactor2ac_df =
     OmicsCollections.ppicollection(joinpath(party3rd_data_path, "complexes_20191217.RData"), seqdb=:uniprot);
 pcomplexes_df[!, :coll_id] .= "protein_complexes";
 # make complexes collections, keep complexes with at least 2 participants
-pcomplex_coll = FrameUtils.frame2collection(join(pcomplex_iactors_df, pcomplex_iactor2ac_df, on=[:file, :entry_index, :interaction_id, :interactor_id], kind=:inner),
+pcomplex_coll = FrameUtils.frame2collection(join(pcomplex_iactors_df, pcomplex_iactor2ac_df,
+            on=[:file, :entry_index, :interaction_id, :interactor_id], kind=:inner),
             set_col=:complex_id, obj_col=:protein_ac, min_size=2)
 protac_sets = merge!(genesets_coll, pcomplex_coll)
 
@@ -76,17 +77,19 @@ protac_colls = FrameUtils.frame2collections(protac2term_df, obj_col=:protein_ac,
 obj_colls = FrameUtils.frame2collections(obj2term_df, obj_col=objid_col,
                                          set_col=:term_id, coll_col=:coll_id)
 
-@info "Preparing effect sets"
+@info "Preparing hit sets"
 ObjectType = eltype(obj2protac_df.object_id)
-obj_effect_sets = Dict{Tuple{String, String}, Set{ObjectType}}()
-for eff_df in groupby(obj_effects_df[coalesce.(obj_effects_df.is_hit, false), :], [:std_type, :effect])
-    obj_effect_sets[(string.(eff_df[1, :std_type], "_std"), eff_df[1, :effect])] = Set(skipmissing(eff_df.object_id))
+obj_hit_sets = Dict{Tuple{String, String, String}, Set{ObjectType}}()
+for hits_df in groupby(filter(r -> coalesce(r.is_hit_nomschecks, false), obj_contrasts_df), [:std_type, :contrast, :change])
+    obj_hit_sets[(string.(hits_df[1, :std_type], "_std"), hits_df[1, :contrast], hits_df[1, :change])] =
+        Set(skipmissing(hits_df.object_id))
 end
 # only relevant ones
 sel_std_type = "replicate"
-obj_effect_selsets = filter(kv ->
-    (kv[1][1] == sel_std_type*"_std"),
-    obj_effect_sets);
+obj_hit_selsets = filter(kv ->
+    (kv[1][1] == sel_std_type*"_std") &&
+    occursin("_vs_controls", kv[1][2]),
+    obj_hit_sets);
 
 @info "Preparing mosaics..."
 observed_protacs = Set(obj2protac_df.protein_ac) # all annotation ACs observed in the data
@@ -94,10 +97,10 @@ obj_mosaics = OptCoverUtils.collections2mosaics(obj_colls, protac_colls, observe
                                       setXset_frac_extra_elms=0.05,
                                       verbose=true);
 
-obj_effect_mosaics = Dict(begin
-    @info "Masking $mosaic_name dataset by effects..."
-    mosaic_name => OptCoverUtils.automask(mosaic, obj_effect_selsets,
-                                          max_sets=2000, min_nmasked=2, max_setsize=2000)
+obj_hit_mosaics = Dict(begin
+    @info "Masking $mosaic_name dataset by hits..."
+    mosaic_name => OptCoverUtils.automask(mosaic, obj_hit_selsets,
+                                          max_sets=2000, min_nmasked=2, max_setsize=200)
     end for (mosaic_name, mosaic) in pairs(obj_mosaics));
 
 using OptEnrichedSetCover
@@ -105,31 +108,33 @@ using OptEnrichedSetCover
 cover_params = CoverParams(setXset_factor=0.5,
                            uncovered_factor=0.0, covered_factor=0.0)#, covered_factor=0.002)
 
-obj_effect_covers = Dict(begin
-    @info "Covering $mosaic_name by effects..."
+obj_hit_covers = Dict(begin
+    @info "Covering $mosaic_name by bits..."
     mosaic_name => collect(masked_mosaic, cover_params,
             CoverEnumerationParams(max_set_score=0.0, max_covers=1),
-            MultiobjOptimizerParams(ϵ=[0.02, 0.2], MaxSteps=3_000_000, WeightDigits=2, NWorkers=Threads.nthreads()-1, MaxRestarts=200),
+            MultiobjOptimizerParams(ϵ=[0.05, 0.5], MaxSteps=2_000_000, WeightDigits=2,
+                                    NWorkers=Threads.nthreads()-1, MaxRestarts=200),
             true)
-    end for (mosaic_name, masked_mosaic) in pairs(obj_effect_mosaics))
+    end for (mosaic_name, masked_mosaic) in pairs(obj_hit_mosaics))
 
 using JLD2
 
 @info "Saving data and analysis results"
-effect_covers_filename = joinpath(scratch_path, "$(proj_info.id)_oeprot_effect_covers_$(proj_info.ms_folder)_$(proj_info.oesc_ver).jld2")
-@save(effect_covers_filename,
+hit_covers_filename = joinpath(scratch_path, "$(proj_info.id)_hit_$(proj_info.oesc_ver)_covers.jld2")
+@save(hit_covers_filename,
       proj_info, protac_colls, obj_colls, obj_mosaics,
       obj2term_df, terms_df,
-      objects_df, obj_effects_df,
-      obj_effect_sets, obj_effect_selsets, obj_effect_mosaics, #obj_effect_weak_sets,
-      cover_params, obj_effect_covers)
-if !@isdefined(obj_effect_covers)
+      objects_df, obj_effects_df, obj_contrasts_df,
+      obj_hit_sets, obj_hit_selsets, obj_hit_mosaics,
+      cover_params, obj_hit_covers)
+if !@isdefined(obj_hit_covers)
 using JLD2, CSV, DataFrames, OptEnrichedSetCover
-@load(effect_covers_filename,
+@load(hit_covers_filename,
       proj_info, protac_colls, obj_colls, obj_mosaics,
-      objects_df, obj_effects_df, obj_effects_weak_df,
-      obj_effect_sets, obj_effect_selsets, obj_effect_mosaics, obj_effect_selmosaics, #obj_effect_weak_sets,
-      cover_params, obj_effect_covers, obj_effect_selcovers)
+      obj2term_df, terms_df,
+      objects_df, obj_effects_df, obj_contrasts_df,
+      obj_hit_sets, obj_hit_selsets, obj_hit_mosaics, obj_hit_selmosaics,
+      cover_params, obj_hit_covers)
 end
 
 Revise.includet(joinpath(misc_scripts_path, "optcover_utils.jl"));
@@ -138,26 +143,25 @@ Revise.includet(joinpath(misc_scripts_path, "optcover_utils.jl"));
 obj_id2name = Dict(r.object_id => r[Symbol(proj_info.modelobj, "_label")]
                    for r in eachrow(objects_df))
 
-obj_effect_covers_df = join(OptCoverUtils.covers_report(
-    obj_effect_covers, obj_effect_selsets, obj_colls, obj_mosaics, obj_id2name,
-    terms_df,
-    maskid_col=[:std_type, :effect],
-    maskedset_col_prefix="effect"),
-    effects_df, on=[:effect], kind=:inner)
+obj_hit_covers_df = OptCoverUtils.covers_report(
+   obj_hit_covers, obj_hit_sets, obj_colls, obj_mosaics, obj_id2name,
+   terms_df,
+   maskid_col=[:std_type, :contrast, :change],
+   maskedset_col_prefix="hit")
 
-obj_effect_covers_signif_df = by(obj_effect_covers_df, :term_collection) do coll_df
+obj_hit_covers_signif_df = combine(groupby(obj_hit_covers_df, :term_collection)) do coll_df
     @info "Processing $(coll_df.term_collection[1])..."
-    return select!(OptCoverUtils.filter_multicover(coll_df, set_cols=[:std_type, :effect],
+    return select!(OptCoverUtils.filter_multicover(coll_df, set_cols=[:contrast, :change],
                                                    max_term_pvalue=1E-3, max_set_pvalue=1E-2, max_entry_pvalue=1.0),
                    Not(:term_collection))
 end
 
 using CSV
-CSV.write(joinpath(analysis_path, "reports", "$(proj_info.id)_oeprot_effects_oesc_$(sel_std_type)_std_$(proj_info.oesc_ver).txt"),
-          obj_effect_covers_df[obj_effect_covers_df.nmasked .> 0, :],
+CSV.write(joinpath(analysis_path, "reports", "$(proj_info.id)_$(proj_info.msfolder)_hit_oesc_$(sel_std_type)_std_$(proj_info.oesc_ver).txt"),
+          obj_hit_covers_df[obj_hit_covers_df.nmasked .> 0, :],
           missingstring="", delim='\t');
-CSV.write(joinpath(analysis_path, "reports", "$(proj_info.id)_oeprot_effects_oesc_$(sel_std_type)_std_signif_$(proj_info.oesc_ver).txt"),
-          obj_effect_covers_signif_df[obj_effect_covers_signif_df.nmasked .> 0, :],
+CSV.write(joinpath(analysis_path, "reports", "$(proj_info.id)_$(proj_info.msfolder)_hit_oesc_$(sel_std_type)_std_signif_$(proj_info.oesc_ver).txt"),
+          obj_hit_covers_signif_df[obj_hit_covers_signif_df.nmasked .> 0, :],
           missingstring="", delim='\t');
 
 Revise.includet(joinpath(misc_scripts_path, "frame_utils.jl"))
@@ -171,7 +175,7 @@ heatmap_layout_attrs = Dict(
     ("GO_CC", false) => Dict(:margin_l => 200),
 )
 
-for (plot_mosaic, cover_coll) in obj_effect_covers
+for (plot_mosaic, cover_coll) in obj_hit_covers
     isempty(cover_coll.results) && continue
     @info "Plotting $plot_mosaic Pareto front"
     paretofront_plot = OptCoverPlots.plot_paretofront(cover_coll.results[1], plot_unfolded=true)
@@ -181,27 +185,33 @@ for (plot_mosaic, cover_coll) in obj_effect_covers
     PlotlyJS.savehtml(paretofront_plot, "$plot_filename.html")
 end
 
-stylize_effect(str) = foldl(replace, [
-    "bait_id" => "<span style=\"color: #808080;\">bait:</span>&nbsp;",
-    ":orgcode" => "&nbsp;CoV-2&nbsp;<span style=\"color: #808080;\">vs</span>&nbsp;",
+stylize_contrast(str) = foldl(replace, [
+    "_vs_" => "&nbsp;<span style=\"color: #808080;\">vs</span>&nbsp;",
+    r"SARS_CoV2_(\w+)" => s"\1<sub><span style=\"color: red;\">CoV2</span></sub>",
+    r"SARS_CoV_(\w+)" => s"\1<sub><span style=\"color: orange;\">CoV</span></sub>",
+    r"HCoV_(\w+)" => s"\1<sub><span style=\"color: seagreen;\">HCoV</span></sub>",
+    "controls" => "<span style=\"color: #808080;\">controls</span>",
+    "others" => "<span style=\"color: #808080;\">others</span>",
     ],
     init = str)
 
-function process_effect_axis(effect_df)
-    effect_df,
-    stylize_effect.(effect_df.effect),
-    stylize_effect.(effect_df.effect)
+function process_contrast_axis(contrast_df)
+    contrast_df,
+    string.(stylize_contrast.(contrast_df.contrast), "&nbsp;",
+            OptCoverHeatmap.stylize_change.(contrast_df.change)),
+    string.(stylize_contrast.(contrast_df.contrast), "&nbsp;",
+            OptCoverHeatmap.stylize_change.(contrast_df.change))
 end
 
-for term_coll in unique(obj_effect_covers_df.term_collection), signif in (false, true)
-    @info "Plotting $(signif ? "signif " : "")effect heatmap for $term_coll..."
+for term_coll in unique(obj_hit_covers_df.term_collection), signif in (false, true)
+    @info "Plotting $(signif ? "signif " : "")heatmap for $term_coll..."
     layout_attrs = get(heatmap_layout_attrs, (term_coll, signif), Dict())
-    df = signif ? obj_effect_covers_signif_df : obj_effect_covers_df
+    df = signif ? obj_hit_covers_signif_df : obj_hit_covers_df
     coll_heatmap = OptCoverHeatmap.oesc_heatmap(df,
             Symbol(term_coll), elements_label="proteins",
-            maskedset_axis_title = "effect",
-            maskedset_cols = [:effect, :neffect],
-            process_maskedset_axis=process_effect_axis,
+            maskedset_axis_title = "Comparison",
+            maskedset_cols = [:contrast, :change, :nhit],
+            process_maskedset_axis=process_contrast_axis,
             process_term_axis=OptCoverHeatmap.process_term_axis,
             margin_l=get(layout_attrs, :margin_l, 400),
             margin_b=get(layout_attrs, :margin_b, 160),
@@ -213,8 +223,8 @@ for term_coll in unique(obj_effect_covers_df.term_collection), signif in (false,
                    :yaxis_tickfont_size=>12, :xaxis_tickangle=>45]
         coll_heatmap.plot.layout[k] = v
     end
-    plotname = joinpath(plots_path, "$(proj_info.ms_folder)", "oesc_effects_$(sel_std_type)",
-                        "$(proj_info.id)_$(proj_info.oesc_ver)_$(term_coll)_X_effect$(signif ? "_signif" : "")_heatmap")
+    plotname = joinpath(plots_path, "$(proj_info.msfolder)_$(proj_info.fit_ver)", "oesc_hits_$(sel_std_type)",
+                        "$(proj_info.id)_$(proj_info.oesc_ver)_$(term_coll)_X_hits$(signif ? "_signif" : "")_heatmap")
     PlotlyJS.savehtml(coll_heatmap, "$(plotname).html", :embed);
     try
         savefig(coll_heatmap.plot, "$(plotname).pdf");
