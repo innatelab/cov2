@@ -5,8 +5,10 @@
 
 project_id <- 'cov2'
 message('Project ID=', project_id)
-data_version <- "20200423"
-fit_version <- "20200425"
+#data_version <- "20200506"
+#fit_version <- "20200506"
+data_version <- "20200503"
+fit_version <- "20200503"
 ms_folder <- 'cov2timecourse_dia_20200423'
 message("Assembling fit results for project ", project_id,
         " (dataset v", data_version, ", fit v", fit_version, ")")
@@ -28,6 +30,8 @@ message('Loading data...')
 load(file.path(scratch_path, str_c(project_id, '_msglm_data_', ms_folder, '_', data_version, '.RData')))
 load(file.path(scratch_path, str_c(project_id, '_msdata_full_', ms_folder, '_', data_version, '.RData')))
 
+#modelobj <- "protregroup"
+#quantobj <- "pepmod"
 modelobj <- "protgroup"
 quantobj <- "protgroup"
 source(file.path(project_scripts_path, 'setup_modelobj.R'))
@@ -89,10 +93,11 @@ iactions.df <- tidyr::expand(msdata_full$protgroup_intensities, protgroup_id, ms
 modelobjs_df <- dplyr::mutate(modelobjs_df,
                               is_msvalid_object = TRUE)#(nprotgroups_sharing_proteins == 1 || nproteins_have_razor > 0))
 } else if (modelobj == "protregroup") {
-iactions.df <- msdata_full$pepmodstate_intensities_all %>%
-  dplyr::mutate(is_quanted = !is.na(intensity)) %>%
+iactions.df <- expand(msdata_full$pepmod_intensities, msrun, pepmod_id) %>%
+  dplyr::left_join(msdata_full$pepmod_intensities) %>%
+  dplyr::mutate(is_quanted = !is.na(intensity),
+                is_idented = is_quanted) %>%
   dplyr::inner_join(msdata$msruns) %>%
-  dplyr::left_join(msdata$pepmodstates) %>%
   dplyr::left_join(filter(msdata$protregroup2pepmod, is_specific)) %>%
   dplyr::group_by(condition, protregroup_id) %>%
   dplyr::summarize(nmsruns_quanted = n_distinct(msrun[is_idented]), # count msruns
@@ -156,7 +161,7 @@ object_effects.df <- pre_object_effects.df %>% dplyr::inner_join(fit_stats$objec
 object_effects_thresholds.df <- select(object_effects.df, effect, std_type) %>%
   distinct() %>%
   mutate(p_value_threshold = case_when(TRUE ~ 0.001),
-         median_log2_threshold = case_when(TRUE ~ 0.5),
+         median_log2_threshold = case_when(TRUE ~ 0.25),
          median_log2_max = case_when(TRUE ~ 4))
 
 object_effects.df <- object_effects.df %>%
@@ -195,7 +200,7 @@ object_contrasts.df <- dplyr::inner_join(pre_object_contrasts.df, fit_contrasts$
 object_contrasts_thresholds.df <- select(object_contrasts.df, contrast, contrast_type, std_type) %>%
   distinct() %>%
   mutate(p_value_threshold = case_when(TRUE ~ 0.001),
-         median_log2_threshold = case_when(TRUE ~ 0.5),
+         median_log2_threshold = case_when(TRUE ~ 0.25),
          median_log2_max = case_when(TRUE ~ 5))
 
 object_contrasts.df <- object_contrasts.df %>%
@@ -243,3 +248,12 @@ save(results_info, fit_stats, fit_contrasts,
      object_contrasts_thresholds.df,
      file = rfit_filepath)
 message('Done.')
+
+object_contrasts_report.df <- filter(object_contrasts.df, str_detect(contrast, "SARS_COV2.+_vs_mock")) %>%
+  dplyr::inner_join(select(msdata_full$protgroups, protgroup_id, protein_descriptions)) %>%
+  select(object_id, object_label, majority_protein_acs, protein_descriptions,
+         std_type, contrast,
+         median_log2, mean_log2, sd_log2, any_of(c("prob_nonpos", "prob_nonneg", "p_value")),
+         is_signif, is_hit_nomschecks, is_hit, change)
+write_tsv(object_contrasts_report.df, file.path(analysis_path, "reports", paste0(project_id, '_', ms_folder, '_contrasts_report_', fit_version, '.txt.gz')))
+
