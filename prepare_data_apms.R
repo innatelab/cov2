@@ -688,7 +688,7 @@ msrunXsubbatchEffect.mtx <- zero_matrix(msrun = rownames(msrunXbatchEffect.mtx),
 subbatch_effects.df <- tibble(subbatch_effect=character(0),
                            is_positive=logical(0))
 
-bait_checks_protgroup.df <- dplyr::left_join(dplyr::select(baits_info.df, bait_full_id, bait_id, bait_orgcode=orgcode, bait_organism=organism,
+bait_checks_protgroup.df <- dplyr::left_join(dplyr::select(baits_info.df, bait_full_id, bait_id, bait_homid, bait_orgcode=orgcode, bait_organism=organism,
                                                            protein_ac = used_uniprot_ac),
                                              dplyr::select(msdata_full$proteins, protein_ac, protgroup_id, prot_organism=organism)) %>%
   dplyr::left_join(dplyr::select(dplyr::filter(msdata$protgroup_idents, ident_type=="By MS/MS"), protgroup_id, msrun)) %>%
@@ -704,7 +704,7 @@ bait_checks_protgroup.df <- dplyr::left_join(dplyr::select(baits_info.df, bait_f
   dplyr::mutate(idented_in_msruns = if_else(idented_in_msruns == "", NA_character_, idented_in_msruns),
                 idented_in_AP_of = if_else(idented_in_AP_of == "", NA_character_, idented_in_AP_of))
 
-bait_checks_protregroup.df <- dplyr::select(baits_info.df, bait_full_id, bait_id,
+bait_checks_protregroup.df <- dplyr::select(baits_info.df, bait_full_id, bait_id, bait_homid,
                                             bait_orgcode=orgcode, bait_organism=organism) %>%
   # FIXME using protein_ac from fasta, because there's discrepancy between fasta and baits_info
   dplyr::left_join(dplyr::select(fasta.dfs$CoV, bait_id=gene_name, bait_organism=organism, protein_ac)) %>%
