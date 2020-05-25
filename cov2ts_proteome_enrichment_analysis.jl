@@ -1,7 +1,7 @@
 proj_info = (id = "cov2",
-             data_ver = "20200423",
-             fit_ver = "20200425",
-             oesc_ver = "20200426",
+             data_ver = "20200429",
+             fit_ver = "20200429",
+             oesc_ver = "20200429",
              modelobj = "protgroup",
              ms_folder = "cov2timecourse_dia_20200423")
 using Pkg
@@ -42,6 +42,14 @@ for df in [obj_effects_df, obj_contrasts_df]
     df |> MSGLMUtils.fix_quantile_columns! |> MSGLMUtils.fix_object_id!
 end
 
+contrast_matches = match.(Ref(r"(.+)@(\d+)h_vs_(.+)@(\d+)h"), obj_contrasts_df.contrast)
+obj_contrasts_df.treatment_lhs = string.(getindex.(contrast_matches, 1))
+obj_contrasts_df.timepoint_lhs = parse.(Int, getindex.(contrast_matches, 2))
+obj_contrasts_df.treatment_rhs = string.(getindex.(contrast_matches, 3))
+obj_contrasts_df.timepoint_rhs = parse.(Int, getindex.(contrast_matches, 4))
+obj_contrasts_df.change_alt = getindex.(Ref(Dict("+" => "▲", "-" => "▼", "." => ".")),
+                                        obj_contrasts_df.change)
+
 comparisons_df = vcat(hcat(DataFrame(comparison_type = fill("effect", nrow(effects_df))),
                            rename(select!(effects_df, [:effect, :effect_label]),
                                   :effect=>:comparison, :effect_label=>:comparison_label)),
@@ -65,7 +73,8 @@ pcomplexes_df, pcomplex_iactors_df, pcomplex_iactor2ac_df =
     OmicsCollections.ppicollection(joinpath(party3rd_data_path, "complexes_20191217.RData"), seqdb=:uniprot);
 pcomplexes_df[!, :coll_id] .= "protein_complexes";
 # make complexes collections, keep complexes with at least 2 participants
-pcomplex_coll = FrameUtils.frame2collection(join(pcomplex_iactors_df, pcomplex_iactor2ac_df, on=[:file, :entry_index, :interaction_id, :interactor_id], kind=:inner),
+pcomplex_coll = FrameUtils.frame2collection(join(pcomplex_iactors_df, pcomplex_iactor2ac_df,
+            on=[:file, :entry_index, :interaction_id, :interactor_id], kind=:inner),
             set_col=:complex_id, obj_col=:protein_ac, min_size=2)
 protac_sets = merge!(genesets_coll, pcomplex_coll)
 
@@ -85,7 +94,7 @@ protac_colls = FrameUtils.frame2collections(protac2term_df, obj_col=:protein_ac,
 obj_colls = FrameUtils.frame2collections(obj2term_df, obj_col=objid_col,
                                          set_col=:term_id, coll_col=:coll_id)
 
-@info "Preparing effect sets"
+@info "Preparing hit sets"
 ObjectType = eltype(obj2protac_df.object_id)
 obj_hit_sets = Dict{Tuple{String, String, String#=, String=#}, Set{ObjectType}}()
 for hits_df in groupby(filter(r -> coalesce(r.is_hit_nomschecks, false), obj_effects_df), [:std_type, :effect#=, :change=#])
@@ -101,7 +110,7 @@ end
 sel_std_type = "median_std"
 obj_hit_selsets = filter(kv -> (kv[1][2] == sel_std_type) && (
     ((kv[1][1] == "contrast") && occursin(r"SARS.+_vs_mock", kv[1][3])) ||
-    ((kv[1][1] == "effect") && occursin(":treatment", kv[1][3]))),
+    false && ((kv[1][1] == "effect") && occursin(":treatment", kv[1][3]))),
   obj_hit_sets);
 
 @info "Preparing mosaics..."
@@ -113,7 +122,7 @@ obj_mosaics = OptCoverUtils.collections2mosaics(obj_colls, protac_colls, observe
 obj_hit_mosaics = Dict(begin
     @info "Masking $mosaic_name dataset by hits..."
     mosaic_name => OptCoverUtils.automask(mosaic, obj_hit_selsets,
-                                          max_sets=2000, min_nmasked=2, max_setsize=2000)
+                                          max_sets=2000, min_nmasked=2, max_setsize=200)
     end for (mosaic_name, mosaic) in pairs(obj_mosaics));
 
 using OptEnrichedSetCover
@@ -125,7 +134,8 @@ obj_hit_covers = Dict(begin
     @info "Covering $mosaic_name by bits..."
     mosaic_name => collect(masked_mosaic, cover_params,
             CoverEnumerationParams(max_set_score=0.0, max_covers=1),
-            MultiobjOptimizerParams(ϵ=[0.02, 0.2], MaxSteps=2_000_000, WeightDigits=2, NWorkers=Threads.nthreads()-1, MaxRestarts=200),
+            MultiobjOptimizerParams(ϵ=[0.02, 0.2], MaxSteps=2_000_000, WeightDigits=2,
+                                    NWorkers=Threads.nthreads()-1, MaxRestarts=200),
             true)
     end for (mosaic_name, masked_mosaic) in pairs(obj_hit_mosaics))
 
@@ -170,11 +180,11 @@ obj_hit_covers_signif_df = by(obj_hit_covers_df, :term_collection) do coll_df
 end
 
 using CSV
-CSV.write(joinpath(analysis_path, "reports", "$(proj_info.id)_hit_oesc_$(sel_std_type)_std_$(proj_info.oesc_ver).txt"),
-          obj_hit_covers_df[obj_eff_covers_df.nmasked .> 0, :],
+CSV.write(joinpath(analysis_path, "reports", "$(proj_info.id)_$(proj_info.ms_folder)_hit_oesc_$(sel_std_type)_std_$(proj_info.oesc_ver).txt"),
+          obj_hit_covers_df[obj_hit_covers_df.nmasked .> 0, :],
           missingstring="", delim='\t');
-CSV.write(joinpath(analysis_path, "reports", "$(proj_info.id)_hit_oesc_$(sel_std_type)_std_signif_$(proj_info.oesc_ver).txt"),
-          obj_hit_covers_signif_df[obj_eff_covers_signif_df.nmasked .> 0, :],
+CSV.write(joinpath(analysis_path, "reports", "$(proj_info.id)_$(proj_info.ms_folder)_hit_oesc_$(sel_std_type)_std_signif_$(proj_info.oesc_ver).txt"),
+          obj_hit_covers_signif_df[obj_hit_covers_signif_df.nmasked .> 0, :],
           missingstring="", delim='\t');
 
 Revise.includet(joinpath(misc_scripts_path, "frame_utils.jl"))
@@ -198,16 +208,17 @@ for (plot_mosaic, cover_coll) in obj_hit_covers
     PlotlyJS.savehtml(paretofront_plot, "$plot_filename.html")
 end
 
-stylize_comparison(str) = foldl(replace, [
-    "bait_id" => "<span style=\"color: #808080;\">bait:</span>&nbsp;",
-    ":orgcode" => "&nbsp;CoV-2&nbsp;<span style=\"color: #808080;\">vs</span>&nbsp;",
+stylize_contrast(str) = foldl(replace, [
+    r"(SARS_COV2+)@(\d+)h" => s"<span style=\"font-weight: bold\">\2</span>h: SARS-CoV-2",
+    r"mock@(\d)h" => "mock",
+    "_vs_" => "&nbsp;<span style=\"color: #808080;\">vs</span>&nbsp;",
     ],
     init = str)
 
 function process_comparison_axis(comparison_df)
     comparison_df,
-    stylize_comparison.(comparison_df.comparison_label),
-    stylize_comparison.(comparison_df.comparison_label)
+    stylize_contrast.(comparison_df.comparison_label),
+    stylize_contrast.(comparison_df.comparison_label)#stylize_effect.(effect_df.effect)
 end
 
 for term_coll in unique(obj_hit_covers_df.term_collection), signif in (false, true)
@@ -223,7 +234,12 @@ for term_coll in unique(obj_hit_covers_df.term_collection), signif in (false, tr
             margin_l=get(layout_attrs, :margin_l, 400),
             margin_b=get(layout_attrs, :margin_b, 160),
             cell_width=25, cell_height=25,
-            transpose=false)
+            transpose=false,
+            row_order=contrasts -> begin
+                contrast_matches = match.(Ref(r"SARS_COV2@(\d+)h"), contrasts.comparison)
+                contrasts.timepoint = parse.(Int, getindex.(contrast_matches, 1))
+                return sortperm(contrasts, [:timepoint])
+            end)
     (coll_heatmap === nothing) && continue
     for (k, v) in [#:width=>800, :height=>400,
                    :margin_r=>80,
