@@ -188,3 +188,77 @@ ggsave(p, file = file.path(analysis_path, "plots", str_c(ms_folder, '_', fit_ver
        width=8, height=6, device = cairo_pdf)
     tibble()
 })
+
+sel_objects.df <- dplyr::semi_join(modelobjs_df,
+                                   dplyr::filter(msdata_full$proteins, str_detect(gene_name, "(^|;)(STAU2)($|;)")) %>%
+                                       dplyr::inner_join(msdata_full[[str_c("protein2", modelobj)]]) %>%
+                                       dplyr::select(!!modelobj_idcol))
+sel_objects.df <- dplyr::filter(modelobjs_df, is_viral)
+sel_objects.df <- modelobjs_df # all!!!
+
+sel_pepmods.df <- dplyr::inner_join(sel_objects.df, msdata_full[[str_c(modelobj, "2pepmod")]]) %>%
+    dplyr::filter(is_specific) %>%
+    dplyr::inner_join(select(msdata_full$pepmods, pepmod_id, peptide_id, mod_seq=pepmod_seq, unmod_seq=peptide_seq)) %>%
+    dplyr::select(object_id, pepmod_id, majority_protein_acs, protac_label, gene_label, gene_names,
+                  mod_seq, unmod_seq)
+if (exists("fit_stats") && has_name(fit_stats, "subobjects")) {
+    sel_pepmods.df <- dplyr::left_join(sel_pepmods.df,
+                                            dplyr::select(filter(fit_stats$subobjects, var=="suo_shift"),
+                                                          pepmod_id, pms_median_log2 = median_log2)) %>%
+        dplyr::arrange(object_id, desc(coalesce(pms_median_log2, min(pms_median_log2, na.rm=TRUE))), unmod_seq, mod_seq)
+} else {
+    sel_pepmods.df <- dplyr::arrange(sel_pepmods.df, object_id, unmod_seq, mod_seq) %>%
+        mutate(pms_median_log2 = NA_real_)
+}
+sel_pepmods.df <- dplyr::mutate(sel_pepmods.df,
+                                pepmod_ext = paste0(mod_seq, " (", pepmod_id, ")", if_else(is.na(pms_median_log2), "", "*"))
+                                %>% factor(., levels=.))
+
+sel_pepmod_intens.df$msrun
+sel_pepmod_intens.df <- dplyr::inner_join(dplyr::select(sel_pepmods.df, object_id, protac_label, gene_label, gene_names,
+                                                        pepmod_id, pepmod_ext, pms_median_log2) %>%
+                                              dplyr::distinct(),
+                                          msdata_full$pepmod_intensities) %>%
+    dplyr::inner_join(distinct(select(msdata$msruns, msrun, replicate, treatment, timepoint, condition)) %>%
+                          dplyr::left_join(dplyr::select(total_msrun_shifts.df, msrun, total_msrun_shift)) %>%
+                          dplyr::arrange(treatment, timepoint, replicate) %>%
+                          dplyr::mutate(msrun.2 = factor(msrun, levels=msdata$msruns$msrun))) %>%
+    dplyr::mutate(intensity_norm = exp(-total_msrun_shift)*intensity,
+                  ident_type = "DIA",
+                  msrun = msrun.2,
+                  msrun.2 = NULL) %>%
+    dplyr::group_by(pepmod_id) %>%
+    dplyr::mutate(intensity_norm_trunc = pmin(intensity_norm, quantile(intensity_norm, 0.95, na.rm=TRUE))) %>%
+    dplyr::ungroup()
+
+group_by(sel_pepmod_intens.df, object_id) %>% do({
+    shown_pepmod_intens.df <- mutate(., !!modelobj_idcol := object_id)#sel_pepmod_intens.df
+    gene_name <- str_remove(shown_pepmod_intens.df$gene_label[[1]], "\\.\\.\\.$")
+    obj_id <- shown_pepmod_intens.df$object_id[[1]]
+    is_viral <- semi_join(modelobjs_df, shown_pepmod_intens.df, by="object_id")$is_viral[[1]]
+    message("Plotting ", gene_name)
+    p <- ggplot(shown_pepmod_intens.df) +
+        geom_tile(aes(x=msrun, y=pepmod_ext,
+                      fill=intensity_norm_trunc#, color=ident_type
+                  ), size=0.5, width=0.95, height=0.95) +
+        theme_bw_ast(base_family = "", base_size = 10) +
+        theme(axis.text.x = element_text(angle = -90, hjust=0, vjust=0)) +
+        facet_grid(object_id + gene_label ~ ., scales = "free_y", space="free_y") +
+        guides(color=guide_legend("ident_type", override.aes = list(fill=NA, size=2))) +
+        ggtitle(str_c(gene_name,  " (pg_id=", obj_id,
+                      ", ac=", shown_pepmod_intens.df$protac_label[[1]], ") peptide map"),
+                subtitle = semi_join(modelobjs_df, dplyr::select(shown_pepmod_intens.df, !!modelobj_idcol), by=modelobj_idcol)$protein_description[[1]]) +
+        scale_x_discrete(drop=FALSE) +
+        scale_fill_distiller(na.value="#00000000", type="div", palette = "Spectral", trans="log2") +
+        scale_color_manual(na.value="#00000000",
+                           values=c("MULTI-MSMS"="black", "MULTI-MATCH-MSMS"="khaki",
+                                    "MSMS"="cornflowerblue", "MULTI-SECPEP"="firebrick",
+                                    "MULTI-MATCH"="gray", "DIA"="black"))
+    fname <- file.path(analysis_path, "plots", str_c(ms_folder, "_", data_version), str_c("peptide_heatmaps", if_else(is_viral, "/viral", "")),
+                       paste0(project_id, "_", ms_folder, '_', data_version, "_pepmod_heatmap_", gene_name, "_", obj_id, ".pdf"))
+    #message(fname)
+    ggsave(filename = fname,
+           plot = p, width=16, height=3 + n_distinct(shown_pepmod_intens.df$object_id) + min(20, 0.1*n_distinct(shown_pepmod_intens.df$pepmod_id)),
+           device=cairo_pdf, family="Arial")
+    tibble()
+})
