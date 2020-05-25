@@ -1,21 +1,27 @@
 project_id <- 'cov2'
 message('Project ID=', project_id)
 datasets <- list(
-    apms = list(ms_folder = 'mq_apms_20200427',
+    apms = list(ms_folder = 'mq_apms_20200510',
+                data_version = "20200515",
+                fit_version = "20200515"),
+    prev_apms = list(ms_folder = 'mq_apms_20200427',
                 data_version = "20200503",
                 fit_version = "20200503"),
-    prev_apms = list(ms_folder = 'mq_apms_20200417',
-                data_version = "20200420",
-                fit_version = "20200420"),
-    oeproteome = list(ms_folder = 'spectronaut_oeproteome_20200411',
-                      data_version = "20200411",
-                      fit_version = "20200411"),
+    oeproteome = list(ms_folder = 'spectronaut_oeproteome_20200519',
+                      data_version = "20200519",
+                      fit_version = "20200519"),
     cov2ts_phospho = list(ms_folder = 'cov2timecourse_phospho_dia_20200423',
                           data_version = "20200428",
                           fit_version = "20200428"),
     cov2ts_proteome = list(ms_folder = 'cov2timecourse_dia_20200423',
                            data_version = "20200429",
-                           fit_version = "20200429")
+                           fit_version = "20200429")#,
+#    cov2el_phospho = list(ms_folder = 'cov2timecourse_phospho_dia_20200423',
+#                          data_version = "20200428",
+#                          fit_version = "20200428"),
+#    cov2el_proteome = list(ms_folder = 'cov2timecourse_dia_20200423',
+#                           data_version = "20200429",
+#                           fit_version = "20200429")
 )
 message("Assembling fit results for project ", project_id,
         " (APMS dataset v", datasets$apms$data_version, ", fit v", datasets$apms$fit_version, ", ",
@@ -50,6 +56,7 @@ for (envname in names(datasets)) {
 load(file.path(analysis_path, "networks", paste0(project_id, '_4graph_', datasets$prev_apms$ms_folder, '_', datasets$prev_apms$fit_version, '.RData')), envir = prev_apms.env)
 cov2ts_phospho.env$msdata_full$ptmgroup2psitep <- read_tsv(file.path(data_path, datasets$cov2ts_phospho$ms_folder,
                                                                      "COV2_DIA_phospho_0.75probablity_no normalization_psitep_nodata.txt"))
+
 source(file.path(project_scripts_path, 'setup_modelobj.R'))
 
 bait_checks.df <- get(str_c("bait_checks_", modelobj, ".df"))
@@ -66,14 +73,14 @@ is_in_prev_apms <- str_c("is_in_", datasets$prev_apms$fit_version, "_apms")
 prev_iactions_obj.df <- filter(prev_apms.env$iactions_ex_4graphml.df, str_detect(type, "experiment")) %>%
     dplyr::inner_join(select(filter(prev_apms.env$msdata_full$protein2protregroup, is_majority),
                              protein_ac, dest_object_id = protregroup_id)) %>%
-    dplyr::select(bait_full_id, protein_ac) %>%
+    dplyr::select(bait_full_id, protein_ac, prob_nonpos_min.vs_background) %>%
     dplyr::inner_join(filter(msdata_full$protein2protregroup, is_majority)) %>%
-    dplyr::select(bait_full_id, object_id = protregroup_id) %>%
-    dplyr::distinct() %>%
+    dplyr::group_by(bait_full_id, object_id = protregroup_id) %>%
+    dplyr::summarize(prev_prob_nonpos_min.vs_background = min(prob_nonpos_min.vs_background, na.rm=TRUE)) %>%
     dplyr::mutate(!!is_in_prev_apms := TRUE)
 
-oeproteome_effects_obj.df <- filter(oeproteome.env$object_contrasts.df, str_detect(contrast, "_vs_FPMS_controls") & std_type == "replicate") %>%
-    dplyr::mutate(bait_full_id = str_match(contrast, "FPMS_(.+)_vs_FPMS_(controls|others)")[,2]) %>%
+oeproteome_effects_obj.df <- filter(oeproteome.env$object_contrasts.df, str_detect(contrast, "_vs_controls") & std_type == "replicate") %>%
+    dplyr::mutate(bait_full_id = str_match(contrast, "(.+)_vs_(?:controls|others)")[,2]) %>%
     dplyr::inner_join(dplyr::select(filter(oeproteome.env$msdata_full$protein2protgroup, is_majority),
                          protein_ac, object_id = protgroup_id)) %>%
     dplyr::select(bait_full_id, protein_ac,
@@ -180,9 +187,7 @@ virhostnet_ppi_obj.df <- left_join(virhostnet_ppi.df, modelobj2protein.df) %>%
 
 # contrasts-based interactions filter
 iactions_4graphml_pre.df <- filter(object_contrasts.df, str_detect(contrast, "_vs_others") & std_type == "replicate" &
-                               !(object_id %in% bait_checks.df$object_id)) %>%
-    anti_join(filter(fit_stats$object_batch_effects, var=="obj_batch_effect" & abs(median_log2) >= 1 & p_value <= 0.05) %>%
-                  select(object_id) %>% distinct())
+                                   !(object_id %in% bait_checks.df$object_id))
 
 iactions_4table.df <- dplyr::inner_join(iactions_4graphml_pre.df,
                                         dplyr::select(bait_checks.df, bait_full_id, bait_id, bait_organism)) %>%
@@ -196,12 +201,14 @@ iactions_4table.df <- dplyr::inner_join(iactions_4graphml_pre.df,
     left_join(dplyr::select(modelobjs_df, object_id, protein_description, any_of(c("npepmods_unique", "npeptides_unique")))) %>%
     dplyr::arrange(bait_id, bait_organism, bait_full_id, object_id, p_value) %>%
     dplyr::select(bait_organism, bait_id, bait_full_id, contrast,
-                  object_label, protein_description,
+                  object_id, object_label, protein_description,
                   is_hit, median_log2, p_value, median_log2_threshold, p_value_threshold,
+                  contrast_batch, median_log2_batch, p_value_batch, is_hit_nomschecks_batch,
+                  contrast_carryover, median_log2_carryover, p_value_carryover, is_hit_nomschecks_carryover,
                   majority_protein_acs, gene_names, protein_names, is_viral, is_contaminant, is_reverse,
                   any_of(c("npepmods_unique", "npeptides_unique")),
                   nmsruns_quanted = nmsruns_quanted_lhs_max,
-                  matches("is_in_\\d+_network"), starts_with("oeproteome_"),
+                  matches("is_in_\\d+_apms"), matches("prev_prob"), starts_with("oeproteome_"),
                   starts_with("cov2ts_proteome_"), starts_with("cov2ts_phospho"),
                   starts_with("krogan_"), starts_with("virhostnet_"),
                   crispr_plasmid_ids)
@@ -219,27 +226,31 @@ bait_labels.df <- distinct(select(iactions_4graphml_pre.df, contrast)) %>%
     dplyr::inner_join(select(filter(contrastXmetacondition.df, condition_role == "signal"), contrast, metacondition)) %>%
     dplyr::inner_join(conditionXmetacondition.df) %>%
     dplyr::inner_join(select(conditions.df, condition, bait_full_id, bait_id, orgcode)) %>%
+    dplyr::mutate(bait_full_id_orig = str_remove(bait_full_id, "\\?+$")) %>%
     dplyr::select(-metacondition, -condition)
 
 iactions_4graphml.df <- filter(iactions_4graphml_pre.df, is_hit) %>%
     dplyr::select(-prob_nonneg) %>%
     dplyr::inner_join(bait_labels.df) %>%
-    dplyr::arrange(bait_full_id, bait_id, object_id, prob_nonpos) %>%
-    dplyr::group_by(bait_full_id, bait_id, object_label, object_id) %>%
-    dplyr::summarize(#conditions.vs_background = paste0(condition, collapse=' '),
-                     prob_nonpos_min.vs_background = prob_nonpos[1],
-                     median_log2.vs_background = median_log2[1],
-                     sd_log2.vs_background = sd_log2[1]) %>%
-    dplyr::ungroup() %>%
+    #dplyr::group_by(bait_full_id, bait_id, object_label, object_id) %>%
+    #dplyr::summarize(#conditions.vs_background = paste0(condition, collapse=' '),
+    #                 prob_nonpos_min.vs_background = prob_nonpos[1],
+    #                 median_log2.vs_background = median_log2[1],
+    #                 sd_log2.vs_background = sd_log2[1]) %>%
+    #dplyr::ungroup() %>%
     left_join(krogan_apms_obj.df) %>%
     left_join(virhostnet_ppi_obj.df) %>%
     left_join(prev_iactions_obj.df) %>%
-    left_join(oeproteome_effects_obj.df)
+    left_join(oeproteome_effects_obj.df) %>%
+    dplyr::arrange(bait_full_id, bait_id, object_id, prob_nonpos)
 
 special_bait_ids <- c()
 
 # fix bait mapping to object_id
-bait2object.df <- arrange(bait_checks.df, bait_id, bait_full_id, object_id, bait_organism) %>%
+bait2object.df <- left_join(bait_labels.df,
+                            rename(bait_checks.df, bait_full_id_orig = bait_full_id, bait_id_orig=bait_id)) %>%
+    mutate(is_alternative = str_detect(bait_full_id, "\\?$")) %>%
+    arrange(bait_id, bait_full_id_orig, desc(is_alternative), object_id, bait_organism) %>%
     group_by(object_id) %>%
     mutate(new_object_id = if_else(row_number() == 1, object_id, NA_integer_)) %>%
     ungroup() %>%
@@ -276,8 +287,8 @@ iactions_4graphml.df <- iactions_4graphml.df %>%
     #dplyr::left_join(effects_4graphml.df) %>%
     dplyr::inner_join(dplyr::select(modelobjs_df, object_id, object_label)) %>%
     dplyr::mutate(type = 'experiment',
-                  weight = sqrt(pmin(100, -log10(prob_nonpos_min.vs_background))) *
-                           sqrt(pmax(0, median_log2.vs_background))) %>%
+                  weight = sqrt(pmin(100, -log10(prob_nonpos))) *
+                           sqrt(pmax(0, median_log2))) %>%
     dplyr::inner_join(dplyr::select(bait_object_ids.df, src_object_id=object_id, bait_full_id)) %>%
     dplyr::mutate(src_object_label = bait_id) %>%
     dplyr::rename(dest_object_id = object_id, dest_object_label = object_label)
@@ -286,9 +297,10 @@ objects_4graphml.df <- dplyr::bind_rows(semi_join(modelobjs_df,
                                                   dplyr::select(iactions_4graphml.df, object_id = dest_object_id)) %>%
                                         anti_join(dplyr::select(bait_object_ids.df, object_id)),
                                         dplyr::select(bait_object_ids.df, -bait_full_id, -bait_id)) %>%
+    dplyr::left_join(select(bait_object_ids.df, object_id, object_bait_full_id=bait_full_id)) %>%
     #dplyr::left_join(dplyr::select(object_batch_effects.df, object_id, batch_effect_p_value = p_value, batch_effect_median_log2 = median_log2)) %>%
-    dplyr::mutate(is_bait = object_id %in% bait_object_ids.df$object_id,
-                  is_detected = object_id %in% iactions_4graphml.df$dest_object_id,
+    dplyr::mutate(is_detected = object_id %in% iactions_4graphml.df$dest_object_id,
+                  is_bait = !is.na(object_bait_full_id),
                   #is_transient_contaminant = !is.na(batch_effect_p_value) & batch_effect_p_value <= 1E-5 & batch_effect_median_log2 > 2.5,
                   is_manual_contaminant = FALSE) %>%
     dplyr::mutate(protein_class = case_when(replace_na(is_viral, FALSE) ~ "viral",
@@ -362,14 +374,14 @@ observed_ppi_participants.df <- ppi_participants.df %>%
             mutate(bait_full_id=as.character(bait_full_id)),
         dplyr::select(filter(bait_checks.df, !is.na(bait_full_id)), object_id, bait_full_id) %>%
             distinct()) %>% distinct()) %>%
-    dplyr::left_join(select(bait_checks.df, bait_object_id = object_id, bait_full_id, bait_id)) %>%
+    dplyr::left_join(select(bait_checks.df, bait_object_id = object_id, bait_full_id, bait_id, bait_homid)) %>%
     dplyr::mutate(is_bait = bait_object_id == object_id) %>%
     dplyr::select(-bait_object_id) %>% distinct()
 
-# matrix expand PPIs (pairs should be visible by the same bait)
+# matrix expand PPIs (pairs should be visible by the same or homologous bait)
 # leave only confident interactions
 known_ppi_pairs.df <- dplyr::inner_join(observed_ppi_participants.df, observed_ppi_participants.df,
-                                        by=c("interaction_id", "bait_id", 'ppi_type')) %>%
+                                        by=c("interaction_id", "bait_homid", 'ppi_type')) %>%
     dplyr::filter(((is_bait.x & !is_bait.y) | ((is_bait.x == is_bait.y) & (object_id.x < object_id.y)))
                   & (protein_ac.x != protein_ac.y)) %>%
     dplyr::left_join(select(ppi.env$interaction_info.df, interaction_ix, pubmed_id, is_negative,
@@ -388,11 +400,11 @@ known_ppi_pairs.df <- dplyr::inner_join(observed_ppi_participants.df, observed_p
                       (ppi_type == "complex")) %>%
     dplyr::filter(is_valid_iaction) %>%
     dplyr::group_by(src_object_id = object_id.x, dest_object_id = object_id.y) %>%
-    dplyr::summarise(bait_ids = paste0(sort(unique(bait_id)), collapse = ' '),
+    dplyr::summarise(bait_ids = paste0(sort(unique(c(bait_full_id.x, bait_full_id.y))), collapse = ' '),
                      iaction_ids = paste0(unique(interaction_id), collapse = ' '),
                      pubmed_ids = paste0(unique(pubmed_id[!is.na(pubmed_id)]), collapse = ' '),
                      has_complex = any(ppi_type == "complex"),
-                     n_baits = n_distinct(bait_id),
+                     n_baits = n_distinct(c(bait_full_id.x, bait_full_id.y)),
                      n_iactions = n_distinct(interaction_id),
                      n_pubmeds = n_distinct(pubmed_id[!is.na(pubmed_id)]),
                      n_pubmeds_strong = n_distinct(pubmed_id[!is.na(pubmed_id) & confidence_class == "strong"]),
@@ -417,10 +429,11 @@ known_ppi_pairs.df <- dplyr::inner_join(observed_ppi_participants.df, observed_p
 
 # virtual interactions between homologous baits
 homology_iactions.df <- dplyr::inner_join(
-    dplyr::select(filter(objects_4graphml.df, is_bait), gene_label, src_object_id=object_id),
-    dplyr::select(filter(objects_4graphml.df, is_bait), gene_label, dest_object_id=object_id),
+    dplyr::transmute(filter(objects_4graphml.df, is_bait), gene_label=str_remove(gene_label, "\\?$"), src_object_id=object_id),
+    dplyr::transmute(filter(objects_4graphml.df, is_bait), gene_label=str_remove(gene_label, "\\?$"), dest_object_id=object_id),
     by="gene_label") %>%
     dplyr::filter(src_object_id < dest_object_id) %>%
+    dplyr::select(-gene_label) %>%
     dplyr::mutate(is_homology = TRUE, weight = 50.0)
 
 iactions_ex_4graphml.df <- dplyr::full_join(iactions_4graphml.df,
@@ -480,6 +493,13 @@ write(iactions.graphml, file.path(analysis_path, 'networks',
 rgraph_filepath <- file.path(analysis_path, 'networks', str_c(project_id, '_4graph_', datasets$apms$ms_folder, '_', datasets$apms$fit_version, '.RData'))
 results_info <- list(project_id = project_id, datasets,
                      modelobj = modelobj, quantobj = quantobj)
+object_contrasts_slim.df <- select(object_contrasts.df, contrast, contrast_type, std_type,
+                                   bait_full_id, bait_id, object_id,
+                                   #conditions_lhs, conditions_rhs,
+                                   starts_with("is_hit"), starts_with("is_signif"),
+                                   starts_with("prob_"), starts_with("median_log2"), starts_with("p_value"), change)
 message('Saving full analysis results to ', rgraph_filepath, '...')
 save(results_info, iactions_4table.df, iactions_ex_4graphml.df, objects_4graphml.df,
+     object_contrasts_slim.df,
+     bait2object.df, missed_bait_objects.df, bait_labels.df,
      file = rgraph_filepath)
