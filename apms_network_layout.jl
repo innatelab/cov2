@@ -1,8 +1,8 @@
 proj_info = (id = "cov2",
-             data_ver = "20200503",
-             fit_ver = "20200503",
-             msfolder = "mq_apms_20200427",
-             prev_network_ver = "20200420",
+             data_ver = "20200515",
+             fit_ver = "20200515",
+             msfolder = "mq_apms_20200510",
+             prev_network_ver = "20200503",
              network_ver = "20200503")
 using Pkg
 Pkg.activate(@__DIR__)
@@ -18,6 +18,7 @@ const scratch_path = joinpath(analysis_path, "scratch")
 const plots_path = joinpath(analysis_path, "plots")
 
 Revise.includet(joinpath(misc_scripts_path, "clustering_utils.jl"))
+Revise.includet(joinpath(misc_scripts_path, "delimdata_utils.jl"))
 
 network_rdata = load(joinpath(networks_path, "$(proj_info.id)_4graph_$(proj_info.msfolder)_$(proj_info.fit_ver).RData"))
 
@@ -28,6 +29,11 @@ nodesize_scale = 0.006
 node_type_props = Dict("bait" => (mass=2.0, width=6nodesize_scale, height=6nodesize_scale),
                        "prey" => (mass=2.0, width=3nodesize_scale, height=3nodesize_scale))
 objects_df = copy(objects_orig_df)
+objects_df.object_label = ifelse.(objects_df.exp_role .== "bait",
+                                  replace.(objects_df.object_label, r"(CoV\d*)_" => s"\1\n"),
+                                  objects_df.object_label)
+objects_df.organism = ifelse.(objects_df.is_bait .& endswith.(objects_df.object_label, "?"),
+                              objects_df.organism .* "?", objects_df.organism)
 objects_df.mass = getproperty.(getindex.(Ref(node_type_props), objects_df.exp_role), :mass);
 objects_df.width = getproperty.(getindex.(Ref(node_type_props), objects_df.exp_role), :width);
 objects_df.height = getproperty.(getindex.(Ref(node_type_props), objects_df.exp_role), :height);
@@ -36,10 +42,11 @@ sort!(objects_df, :object_id)
 ppi_weight_scales = Dict("ppi_low" => 0.05,
                          "ppi_medium" => 0.05,
                          "ppi_strong" => 0.05,
-                         "complex" => 0.05,
+                         "complex" => 0.5,
                          "homology" => 1.0,
                          "experiment" => 1.0)
 iactions_df = filter(r -> r.src_object_id != r.dest_object_id, iactions_orig_df)
+iactions_df.contrast = iactions_df.bait_full_id .* "_vs_others"
 iactions_df.src_object_id = convert(Vector{Int}, iactions_df.src_object_id)
 iactions_df.dest_object_id = convert(Vector{Int}, iactions_df.dest_object_id)
 #filter!(r -> coalesce(r.ppi_type, "") ∉ ["enriched_complex_gocc"], iactions_df)
@@ -56,7 +63,7 @@ for obj_iactions_df in groupby(iactions_df, :src_object_id)
     end
     exp_iactions_mask = ismissing.(obj_iactions_df.ppi_type)
     max_weight = quantile(obj_iactions_df[exp_iactions_mask, :edge_weight], 0.75)
-    obj_iactions_df[exp_iactions_mask, :edge_weight] .= clamp.(obj_iactions_df[exp_iactions_mask, :edge_weight] ./ max_weight, 0.1, 1.25)
+    obj_iactions_df[exp_iactions_mask, :edge_weight] .= clamp.(obj_iactions_df[exp_iactions_mask, :edge_weight] ./ max_weight, 0.5, 1.25)
 end
 
 #using StatsBase
@@ -81,8 +88,8 @@ node_dislikes = FA.socioaffinity(gr_apms, p=(0.0, 1.0), q=1.0)
 node_dislikes_baits = FA.socioaffinity(gr_apms, p=(1.25, 1.25), q=2.0)
 for (i, r1) in enumerate(eachrow(objects_df)), (j, r2) in enumerate(eachrow(objects_df))
     if r1.exp_role == "bait" && r2.exp_role == "bait" &&
-       r1.gene_label != r2.gene_label
-       node_dislikes[i, j] = 5 * node_dislikes_baits[i, j]
+       replace(r1.gene_label, r"\?$" => "") != replace(r2.gene_label, r"\?$" => "")
+       node_dislikes[i, j] = 15 * node_dislikes_baits[i, j]
     end
 end
 
@@ -101,10 +108,10 @@ FA.layout!(gr, FA.ForceAtlas3Settings(gr,
             nsteps=1000, progressbar=true)
 FA.layout!(gr, FA.ForceAtlas3Settings(gr,
             outboundAttractionDistribution=false,
-            attractionStrength=8.0, attractionEdgeWeightInfluence=0.75, jitterTolerance=0.1,
+            attractionStrength=4.0, attractionEdgeWeightInfluence=0.75, jitterTolerance=0.1,
             repulsionStrength=3 .* (1.0 .+ node_dislikes),
             repulsionNodeModel=:Circle,
-            gravity=1.5, gravityFalloff=1.2, gravityShape=:Rod,
+            gravity=0.5, gravityFalloff=1.5, gravityShape=:Rod,
             gravityRodCorners=((0.0, -6.0), (0.0, 6.0)), gravityRodCenterWeight=0.1),
             nsteps=5000, progressbar=true)
 
@@ -133,7 +140,7 @@ apms_graph = GraphML.import_graph(objects_df, iactions_df,
                                            :oeproteome_is_hit => "OE Proteome Hit",
                                            :oeproteome_bait_full_ids => "OE Proteome Baits",
                                            :oeproteome_p_value => "OE Proteome: Most Signif. P-value",
-                                           :oeproteome_median_log2 => "OE Proteome: Most Signif. Median Log2",
+                                           :oeproteome_median_log2 => "OE Proteome: Most Signif. Log2(Fold-Change)",
                                            :cov2ts_proteome_timepoints => "CoV-2 Proteome: Timepoints of Significant Changes",
                                            :cov2ts_proteome_p_value => "CoV-2 Proteome: Most Signif. P-value",
                                            :cov2ts_proteome_median_log2 => "CoV-2 Proteome: Most Signif. Median Log2",
@@ -143,10 +150,16 @@ apms_graph = GraphML.import_graph(objects_df, iactions_df,
                                            :cov2ts_phospho_median_log2 => "CoV-2 Phospho: Most Signif. Median Log2",
                                            :cov2ts_phospho_is_hit => "CoV-2 Phospho: Is Hit",
                                            :layout_x, :layout_y],
-                             edge_attrs = [Symbol("prob_nonpos_min_vs_background") => "P-value (vs Background)",
-                                           Symbol("median_log2_vs_background") => "Enrichment (vs Background)",
+                             edge_attrs = [Symbol("prob_nonpos") => "P-value (vs Background)",
+                                           Symbol("median_log2") => "Enrichment (vs Background)",
                                            Symbol("edge_weight") => "Weight",
                                            :type => "type",
+                                           :contrast_carryover => "Carryover test",
+                                           :median_log2_carryover => "Carryover Log2(Fold-Change)",
+                                           :p_value_carryover => "Carryover P-value",
+                                           :contrast_batch => "Batch-specific test",
+                                           :median_log2_batch => "Batch-specific Log2(Fold-Change)",
+                                           :p_value_batch => "Batch-specific P-value",
                                            :oeproteome_is_hit => "OE Proteome Hit",
                                            :oeproteome_p_value => "OE Proteome P-value",
                                            :oeproteome_median_log2 => "OE Proteome Median Log2",
