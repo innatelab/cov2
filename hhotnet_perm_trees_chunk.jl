@@ -1,15 +1,17 @@
-# job_info = (project = "cov2",
-#             name = "cov2_permtrees",
-#             hotnet_ver = "20200415",
-#             id = 0,
-#             chunk = 23,
-#             ntrees_perchunk = 2)
+#=
+job_info = (project = "cov2",
+            name = "cov2_permtrees",
+            hotnet_ver = "20200525",
+            id = 0,
+            chunk = 23,
+            ntrees_perchunk = 2)
+=#
 job_info = (project = ARGS[1],
             name = ARGS[2],
             hotnet_ver = ARGS[3],
             id = parse(Int, ARGS[4]),
             chunk = parse(Int, ARGS[5]),
-            ntrees_perchunk = 20)
+            ntrees_perchunk = 50)
 @info "Permuted tree for $(job_info.project) (job '$(job_info.name)' id=$(job_info.id))" *
       " chunk #$(job_info.chunk)"
 

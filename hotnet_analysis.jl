@@ -1,13 +1,13 @@
 #parmeth = :thread
 parmeth = :cluster
 proj_info = (id = "cov2",
-             apms_folder = "mq_apms_20200409",
-             apms_data_ver = "20200409",
-             apms_fit_ver = "20200410",
-             oeproteome_folder = "spectronaut_oeproteome_20200411",
-             oeproteome_data_ver = "20200411",
-             oeproteome_fit_ver = "20200411",
-             hotnet_ver = "20200415")
+             apms_folder = "mq_apms_20200510",
+             apms_data_ver = "20200515",
+             apms_fit_ver = "20200515",
+             oeproteome_folder = "spectronaut_oeproteome_20200519",
+             oeproteome_data_ver = "20200519",
+             oeproteome_fit_ver = "20200519",
+             hotnet_ver = "20200525")
 using Pkg
 Pkg.activate(joinpath(base_scripts_path, "adhoc", proj_info.id))
 
@@ -21,8 +21,8 @@ const results_path = joinpath(analysis_path, "results")
 const scratch_path = joinpath(analysis_path, "scratch")
 const plots_path = joinpath(analysis_path, "plots")
 
-include(joinpath(misc_scripts_path, "frame_utils.jl"))
-include(joinpath(misc_scripts_path, "delimdata_utils.jl"))
+includet(joinpath(misc_scripts_path, "frame_utils.jl"))
+includet(joinpath(misc_scripts_path, "delimdata_utils.jl"))
 
 using Revise, DataFrames, CSV, RData, SimpleWeightedGraphs, LightGraphs,
       Statistics, LinearAlgebra
@@ -45,7 +45,7 @@ reactomefi_directions_df[!, :src_to_dest] .= reactomefi_directions_df.src_to_des
 reactomefi_directions_df[!, :dest_to_src] .= reactomefi_directions_df.dest_to_src .== 1
 categorical!(reactomefi_directions_df, :source)
 reactomefi_directions_df.target = FrameUtils.matchcategorical(reactomefi_directions_df.target, reactomefi_directions_df.source)
-reactomefi_df = join(reactomefi_df, reactomefi_directions_df, on=:direction, kind=:left)
+reactomefi_df = leftjoin(reactomefi_df, reactomefi_directions_df, on=:direction)
 reactomefi_diedges_fwd_df = select(reactomefi_df, [:gene1, :gene2, :score, :src_to_dest, :direction, :target])
 rename!(reactomefi_diedges_fwd_df, :src_to_dest => :is_valid, :target => :diedge_type)
 reactomefi_diedges_fwd_df[!, :is_reverse] .= false
@@ -81,45 +81,56 @@ reactomefi_digraph_rev
 # load experiments data
 apms_fit_rdata = load(joinpath(scratch_path, "$(proj_info.id)_msglm_fit_$(proj_info.apms_folder)_$(proj_info.apms_fit_ver).RData"))
 apms_data_rdata = load(joinpath(scratch_path, "$(proj_info.id)_msdata_full_$(proj_info.apms_folder)_$(proj_info.apms_fit_ver).RData"))
+apms_network_rdata = load(joinpath(analysis_path, "networks", "$(proj_info.id)_4graph_$(proj_info.apms_folder)_$(proj_info.apms_fit_ver).RData"))
 oeproteome_data_rdata = load(joinpath(scratch_path, "$(proj_info.id)_msdata_full_$(proj_info.oeproteome_folder)_$(proj_info.oeproteome_data_ver).RData"))
 oeproteome_fit_rdata = load(joinpath(scratch_path, "$(proj_info.id)_msglm_fit_$(proj_info.oeproteome_folder)_$(proj_info.oeproteome_data_ver).RData"))
 
 #--- map OE proteome to reactome network
 oeproteome_objeffects_df = filter(r ->
-                                  r.std_type == "replicate" && occursin(r"_vs_FPMS_controls$", r.contrast),
+                                  r.std_type == "replicate" && occursin(r"_vs_controls$", r.contrast),
                                   oeproteome_fit_rdata["object_contrasts.df"])
-oeproteome_objeffects_df.bait_full_id = getindex.(match.(Ref(r"FPMS_(.+)_vs_FPMS_controls"), oeproteome_objeffects_df.contrast), 1)
+oeproteome_batchcontrasts_df = filter(r -> r.std_type == "replicate" &&
+                                      occursin(r"_vs_B\d+_others$", r.contrast),
+                                      oeproteome_fit_rdata["object_contrasts.df"])
+oeproteome_objeffects_df = innerjoin(oeproteome_objeffects_df,
+    rename!(select(oeproteome_batchcontrasts_df, [:bait_full_id, :contrast, :std_type, :object_id, :median_log2, :p_value]),
+            :contrast => :contrast_batch, :median_log2 => :median_log2_batch, :p_value => :p_value_batch),
+            on = [:bait_full_id, :std_type, :object_id])
+
 # calculate vertex weights
-oeproteome_objeffects_df[!, :vertex_weight] = [ifelse(
-    isnan(r.p_value) || r.p_value >= 0.05, 0.0,
-    (-log10(max(1E-20, r.p_value)))^0.5 * abs(r.median_log2)^0.5)
+oeproteome_objeffects_df[!, :is_source] = [
+    (coalesce(r.p_value, 1.0) <= 0.01 && abs(r.median_log2) >= 0.25) &&
+    (coalesce(r.p_value_batch, 1.0) <= 0.01 && abs(r.median_log2_batch) >= 0.25)
+    for r in eachrow(oeproteome_objeffects_df)]
+oeproteome_objeffects_df[!, :vertex_weight] = [ifelse(r.is_source,
+    (-log10(max(1E-20, r.p_value)))^0.5 * abs(r.median_log2)^0.5, 0.0)
     for r in eachrow(oeproteome_objeffects_df)]
 extrema(oeproteome_objeffects_df[oeproteome_objeffects_df.vertex_weight .> 0, :vertex_weight])
 quantile(oeproteome_objeffects_df[oeproteome_objeffects_df.vertex_weight .> 0, :vertex_weight], 0.5)
 
-oeproteome_obj2gene_df = join(
+oeproteome_obj2gene_df = innerjoin(
     filter(r -> r.is_majority, oeproteome_data_rdata["msdata_full"]["protein2protgroup"]),
     filter!(r -> !ismissing(r.gene_name), select(oeproteome_data_rdata["msdata_full"]["proteins"], Not(:protgroup_id))),
-    on=:protein_ac, kind=:inner)
+    on=:protein_ac)
 rename!(oeproteome_obj2gene_df, :protgroup_id => :object_id)
 oeproteome_obj2gene_df[!, :reactomefi_geneid] = get.(Ref(reactomefi_gene2index), oeproteome_obj2gene_df.gene_name, 0)
-oeproteome_gene_effects_df = by(join(select(oeproteome_objeffects_df, Not([:is_viral, :is_contaminant])),
+oeproteome_gene_effects_df = combine(groupby(join(select(oeproteome_objeffects_df, Not([:is_viral, :is_contaminant])),
                                      oeproteome_obj2gene_df, on=:object_id, kind=:inner),
-          [:contrast, :gene_name, :reactomefi_geneid]) do df
+          [:contrast, :gene_name, :reactomefi_geneid])) do df
     rowix = findmin(df.p_value)[2]
     return df[rowix:rowix, :]
 end;
 
-gene_info_df = by(filter(r -> !ismissing(r.gene_name),
+gene_info_df = combine(groupby(filter(r -> !ismissing(r.gene_name),
                       vcat(select(apms_data_rdata["msdata_full"]["proteins"], [:gene_name, :protein_description]),
                            select(oeproteome_data_rdata["msdata_full"]["proteins"], [:gene_name, :protein_description]))),
-                  [:gene_name]) do gene_df
+                  [:gene_name])) do gene_df
                   gene_df[1:1, :]
               end
 
 bait2oeproteome_genes = Dict{String, Vector{Pair{Int, Float64}}}()
 bait2oeproteome_vertices = Dict{String, Vector{Pair{Int, Float64}}}()
-for bait_genes_df in groupby(filter(r -> r.p_value <= 1E-2 && abs(r.median_log2) >= 0.25 && r.reactomefi_geneid > 0,
+for bait_genes_df in groupby(filter(r -> r.is_source && r.reactomefi_geneid > 0,
                                     oeproteome_gene_effects_df), :bait_full_id)
     baitkey = bait_genes_df.bait_full_id[1]
     gene_weights = bait_genes_df.reactomefi_geneid .=> bait_genes_df.vertex_weight
@@ -137,17 +148,17 @@ end
 
 
 #--- map APMS data to reactome network
-apms_iactions_df = filter(r -> r.is_hit && r.std_type == "replicate" && endswith(r.contrast, "_vs_others"),
-                          apms_fit_rdata["object_contrasts.df"])
-apms_obj2gene_df = join(
+apms_iactions_df = filter(r -> coalesce(r.is_hit, false),
+                          apms_network_rdata["iactions_4table.df"])
+apms_obj2gene_df = innerjoin(
     filter(r -> r.is_majority, apms_data_rdata["msdata_full"]["protein2protregroup"]),
     filter!(r -> !ismissing(r.gene_name), select(apms_data_rdata["msdata_full"]["proteins"], Not(:protgroup_id))),
-    on=:protein_ac, kind=:inner)
+    on=:protein_ac)
 rename!(apms_obj2gene_df, :protregroup_id => :object_id)
 apms_obj2gene_df[!, :reactomefi_geneid] = get.(Ref(reactomefi_gene2index), apms_obj2gene_df.gene_name, 0)
-apms_gene_iactions_df = by(join(select(apms_iactions_df, Not([:is_viral, :is_contaminant])),
-                                       apms_obj2gene_df, on=:object_id, kind=:inner),
-          [:contrast, :gene_name, :reactomefi_geneid]) do df
+apms_gene_iactions_df = combine(groupby(join(select(apms_iactions_df, Not([:is_viral, :is_contaminant, :protein_description])),
+                                        apms_obj2gene_df, on=:object_id, kind=:inner),
+          [:contrast, :gene_name, :reactomefi_geneid])) do df
     rowix = findmin(df.p_value)[2]
     return df[rowix:rowix, :]
 end;
@@ -193,7 +204,7 @@ plot(restartprob_stats_df, x=:restart_prob, y=:trans_probs, color=:vertices, gro
 opt_restart_prob = 0.4 # 0.6
 reactomefi_walkmtx = HHN.random_walk_matrix(reactomefi_digraph_rev, opt_restart_prob)
 
-bait_ids = sort!(collect(intersect(keys(bait2apms_vertices), keys(bait2oeproteome_vertices))))
+bait_ids = sort!(keys(bait2oeproteome_vertices))
 bait2vertex_weights = Dict{String, Vector{Float64}}()
 for bait_id in bait_ids
     vertex2weight = bait2oeproteome_vertices[bait_id]
