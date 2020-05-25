@@ -1,7 +1,7 @@
 proj_info = (id = "cov2",
-             data_ver = "20200417",
-             fit_ver = "20200417",
-             ms_folder = "mq_apms_20200417")
+             data_ver = "20200515",
+             fit_ver = "20200515",
+             ms_folder = "mq_apms_20200510")
 using Pkg
 Pkg.activate(@__DIR__)
 
@@ -24,9 +24,9 @@ pepmods_rdata = load(joinpath(data_path, proj_info.ms_folder,
                               "$(proj_info.id)_$(proj_info.ms_folder)_$(proj_info.data_ver)_pepmods.RData"))
 pepmods_df = pepmods_rdata["pepmods.df"]
 proteins_df = pepmods_rdata["proteins.df"]
-pepmod2protgroups = Dict(r.pepmod_id => (Set(parse.(Int, split(r.protgroup_ids, ';'))), r.is_used)
+pepmod2protgroups = Dict(r.pepmod_id => (Set(parse.(Int, split(r.protgroup_ids, ';'))), r.pepmod_rank)
                          for r in eachrow(pepmods_df))
-pepmod2acs = Dict(r.pepmod_id => (Set{String}(split(coalesce(r.protein_acs, r.lead_protein_acs), ';')), r.is_used)
+pepmod2acs = Dict(r.pepmod_id => (Set{String}(split(coalesce(r.protein_acs, r.lead_protein_acs), ';')), r.pepmod_rank)
                   for r in eachrow(pepmods_df))
 protregroups = ProtgroupAssembly.assemble_protgroups(pepmod2protgroups, verbose=true,
                                                      nspec_peptides=2, rspec_peptides=0.25)
