@@ -5,9 +5,9 @@
 
 project_id <- 'cov2'
 message('Project ID=', project_id)
-data_version <- "20200429"
-fit_version <- "20200429"
-ms_folder <- 'mq_apms_20200417'
+data_version <- "20200515"
+fit_version <- "20200515"
+ms_folder <- 'mq_apms_20200510'
 message("Assembling fit results for project ", project_id,
         " (dataset v", data_version, ", fit v", fit_version, ")")
 
@@ -86,12 +86,13 @@ iactions.df <- msdata_full$protgroup_intensities_all %>%
 modelobjs_df <- dplyr::mutate(modelobjs_df,
                               is_msvalid_object = (nprotgroups_sharing_proteins == 1 || nproteins_have_razor > 0))
 } else if (modelobj == "protregroup") {
-iactions.df <- tidyr::expand(msdata_full$pepmodstate_intensities, pepmodstate_id, msrun) %>%
+iactions.df <- tidyr::expand(msdata_full$pepmodstate_intensities, nesting(pepmod_id, pepmodstate_id), msrun) %>%
   dplyr::left_join(msdata_full$pepmodstate_intensities) %>%
   dplyr::mutate(is_quanted = !is.na(intensity)) %>%
   dplyr::inner_join(msdata$msruns) %>%
   dplyr::left_join(msdata$pepmodstates) %>%
-  dplyr::left_join(filter(msdata$protregroup2pepmod, is_specific)) %>%
+  dplyr::left_join(msdata$protregroup2pepmod) %>%
+  dplyr::filter(is_specific) %>%
   dplyr::group_by(condition, protregroup_id) %>%
   dplyr::summarize(nmsruns_quanted = n_distinct(msrun[is_idented]), # count msruns
                    nmsruns_idented = n_distinct(msrun[is_quanted])) %>%
@@ -198,22 +199,22 @@ weak_bait_ids <- c("ORF3b", "ORF4", "ORF6",
                    "E", "N", "S",
                    "NSP1", "NSP2", "NSP3_macroD",
                    "NSP4", "NSP7", "NSP8", "NSP9", "NSP10",
-                   "NSP12", "NSP13", "NSP14", "NSP15", "NSP16"
+                   "NSP12", "NSP14", "NSP15", "NSP16"
                    )
 
 object_contrasts_thresholds.df <- select(object_contrasts.df, contrast, contrast_type, std_type, bait_full_id) %>%
   distinct() %>%
   dplyr::left_join(select(conditions.df, bait_full_id, bait_id)) %>%
-  mutate(p_value_threshold = case_when(contrast_type == "filter" & bait_id %in% weak_bait_ids ~ 0.005,
+  mutate(p_value_threshold = case_when(contrast_type == "filter" & bait_id %in% weak_bait_ids ~ 0.001,
                                        TRUE ~ 0.001),
-         median_log2_threshold = case_when(bait_id %in% weak_bait_ids ~ 1,
-                                           TRUE ~ 2))
+         median_log2_threshold = case_when(bait_id %in% weak_bait_ids ~ 2,
+                                           TRUE ~ 4))
 
 object_contrasts.df <- object_contrasts.df %>%
   select(-any_of(c("p_value_threshold", "median_log2_threshold", "median_log2_max"))) %>%
   left_join(object_contrasts_thresholds.df) %>%
   dplyr::mutate(is_signif = p_value <= p_value_threshold & abs(median_log2) >= median_log2_threshold,
-                is_hit_nomschecks = is_signif & !is_contaminant & !is_reverse & !has_batcheffects &
+                is_hit_nomschecks = is_signif & !is_contaminant & !is_reverse & #!has_batcheffects &
                   ((contrast_type == "comparison") | (median_log2 >= 0.0)),
                 is_hit = is_hit_nomschecks &
                   if_else(median_log2 > 0,
@@ -230,6 +231,73 @@ object_contrasts.df <- dplyr::select(object_contrasts.df, -any_of(c("is_hit_noms
                     ((contrast_type != "comparison") |
                      (median_log2 > 0 & coalesce(is_hit_nomschecks_lhs, FALSE)) | (median_log2 < 0 & coalesce(is_hit_nomschecks_rhs, FALSE))),
                 is_hit = is_hit & is_hit_nomschecks)
+object_batch_contrasts.df <- filter(object_contrasts.df, str_detect(contrast, "_vs_B\\d+_(others|controls)")) %>%
+  transmute(std_type, object_id, contrast_batch = contrast,
+            contrast = str_replace(contrast, "_vs_B\\d+_", "_vs_"),
+            median_log2_batch = median_log2, p_value_batch = p_value,
+            is_hit_nomschecks_batch = is_hit_nomschecks,
+            is_signif_batch = is_signif, is_hit_batch = is_hit)
+object_contrasts.df <- left_join(object_contrasts.df,
+                                 select(filter(object_batch_contrasts.df, std_type=="median"), -std_type)) %>%
+  mutate(is_hit_nomschecks = is_hit_nomschecks & coalesce(is_hit_nomschecks_batch, TRUE),
+         is_hit = is_hit & is_hit_nomschecks)
+
+require(readxl)
+
+msruns_seq.df <- read_tsv(file.path(data_path, data_info$ms_folder, "SARS_COV2_MS_samples_sequence_20200519.txt")) %>%
+  left_join(dplyr::select(msdata$msruns, raw_file, condition, bait_full_id, bait_homid, msrun))
+
+conditions_seq.df <- group_by(msruns_seq.df, condition, bait_full_id, bait_homid) %>%
+  summarise(msrun1st_ix = min(msrun_ix),
+            batch = sort(unique(batch))[[1]],
+            lc_column = sort(unique(lc_column))[[1]],
+            n_batches = n_distinct(batch),
+            n_lc_columns = n_distinct(lc_column)) %>%
+  ungroup() %>%
+  arrange(msrun1st_ix) %>%
+  mutate(condition_ix = row_number())
+
+condition_neighbours.df <- inner_join(conditions_seq.df,
+                                      dplyr::select(conditions_seq.df,
+                                                    batch, lc_column,
+                                                    msrun1st_ix_carryover = msrun1st_ix,
+                                                    condition_ix_carryover = condition_ix,
+                                                    condition_carryover = condition,
+                                                    bait_full_id_carryover = bait_full_id,
+                                                    bait_homid_carryover = bait_homid)) %>%
+  mutate(nmsruns_carryover = msrun1st_ix - msrun1st_ix_carryover) %>%
+  filter(condition != condition_carryover &
+         str_remove(bait_homid_carryover, "\\?+$") != str_remove(bait_homid, "\\?+$") &
+           between(nmsruns_carryover, 0, 8))
+
+contrast_neighbours.df <- condition_neighbours.df %>%
+  inner_join(select(filter(contrastXcondition.df, weight > 0),
+                    condition, contrast) %>% unique()) %>%
+  inner_join(select(filter(contrastXcondition.df, weight > 0),
+                    condition_carryover = condition, contrast_carryover = contrast) %>% unique()) %>%
+  inner_join(transmute(filter(contrastXmetacondition.df, contrast_type == "filter" & weight < 0),
+                       contrast,
+                       metacondition_type_rhs = str_remove(metacondition, "_[^_]+$"))) %>%
+  inner_join(transmute(filter(contrastXmetacondition.df, contrast_type == "filter" & weight < 0),
+                       contrast_carryover=contrast,
+                       metacondition_type_rhs = str_remove(metacondition, "_[^_]+$"))) %>%
+  select(contrast, contrast_carryover, nmsruns_carryover) %>%
+  distinct()
+
+object_contrasts_carryover.df <- inner_join(select(object_contrasts.df, object_id, std_type,
+                  contrast_carryover=contrast, is_signif_carryover=is_signif, is_hit_nomschecks_carryover = is_hit_nomschecks,
+                  median_log2_carryover=median_log2, p_value_carryover = p_value),
+           contrast_neighbours.df) %>%
+  group_by(object_id, std_type, contrast) %>%
+  filter(row_number(p_value_carryover) == 1L) %>% # select most significant carryover
+  arrange(object_id, std_type, contrast) %>%
+  ungroup()
+
+object_contrasts.df <- left_join(object_contrasts.df, object_contrasts_carryover.df) %>%
+  mutate(is_carryover = is_hit_nomschecks &
+         (coalesce(p_value_carryover, 1.0) <= 0.01 & coalesce(median_log2_carryover, -Inf) >= 1.0) &
+         median_log2 <= coalesce(median_log2_carryover, -Inf),
+         is_hit = is_hit & !is_carryover)
 
 object_contrast_stats.df <- dplyr::group_by(object_contrasts.df, contrast, bait_full_id, contrast_type, std_type) %>%
   dplyr::summarise(p_value_001 = quantile(p_value, 0.001),
@@ -238,12 +306,14 @@ object_contrast_stats.df <- dplyr::group_by(object_contrasts.df, contrast, bait_
                    median_log2_abs_50 = quantile(abs(median_log2[p_value <= 0.1]), 0.5),
                    median_log2_abs_95 = quantile(abs(median_log2[p_value <= 0.1]), 0.95),
                    median_log2_abs_99 = quantile(abs(median_log2[p_value <= 0.1]), 0.99),
-                   n_hits = sum(is_hit_nomschecks)) %>%
+                   n_hits = sum(is_hit_nomschecks),
+                   n_carryover = sum(is_carryover)) %>%
   dplyr::ungroup() %>%
   dplyr::left_join(dplyr::select(msdata$msruns, bait_full_id, batch) %>%
                    dplyr::group_by(bait_full_id) %>% dplyr::summarise(batches = str_c(unique(batch), collapse=" ")) %>% dplyr::ungroup())
 View(filter(object_contrast_stats.df, std_type == "median" & str_detect(contrast, "_vs_others")) %>% dplyr::arrange(desc(batches), desc(n_hits)))
 View(filter(object_contrast_stats.df, std_type == "replicate" & str_detect(contrast, "_vs_others")) %>% dplyr::arrange(desc(batches), desc(n_hits)))
+View(filter(object_contrast_stats.df, std_type == "replicate" & str_detect(contrast, "ACE2_vs_B4_others")) %>% dplyr::arrange(desc(batches), desc(n_hits)))
 
 object_effects_wide.df <- pivot_wider(object_effects.df,
                                       id_cols = c("std_type", "object_id", "object_label", "majority_protein_acs", "gene_names"),
