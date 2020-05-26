@@ -33,8 +33,12 @@ HHN = HierarchicalHotNet
       bait2apms_vertices,
       reactomefi_walkmtx, bait2reactomefi_tree,
       bait2vertex_weights_perms)
-@load(joinpath(scratch_path, "$(proj_info.id)_hotnet_permtrees_$(proj_info.hotnet_ver).jld2"),
+#=@load(joinpath(scratch_path, "$(proj_info.id)_hotnet_permtrees_$(proj_info.hotnet_ver).jld2"),
       bait2reactomefi_perm_trees)
+=#
+bait2reactomefi_perm_trees = open(ZstdDecompressorStream, joinpath(scratch_path, "$(proj_info.id)_hotnet_permtrees_$(proj_info.hotnet_ver).jlser.zst"), "r") do io
+    deserialize(io)
+end
 @load(joinpath(scratch_path, "$(proj_info.id)_hotnet_vertex_stats_$(proj_info.hotnet_ver).jld2"),
       vertex_stats_df)
 
@@ -56,7 +60,8 @@ tree_mtx = similar(reactomefi_walkmtx)
 
 if chunkgroup > 1
 bait_id = bait_ids[chunkgroup-1]
-apms_vertices = bait2apms_vertices[bait_id]
+apms_vertices = get(bait2apms_vertices, bait_id, nothing)
+isnothing(apms_vertices) && @warn("No APMS vertices for bait $bait_id")
 vertex_weights_perms = bait2vertex_weights_perms[bait_id]
 empty!(bait2vertex_weights_perms) # release unneeded
 permtrees = bait2reactomefi_perm_trees[bait_id]
@@ -70,7 +75,7 @@ for i in chunk_trees
                                      mannwhitney_tests=true,
                                      walkmatrix=mul!(tree_mtx, reactomefi_walkmtx, Diagonal(vertex_weights)),
                                      sources=findall(>(0), vertex_weights),
-                                     sinks=bait2apms_vertices[bait_id],
+                                     sinks=apms_vertices,
                                      nflows_ratio=0.99,
                                      pools=nothing)
     treestats_df[!, :tree] .= i
@@ -85,13 +90,14 @@ empty!(bait2reactomefi_perm_trees) # release unneeded
 for i in chunk_trees
     bait_id = bait_ids[i]
     @info "Treecut statistics for non-permuted tree of $bait_id"
+    apms_vertices = get(bait2apms_vertices, bait_id, nothing)
     vertex_weights = convert(Vector{W}, bait2vertex_weights[bait_id])
     treestats_df = HHN.treecut_stats(bait2reactomefi_tree[bait_id],
                                      filter(r -> r.bait_full_id == bait_id, vertex_stats_df),
                                      mannwhitney_tests=true,
                                      walkmatrix=mul!(tree_mtx, reactomefi_walkmtx, Diagonal(vertex_weights)),
                                      sources=findall(>(0), vertex_weights),
-                                     sinks=bait2apms_vertices[bait_id],
+                                     sinks=apms_vertices,
                                      nflows_ratio=0.999,
                                      pools=nothing)
     treestats_df[!, :tree] .= 0

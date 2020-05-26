@@ -114,8 +114,8 @@ oeproteome_obj2gene_df = innerjoin(
     on=:protein_ac)
 rename!(oeproteome_obj2gene_df, :protgroup_id => :object_id)
 oeproteome_obj2gene_df[!, :reactomefi_geneid] = get.(Ref(reactomefi_gene2index), oeproteome_obj2gene_df.gene_name, 0)
-oeproteome_gene_effects_df = combine(groupby(join(select(oeproteome_objeffects_df, Not([:is_viral, :is_contaminant])),
-                                     oeproteome_obj2gene_df, on=:object_id, kind=:inner),
+oeproteome_gene_effects_df = combine(groupby(innerjoin(select(oeproteome_objeffects_df, Not([:is_viral, :is_contaminant])),
+                                     oeproteome_obj2gene_df, on=:object_id),
           [:contrast, :gene_name, :reactomefi_geneid])) do df
     rowix = findmin(df.p_value)[2]
     return df[rowix:rowix, :]
@@ -156,8 +156,8 @@ apms_obj2gene_df = innerjoin(
     on=:protein_ac)
 rename!(apms_obj2gene_df, :protregroup_id => :object_id)
 apms_obj2gene_df[!, :reactomefi_geneid] = get.(Ref(reactomefi_gene2index), apms_obj2gene_df.gene_name, 0)
-apms_gene_iactions_df = combine(groupby(join(select(apms_iactions_df, Not([:is_viral, :is_contaminant, :protein_description])),
-                                        apms_obj2gene_df, on=:object_id, kind=:inner),
+apms_gene_iactions_df = combine(groupby(innerjoin(select(apms_iactions_df, Not([:is_viral, :is_contaminant, :protein_description])),
+                                        apms_obj2gene_df, on=:object_id),
           [:contrast, :gene_name, :reactomefi_geneid])) do df
     rowix = findmin(df.p_value)[2]
     return df[rowix:rowix, :]
@@ -204,7 +204,7 @@ plot(restartprob_stats_df, x=:restart_prob, y=:trans_probs, color=:vertices, gro
 opt_restart_prob = 0.4 # 0.6
 reactomefi_walkmtx = HHN.random_walk_matrix(reactomefi_digraph_rev, opt_restart_prob)
 
-bait_ids = sort!(keys(bait2oeproteome_vertices))
+bait_ids = sort!(collect(keys(bait2oeproteome_vertices)))
 bait2vertex_weights = Dict{String, Vector{Float64}}()
 for bait_id in bait_ids
     vertex2weight = bait2oeproteome_vertices[bait_id]
@@ -280,6 +280,9 @@ end
       bait2reactomefi_perm_trees)
 @load(joinpath(scratch_path, "$(proj_info.id)_hotnet_permtrees_$(proj_info.hotnet_ver).jld2"),
       bait2reactomefi_perm_trees)
+open(ZstdCompressorStream, joinpath(scratch_path, "$(proj_info.id)_hotnet_permtrees_$(proj_info.hotnet_ver).jlser.zst"), "w") do io
+    serialize(io, bait2reactomefi_perm_trees)
+end
 
 bait2reactomefi_walkweights = Dict(bait_id => reactomefi_walkmtx * vweights
                                    for (bait_id, vweights) in bait2vertex_weights)
@@ -306,22 +309,23 @@ vertex_stats_df[!, :reactomefi_geneid] .= vertex2gene[vertex_stats_df.vertex]
 vertex_stats_df[!, :gene_name] .= levels!(categorical(getindex.(Ref(levels(reactomefi_df.gene1)),
                                                                 vertex_stats_df.reactomefi_geneid)),
                                           levels(reactomefi_df.gene1))
-vertex_stats_df = join(vertex_stats_df,
+vertex_stats_df = leftjoin(vertex_stats_df,
                        rename!(select(oeproteome_gene_effects_df, [:bait_full_id, :reactomefi_geneid, :p_value, :median_log2]),
                                :p_value => :oeproteome_p_value,
                                :median_log2 => :oeproteome_median_log2),
-                       on=[:bait_full_id, :reactomefi_geneid], kind=:left)
-vertex_stats_df = join(vertex_stats_df,
+                       on=[:bait_full_id, :reactomefi_geneid])
+vertex_stats_df = leftjoin(vertex_stats_df,
                        rename!(select(apms_gene_iactions_df, [:bait_full_id, :reactomefi_geneid, :p_value, :median_log2]),
                                :p_value => :apms_p_value,
                                :median_log2 => :apms_median_log2),
-                       on=[:bait_full_id, :reactomefi_geneid], kind=:left)
+                       on=[:bait_full_id, :reactomefi_geneid])
 vertex_stats_df.prob_perm_walkweight_greater = 1.0 .- vertex_stats_df.ngreater_walkweight ./ length.(get.(Ref(bait2reactomefi_perm_trees), vertex_stats_df.bait_full_id, 0))
 vertex_stats_df.is_hit = vertex_stats_df.prob_perm_walkweight_greater .<= 0.05
-vertex_stats_df = join(vertex_stats_df, gene_info_df, on=:gene_name, kind=:left)
+vertex_stats_df = leftjoin(vertex_stats_df, gene_info_df, on=:gene_name)
 @save(joinpath(scratch_path, "$(proj_info.id)_hotnet_vertex_stats_$(proj_info.hotnet_ver).jld2"),
       vertex_stats_df)
 
+# thread-based tree statistics
 reactomefi_tree_stats_dfs = Vector{DataFrame}(undef, length(bait_ids))
 pools = [HHN.ObjectPools() for _ in 1:Threads.nthreads()]
 Threads.@threads for i in eachindex(bait_ids)
@@ -344,6 +348,7 @@ reactomefi_tree_stats_df[!, :is_permuted] .= false;
 @load(joinpath(scratch_path, "$(proj_info.id)_hotnet_treecut_stats_$(proj_info.hotnet_ver).jld2"),
       vertex_stats_df, reactomefi_tree_stats_df)
 
+# cluster-based tree statistics, see hhotnet_perm_treecut_stats_chunk.jl
 using Base.Filesystem, Serialization, CodecZstd
 reactomefi_tree_stats_dfs = Vector{DataFrame}()
 reactomefi_perm_tree_stats_dfs = Vector{DataFrame}()
