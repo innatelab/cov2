@@ -25,7 +25,7 @@ includet(joinpath(misc_scripts_path, "frame_utils.jl"))
 includet(joinpath(misc_scripts_path, "delimdata_utils.jl"))
 
 using Revise, DataFrames, CSV, RData, SimpleWeightedGraphs, LightGraphs,
-      Statistics, LinearAlgebra
+      Statistics, StatsBase, LinearAlgebra
 using HierarchicalHotNet
 HHN = HierarchicalHotNet
 
@@ -276,12 +276,17 @@ for (root, dirs, files) in Filesystem.walkdir(joinpath(scratch_path, chunk_prefi
         end
     end
 end
+#=
 @save(joinpath(scratch_path, "$(proj_info.id)_hotnet_permtrees_$(proj_info.hotnet_ver).jld2"),
       bait2reactomefi_perm_trees)
 @load(joinpath(scratch_path, "$(proj_info.id)_hotnet_permtrees_$(proj_info.hotnet_ver).jld2"),
       bait2reactomefi_perm_trees)
+=#
 open(ZstdCompressorStream, joinpath(scratch_path, "$(proj_info.id)_hotnet_permtrees_$(proj_info.hotnet_ver).jlser.zst"), "w") do io
     serialize(io, bait2reactomefi_perm_trees)
+end
+bait2reactomefi_perm_trees = open(ZstdDecompressorStream, joinpath(scratch_path, "$(proj_info.id)_hotnet_permtrees_$(proj_info.hotnet_ver).jlser.zst"), "w") do io
+    deserialize(io)
 end
 
 bait2reactomefi_walkweights = Dict(bait_id => reactomefi_walkmtx * vweights
@@ -323,6 +328,8 @@ vertex_stats_df.prob_perm_walkweight_greater = 1.0 .- vertex_stats_df.ngreater_w
 vertex_stats_df.is_hit = vertex_stats_df.prob_perm_walkweight_greater .<= 0.05
 vertex_stats_df = leftjoin(vertex_stats_df, gene_info_df, on=:gene_name)
 @save(joinpath(scratch_path, "$(proj_info.id)_hotnet_vertex_stats_$(proj_info.hotnet_ver).jld2"),
+      vertex_stats_df)
+@load(joinpath(scratch_path, "$(proj_info.id)_hotnet_vertex_stats_$(proj_info.hotnet_ver).jld2"),
       vertex_stats_df)
 
 # thread-based tree statistics
@@ -369,6 +376,7 @@ for (root, dirs, files) in Filesystem.walkdir(joinpath(scratch_path, chunk_prefi
         end
     end
 end
+countmap(reactomefi_tree_stats_df.bait_full_id)
 reactomefi_tree_stats_df = reduce(vcat, values(reactomefi_tree_stats_dfs))
 reactomefi_perm_tree_stats_df = reduce(vcat, values(reactomefi_perm_tree_stats_dfs))
 @save(joinpath(scratch_path, "$(proj_info.id)_hotnet_perm_treecut_stats_$(proj_info.hotnet_ver).jld2"),
@@ -381,19 +389,24 @@ reactomefi_tree_all_stats_df = vcat(reactomefi_tree_stats_df,
                                     reactomefi_perm_tree_stats_df)
 
 threshold_range = (0.0, 0.05)
-reactomefi_tree_binstats_df = by(reactomefi_tree_all_stats_df, :bait_full_id) do orf_cutstats_df
+reactomefi_tree_binstats_df = combine(groupby(reactomefi_tree_all_stats_df, :bait_full_id)) do orf_cutstats_df
     @info "binstats($(orf_cutstats_df.bait_full_id[1]))"
-    HHN.bin_treecut_stats(filter(r -> !isnan(r.flow_avglen), orf_cutstats_df),
+    if nrow(orf_cutstats_df) == 0
+        @warn "cutstats frame is empty, skipping"
+        return DataFrame()
+    end
+    HHN.bin_treecut_stats(orf_cutstats_df,
                           by_cols=[:is_permuted, :tree],
                           threshold_range=threshold_range)
 end
 
-reactomefi_tree_perm_aggstats_df = by(filter(r -> r.is_permuted, reactomefi_tree_binstats_df), :bait_full_id) do perm_binstats_df
+reactomefi_tree_perm_aggstats_df = combine(groupby(filter(r -> r.is_permuted, reactomefi_tree_binstats_df), :bait_full_id)) do perm_binstats_df
+    @info "aggregate_treecut_binstats($(perm_binstats_df.bait_full_id[1]))"
     HHN.aggregate_treecut_binstats(perm_binstats_df, by_cols=[:is_permuted, :threshold_bin, :threshold])
 end
 
 reactomefi_tree_extremes_df = HHN.extreme_treecut_binstats(
-    filter(r -> !r.is_permuted, reactomefi_tree_binstats_df),
+    filter(r -> !r.is_permuted && coalesce(r.threshold, -1.0) >= 1E-4, reactomefi_tree_binstats_df),
     reactomefi_tree_perm_aggstats_df,
     join_cols = [:bait_full_id, :threshold_bin, :threshold])
 
@@ -406,16 +419,21 @@ size(reactomefi_perm_tree_stats_df)
 filter(r -> r.compflow_avglen < 2 && r.bait_full_id == "VZV-9", reactomefi_tree_stats_df)
 
 sel_bait_id = "SARS_CoV2_ORF7b"
+sel_metric = :maxcomponent_size
 PlotlyUtils.permstats_plot(
-    filter(r -> !r.is_permuted && (r.bait_full_id == sel_bait_id), reactomefi_tree_binstats_df),
-    filter(r -> r.bait_full_id == sel_bait_id, reactomefi_tree_perm_aggstats_df),
-    filter(r -> r.bait_full_id == sel_bait_id, reactomefi_tree_extremes_df),
+    filter(r -> !r.is_permuted && (r.bait_full_id == sel_bait_id) && !ismissing(r[sel_metric]),
+           reactomefi_tree_binstats_df),
+    filter(r -> r.bait_full_id == sel_bait_id && !ismissing(r[Symbol(sel_metric, "_50")]),
+           reactomefi_tree_perm_aggstats_df),
+    filter(r -> r.bait_full_id == sel_bait_id && !ismissing(r[sel_metric]),
+           reactomefi_tree_extremes_df),
     threshold_range=(0.00, 0.005),
-    yaxis_metric=:compflow_distance)
+    yaxis_metric=sel_metric)
 
 includet(joinpath(misc_scripts_path, "graphml_writer.jl"))
 
-bait2optcut_threshold = Dict(r.bait_full_id => r.flow_distance_threshold
+bait2optcut_threshold = Dict(r.bait_full_id => max(r.compflow_distance_threshold,
+                                                   r.flow_distance_threshold)
                              for r in eachrow(reactomefi_tree_extremes_df)
                                  if (r.type == "min") && !ismissing(r.flow_distance))
 bait2reactomefi_tree_optcut = Dict(bait_id =>
@@ -438,7 +456,7 @@ function flowgraphml(bait_id::AbstractString, threshold::Number;
     layout_cut_threshold::Number=1.5*threshold,
     kwargs...
 )
-    orig_diedges = rename(reactomefi_diedges_used_df,
+    orig_diedges = DataFrames.rename(reactomefi_diedges_used_df,
                           :vertex1 => :source, :vertex2 => :target,
                           :score => :weight, :direction => :interaction_type)
     orig_diedges.diedge_type .= replace.(string.(orig_diedges.diedge_type), ">" => "&gt;")
@@ -480,9 +498,9 @@ function flowgraphml(bait_id::AbstractString, threshold::Number;
         vertices_info = DataFrame(vertex = 1:nv(reactomefi_digraph_rev),
                                   gene = ifelse.(vertex2gene .> 0, vertex2gene, missing),
                                   gene_name = ifelse.(vertex2gene .> 0, getindex.(Ref(reactomefi_genes), vertex2gene), missing))
-        vertices_info = join(vertices_info, filter(r -> r.bait_full_id == bait_id, oeproteome_gene_effects_df),
-                             on=:gene_name, kind=:left)
-        vertices_df = join(vertices_df, vertices_info, on=:vertex, kind=:left)
+        vertices_info = leftjoin(vertices_info, filter(r -> r.bait_full_id == bait_id, oeproteome_gene_effects_df),
+                             on=:gene_name)
+        vertices_df = leftjoin(vertices_df, vertices_info, on=:vertex)
     end
     # FA3 layout attributes
     layout_conncomps = HHN.cut(tree, layout_cut_threshold)
@@ -532,7 +550,7 @@ function flowgraphml(bait_id::AbstractString, threshold::Number;
                                                        :apms_p_value, :apms_median_log2, :apms_median_signif,
                                                        :oeproteome_p_value, :oeproteome_median_log2, :oeproteome_median_log2_signif,
                                                        :layout_component, :layout_size, :layout_mass, :layout_x, :layout_y],
-                                                      names(vertices_df)),
+                                                      propertynames(vertices_df)),
                                  edge_attrs=[:edge_type, :interaction_type, :target_type, :source_type,
                                              :walkweight, :walkweight_rev,
                                              :has_original, :has_original_rev, :has_flow, :has_walk,
@@ -584,12 +602,13 @@ function layout_flowgraph!(graph::GraphML.Graph)
     return graph
 end
 
+sel_bait_ids = collect(keys(bait2reactomefi_tree_optcut))
 for bait_id in sel_bait_ids
     @info "Flowgraph for $bait_id"
     optcut_threshold = bait2optcut_threshold[bait_id]
-    optflow_graph = flowgraphml(bait_id, optcut_threshold * 1.25,
+    optflow_graph = flowgraphml(bait_id, optcut_threshold,
         component_groups=false,
-        layout_cut_threshold = optcut_threshold * 1.3,
+        layout_cut_threshold = optcut_threshold * 1.1,
         pvalue_mw_max = 0.001, verbose=true)
     if length(optflow_graph.nodes) > 0
         layout_flowgraph!(optflow_graph)
