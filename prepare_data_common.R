@@ -26,6 +26,7 @@ baits_info.df <- mutate(baits_info.df,
          # bait homology id -- which baits are homologs to each other?
          # sometimes (ORF3) the names of the homologs in different strains is different
          bait_homid = case_when(bait_id %in% c("ORF3", "ORF3a", "ORF3b", "ORF4", "ORF4a") ~ "ORF3",
+                                bait_id %in% c("ORF8", "ORF8a", "ORF8b") ~ "ORF8",
                                 TRUE ~ as.character(bait_id)) %>%
                       factor() %>% relevel("Ctrl_NT"),
          bait_kind = factor(bait_kind, c("sample", "control")),
