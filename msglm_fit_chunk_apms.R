@@ -1,5 +1,5 @@
 Sys.setenv(TZ='Etc/GMT+1') # issue#612@rstan
-#job.args <- c("cov2", "ast_cov2_msglm", "mq_apms_20200510", "20200515", "20200515", "0", "284")
+#job.args <- c("cov2", "ast_cov2_msglm", "mq_apms_20200525", "20200525", "20200525", "0", "2543")
 if (!exists('job.args')) {
   job.args <- commandArgs(trailingOnly = TRUE)
 }
@@ -106,8 +106,14 @@ model_data$subobjects <- msdata.df %>%
     dplyr::inner_join(dplyr::select(model_data$objects, protregroup_id, glm_object_ix)) %>%
     # FIXME cluster per object
     dplyr::inner_join(cluster_msprofiles(msdata.df, msdata$msrun_pepmodstate_stats, obj_col='pepmodstate_id', msrun_col='msrun')) %>%
-    dplyr::arrange(glm_object_ix, desc(is_specific), desc(nsimilar_profiles), desc(n_quant), desc(intensity_med),
+    dplyr::arrange(glm_object_ix, profile_cluster, desc(is_specific), desc(n_quant), desc(intensity_med),
                    pepmod_id, charge) %>%
+    dplyr::group_by(glm_object_ix, profile_cluster) %>%
+    dplyr::mutate(subobject_group_ix = row_number() %/% 20, # put objects within cluster into groups of 20
+                  subobject_local_ix = row_number() %% 20) %>%
+    dplyr::ungroup() %>%
+    # take the first group of 10 objects from each cluster, then continue with the second group etc
+    dplyr::arrange(glm_object_ix, subobject_group_ix, profile_cluster, subobject_local_ix) %>%
     dplyr::mutate(glm_subobject_ix = row_number()) %>%
     dplyr::filter(glm_subobject_ix <= 30) # remove less abundant subobjects of rich objects
 } else if (modelobj == "protgroup") {
