@@ -5,9 +5,9 @@
 
 project_id <- 'cov2'
 message('Project ID=', project_id)
-data_version <- "20200519"
-fit_version <- "20200519"
-ms_folder <- 'spectronaut_oeproteome_20200519'
+data_version <- "20200527"
+fit_version <- "20200527"
+ms_folder <- 'spectronaut_oeproteome_20200527'
 message('Dataset version is ', data_version)
 
 source("~/R/config.R")
@@ -49,6 +49,13 @@ fasta.dfs <- list(
 require(readxl)
 require(tidyr)
 
+samples_to_use_wide.df <- read_tsv(file.path(data_path, "samples_to_use.txt"))
+samples_to_use.df <- pivot_longer(samples_to_use_wide.df, cols = starts_with("batch."),
+                                  names_prefix = "batch.", names_to="batch", values_to = "is_measured") %>%
+  filter(coalesce(is_measured, "") == "x") %>%
+  mutate(sample = str_c("B", batch, "_", str_remove(sample, "B\\d+_")),
+         is_used = str_detect(organism, "^Ctrl") | batch == coalesce(batch_used, 0))
+
 msruns_info.df <- read_xlsx(file.path(msdata_path, "SARS_COV2_MS_samples_library.xlsx"),
                             sheet = "samples", range="A1:E146") %>%
   rename(msrun_sn = `ms run name`) %>%
@@ -63,11 +70,15 @@ msruns_info.df <- read_xlsx(file.path(msdata_path, "SARS_COV2_MS_samples_library
          replicate = if_else(is_wrong_replicate, (batch-1L)*4L + replicate, replicate),
          sample = if_else(is.na(sample) | is_wrong_replicate, str_c(bait_code, "_", replicate), sample),
          msrun_sn = str_remove(msrun_sn, "^_SA_"),
-         msrun_sn = if_else(is.na(msrun_sn) | is_wrong_replicate, str_c("COV2_FPMS_", sample), msrun_sn)) %>%
+         msrun_sn = if_else(is.na(msrun_sn) | is_wrong_replicate, str_c("COV2_FPMS_", sample), msrun_sn),
+         is_batch5 = batch == 5) %>%
   arrange(batch, bait_code, replicate) %>%
   dplyr::group_by(bait_code) %>%
   dplyr::mutate(is_older_batch = !is_control & batch < max(batch)) %>%
-  dplyr::ungroup()
+  dplyr::ungroup() %>%
+  dplyr::left_join(transmute(samples_to_use.df, bait_code=case_when(bait_code %in% c("31","32") & batch=="4" ~ str_c(bait_code, ".2"),
+                                                                    TRUE ~ bait_code),
+                             batch=parse_integer(batch), is_used))
 
 # fix duplication in the proteins report
 #msdata_orig.wide <- read_tsv(file.path(msdata_path, "oe_proteome_unnormalized_20200519.txt"))
@@ -78,8 +89,10 @@ msruns_info.df <- read_xlsx(file.path(msdata_path, "SARS_COV2_MS_samples_library
 setdiff(msruns_info.df$msrun_sn, msdata_full$msruns$msrun_sn)
 setdiff(msdata_full$msruns$msrun_sn, msruns_info.df$msrun_sn)
 
-bad_msruns <- c("FPMS_SARS_CoV2_ORF3_3", "FPMS_SARS_CoV2_ORF7a_2")
-msdata.wide <- read.Spectronaut.ProteinsReport(file.path(msdata_path, "oe_proteome_unnormalized_20200519_dedup.txt"),
+bad_msruns <- c("FPMS_B5_Ctrl_ZIKV_Capsid_4", "FPMS_B2_SARS_CoV_ORF8b_2",
+                "FPMS_B1_SARS_CoV2_ORF3_3", "FPMS_B1_SARS_CoV2_ORF7a_2",
+                "FPMS_B2_SARS_CoV2_NSP1_3", "FPMS_B3_SARS_CoV2_NSP2_2")
+msdata.wide <- read.Spectronaut.ProteinsReport(file.path(msdata_path, "20200527_163029_COVID OE FPMS FINAL not normalied_Protein Group Report.txt"),
                                                import_data = "quantity", delim='\t')
 msdata_colgroups <- attr(msdata.wide, "column_groups")
 
@@ -95,26 +108,25 @@ msdata_full$msruns <- dplyr::select(msdata_full$protgroup_intensities, msrun_ix,
                 str_replace("([A-G])(\\d)$", "\\1_\\2")) %>%
   tidyr::extract(msrun_sn, c("is_batch5", "bait_code_orig", "replicate"), "^COV2_FPMS_(B5_)?([^_]+)_(\\d+)$", remove=FALSE) %>%
   dplyr::mutate(bait_code = str_remove(bait_code_orig, "\\.\\d+$")) %>%
-  dplyr::group_by(bait_code) %>%
-  dplyr::mutate(has_newer_batch = any(!is.na(is_batch5) | msdate == "20200426")) %>%
-  dplyr::ungroup() %>%
-  dplyr::mutate(is_older_batch = !(bait_code %in% LETTERS) & ((msdate == "20200326") | (bait_code != bait_code_orig)) & has_newer_batch,
-                is_batch5 = NULL,
+  dplyr::mutate(is_batch5 = !is.na(is_batch5) | msdate == '20200426',
                 replicate = parse_integer(replicate)) %>%
   left_join(dplyr::select(baits_info.df, bait_kind, bait_code, bait_full_id, bait_id, bait_homid, organism, orgcode)) %>%
-  left_join(dplyr::select(msruns_info.df, msrun_sn, batch, is_older_batch)) %>%
-  dplyr::mutate(bait_full_id = str_c(bait_full_id, ifelse(is_older_batch, "?", "")),
+  left_join(dplyr::select(msruns_info.df, msrun_sn, batch, is_batch5, is_used)) %>%
+  dplyr::mutate(is_used = coalesce(is_used, FALSE), # removes LMix
+         bait_full_id = str_c(bait_full_id, ifelse(!is_used, "?", "")),
          batch = case_when(is.na(batch) & bait_code_orig == "31.2" ~ 4L,
                            TRUE ~ batch),
          # fix bait id for the candidates to throw away, homid is not touched
-         bait_id = str_c(bait_id, ifelse(is_older_batch, "?", "")),
+         bait_id = str_c(bait_id, ifelse(!is_used, "?", "")),
          condition = str_c("FPMS_", bait_full_id),
          msrun = str_c("FPMS_B", batch, "_", bait_full_id, "_", replicate),
-         is_used = !msrun %in% bad_msruns & !str_detect(msrun_sn, "LMix"))
+         is_used = is_used & !(msrun %in% bad_msruns))
+write_tsv(select(msdata_full$msruns, raw_file, msrun, is_used), path = file.path(data_path, ms_folder, "dia_oeproteome_used_msruns_20200524.txt"))
+msdata_full$msruns <- dplyr::filter(msdata_full$msruns, is_used)
 
 msdata_full$protgroup_intensities <- dplyr::select(msdata_full$protgroup_intensities, -raw_file) %>%
   dplyr::mutate(ident_type = factor("By MS/MS", levels=c("By MS/MS", "By matching"))) %>% #factor(if_else(nevidences > 0L, "By MS/MS", "By matching"), levels = c("By MS/MS", "By matching"))) %>%
-  left_join(dplyr::select(msdata_full$msruns, msrun_ix, msrun))
+  inner_join(dplyr::select(msdata_full$msruns, msrun_ix, msrun))
 msdata_full <- append_protgroups_info(msdata_full, msdata.wide,
                                       proteins_info = dplyr::bind_rows(
                                         dplyr::mutate(fasta.dfs$CoV, is_viral=TRUE, is_contaminant=FALSE),
@@ -141,7 +153,7 @@ msdata$protgroup_intensities <- filter(semi_join(msdata$protgroup_intensities, m
 conditions.df <- dplyr::select(msdata$msruns, condition, bait_full_id, bait_id, bait_homid, bait_kind, orgcode) %>%
   dplyr::distinct() %>%
   dplyr::arrange(bait_kind, bait_homid, bait_id, orgcode) %>%
-  dplyr::mutate(condition = factor(condition, levels=condition),
+  dplyr::mutate(condition = relevel(factor(condition, levels=condition), "FPMS_Ctrl_NT"),
                 bait_id = relevel(factor(bait_id, levels=unique(bait_id)), "Ctrl_NT"))
 msdata$msruns <- mutate(msdata$msruns,
                         condition = factor(condition, levels=levels(conditions.df$condition)))
@@ -263,31 +275,38 @@ conditionXmetacondition.df <- as_tibble(as.table(conditionXmetacondition.mtx)) %
   dplyr::filter(n != 0) %>% dplyr::select(-n) %>%
   dplyr::left_join(dplyr::select(conditions.df, condition, bait_full_id, bait_id, bait_homid))
 
+hombait_contrasts.df <-   inner_join(
+  transmute(filter(conditions.df, bait_kind == "sample"),
+            metacondition_lhs = bait_full_id, orgcode_lhs = orgcode, bait_homid,
+            bait_version = if_else(str_detect(bait_full_id, "\\?$"), "0", "1")),
+  transmute(filter(conditions.df, bait_kind == "sample"),
+            metacondition_rhs = bait_full_id, orgcode_rhs = orgcode, bait_homid,
+            bait_version = if_else(str_detect(bait_full_id, "\\?$"), "0", "1"))
+) %>% filter(as.integer(orgcode_lhs) < as.integer(orgcode_rhs)) %>%
+  mutate(contrast_type = "comparison") %>%
+  select(-orgcode_lhs, -orgcode_rhs, -bait_homid)
+
 contrasts.df <- bind_rows(
   transmute(filter(conditions.df, bait_kind == "sample"),
             metacondition_lhs = bait_full_id,
             metacondition_rhs = "controls",
-            contrast_type = "comparison"),
+            contrast_type = "comparison",
+            has_offset=FALSE),
   transmute(filter(conditions.df, bait_kind == "sample"),
             metacondition_lhs = bait_full_id,
             metacondition_rhs = str_c("allminus_", bait_homid),
-            contrast_type = "comparison"),
-  inner_join(
-    transmute(filter(conditions.df, bait_kind == "sample"),
-              metacondition_lhs = bait_full_id, orgcode_lhs = orgcode, bait_homid,
-              bait_version = if_else(str_detect(bait_full_id, "\\?$"), "0", "1")),
-    transmute(filter(conditions.df, bait_kind == "sample"),
-              metacondition_rhs = bait_full_id, orgcode_rhs = orgcode, bait_homid,
-              bait_version = if_else(str_detect(bait_full_id, "\\?$"), "0", "1"))
-  ) %>% filter(as.integer(orgcode_lhs) < as.integer(orgcode_rhs)) %>%
-  mutate(contrast_type = "comparison") %>%
-  select(-orgcode_lhs, -orgcode_rhs, -bait_homid),
+            contrast_type = "comparison",
+            has_offset=FALSE),
   transmute(filter(msdata$msruns, bait_kind == "sample"),
             metacondition_lhs = bait_full_id,
             metacondition_rhs = str_c("B", batch, "_allminus_", bait_homid),
-            contrast_type = "filter") %>% distinct()
+            contrast_type = "comparison",
+            has_offset=FALSE) %>% distinct(),
+  mutate(hombait_contrasts.df, has_offset=FALSE),
+  mutate(hombait_contrasts.df, has_offset=TRUE),
 ) %>%
-mutate(contrast = str_c(metacondition_lhs, "_vs_", str_replace(metacondition_rhs, "allminus.+", "others")),
+mutate(contrast = str_c(metacondition_lhs, "_vs_", str_replace(metacondition_rhs, "allminus.+", "others"),
+                        ifelse(has_offset, "_corrected", "")),
        metacondition_lhs = factor(metacondition_lhs, levels=all_metaconditions),
        metacondition_rhs = factor(metacondition_rhs, levels=all_metaconditions))
 
@@ -305,12 +324,13 @@ pheatmap(contrastXmetacondition.mtx, cluster_rows=FALSE, cluster_cols=FALSE,
 
 contrastXmetacondition.df <- as_tibble(as.table(contrastXmetacondition.mtx)) %>% dplyr::filter(n != 0) %>%
   dplyr::rename(weight = n) %>%
-  dplyr::left_join(select(contrasts.df, contrast, contrast_type)) %>%
-  dplyr::mutate(condition_role = if_else(contrast_type == "filter" & weight < 0, "background", "signal"),
+  dplyr::left_join(dplyr::select(contrasts.df, contrast, contrast_type)) %>%
+  dplyr::mutate(condition_role = "signal",
+                is_lhs = weight > 0,
                 # define the rule to dynamically select control baits for _vs_others comparison based on the protein abundance
                 # select the baits with abundance within 50%-90% percentiles
-                quantile_min = if_else(condition_role == "background" & str_detect(contrast, "_vs_(B\\d+_)?others"), 0.25, NA_real_),
-                quantile_max = if_else(condition_role == "background" & str_detect(contrast, "_vs_(B\\d+_)?others"), 0.75, NA_real_))
+                quantile_min = dplyr::if_else(!is_lhs & str_detect(contrast, "_vs_(B\\d+_)?others"), 0.2, NA_real_),
+                quantile_max = dplyr::if_else(!is_lhs & str_detect(contrast, "_vs_(B\\d+_)?others"), 0.8, NA_real_))
 
 contrastXcondition.df <- dplyr::select(contrastXmetacondition.df, -starts_with("quantile")) %>%
   dplyr::inner_join(conditionXmetacondition.df) %>%
@@ -348,15 +368,63 @@ msruns_hnorm <- multilevel_normalize_experiments(instr_calib_protgroup,
                                                  mcmc.iter = 1000L,
                                                  #mcmc.chains = 6,
                                                  verbose=TRUE,
-                                                 norm_levels = list(msrun = list(cond_col = "msrun", max_objs=500L, missing_exp.ratio=0.1),
-                                                                    bait_full_id = list(cond_col="batch_bait_full_id", max_objs=300L, missing_exp.ratio=0.1),
-                                                                    batch = list(cond_col="batch", max_objs=200L, missing_exp.ratio=0.2)
+                                                 norm_levels = list(msrun = list(cond_col = "msrun", max_objs=1000L, missing_exp.ratio=0.1),
+                                                                    bait_full_id = list(cond_col="batch_bait_full_id", max_objs=500L, missing_exp.ratio=0.2),
+                                                                    batch = list(cond_col="batch", max_objs=300L, missing_exp.ratio=0.3)
                                                  ))
 
 # ignore all higher levels of normalization
 msruns_hnorm$msruns_shifts <- msruns_hnorm$mschannel_shifts
 
 total_msrun_shifts.df <- msruns_hnorm$msruns_shifts
+
+# normalize (calculate offset for contrasts) homologous baits using shared specific interactions
+prev_apms.env <- new.env(parent=baseenv())
+load(file.path(scratch_path, paste0(project_id, '_msglm_fit_', 'spectronaut_oeproteome_20200519', '_', '20200519', '.RData')), envir=prev_apms.env)
+load(file.path(scratch_path, paste0(project_id, '_msglm_data_', 'spectronaut_oeproteome_20200519', '_', '20200519', '.RData')), envir=prev_apms.env)
+iactions4norm.df <- filter(prev_apms.env$object_contrasts.df, std_type == "median" & str_detect(contrast, "_vs_controls")) %>%
+    dplyr::left_join(dplyr::select(baits_info.df, bait_full_id, bait_id)) %>%
+    group_by(bait_full_id, contrast) %>%
+    dplyr::filter(is_hit_nomschecks | row_number(prob_nonpos) <= 30) %>%
+    ungroup()
+msdata4hombait_norm.df <- inner_join(iactions4norm.df,
+                                     select(prev_apms.env$msdata$msruns, msrun, raw_file, bait_full_id)) %>%
+    inner_join(select(prev_apms.env$msdata$protein2protgroup, object_id=protgroup_id, protein_ac)) %>%
+    select(protein_ac, raw_file) %>% distinct() %>%
+    inner_join(select(msdata$msruns, msrun, raw_file, condition, bait_id, bait_full_id)) %>%
+    inner_join(select(msdata$protein2protgroup, protein_ac, protgroup_id)) %>%
+    inner_join(msdata4norm.df) %>%
+    dplyr::select(condition, bait_id, bait_full_id, msrun, protgroup_id, intensity) %>%
+    distinct()
+
+hombait_norm <- normalize_experiments(instr_calib_protgroup, msdata4hombait_norm.df,
+                                      quant_col = "intensity", obj_col = "protgroup_id", mschan_col = "msrun",
+                                      cond_col='condition', condgroup_col='bait_id', 
+                                      mcmc.iter = 2000L, stan_method="mcmc", mcmc.adapt_delta=0.9,
+                                      verbose=TRUE, max_objs=1000L,
+                                      mschan_preshifts = msruns_hnorm$msruns_shifts, mschan_shift.min = -2,
+                                      nmschan_ratio.min = 0.5,
+                                      preshift_col = 'total_msrun_shift')
+
+hombait_contrast_offsets.df <- inner_join(hombait_norm, conditions.df) %>%
+filter(abs(shift) >= shift_sd & n_objects >= 5) %>%
+inner_join(dplyr::select(baits_info.df, bait_full_id, orgcode)) %>%
+mutate(is_cov2 = orgcode == "SARS2") %>%
+group_by(bait_id) %>%
+summarise(has_cov2 = any(is_cov2),
+          n_hombaits = n(),
+          n_objects = min(n_objects),
+          contrast = str_c(bait_full_id[is_cov2], "_vs_", bait_full_id[!is_cov2], "_corrected"),
+          offset = shift[!is_cov2] - shift[is_cov2], # compensate the average difference in binding affinities,
+       ) %>%
+ungroup()
+
+# correct contrasts fro homologous baits comparison where possible
+contrasts.df <- left_join(contrasts.df,
+                          dplyr::filter(hombait_contrast_offsets.df, n_hombaits == 2 & has_cov2) %>%
+                          dplyr::transmute(contrast, new_offset = offset)) %>%
+  mutate(offset = if_else(is.na(new_offset), 0.0, new_offset)) %>%
+  select(-new_offset)
 
 # apply normalization
 msdata_full$protgroup_intensities <- dplyr::left_join(dplyr::select(msdata_full$protgroup_intensities, -any_of("total_msrun_shift")),
@@ -604,14 +672,14 @@ protgroup_labu_min <- inner_join(msdata$protgroup_intensities, total_msrun_shift
 rmsglmdata_filepath <- file.path(scratch_path, str_c(project_id, '_msglm_data_', ms_folder, '_', fit_version, '.RData'))
 message('Saving MS data for MSGLM to ', rmsglmdata_filepath, '...')
 save(data_info, msdata,
-     conditions.df, effects.df,
+     conditions.df, effects.df, contrasts.df,
      conditionXeffect.mtx, conditionXeffect.df,
      conditionXmetacondition.mtx, conditionXmetacondition.df,
      contrastXmetacondition.mtx, contrastXmetacondition.df, contrastXcondition.df,
      instr_calib_protgroup,
      protgroup_labu_min,
      global_protgroup_labu_shift,
-     msruns_hnorm, total_msrun_shifts.df,
+     msruns_hnorm, hombait_norm, total_msrun_shifts.df,
      batch_effects.df, msrunXbatchEffect.mtx,
      subbatch_effects.df, msrunXsubbatchEffect.mtx,
      bait_checks_protgroup.df,
