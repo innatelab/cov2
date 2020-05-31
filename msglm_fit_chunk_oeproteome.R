@@ -68,13 +68,13 @@ model_data <- list()
 model_data$mschannels <- dplyr::select(msdata$msruns, condition, msrun, replicate) %>%
   dplyr::inner_join(dplyr::select(total_msrun_shifts.df, msrun, total_msrun_shift)) %>%
   dplyr::arrange(condition, replicate, msrun) %>% dplyr::distinct() %>%
-  dplyr::mutate(mschannel_ix = row_number(),
+  dplyr::mutate(mschannel_ix = dplyr::row_number(),
                 msrun_ix = as.integer(factor(msrun, levels=unique(msrun))),
                 msproto_ix = 1L)
 experiment_shift_col <- 'total_msrun_shift'
 model_data$mschannels$model_mschannel_shift <- model_data$mschannels[[experiment_shift_col]]
 model_data$conditions <- conditions.df %>%
-  mutate(condition_ix = row_number())
+  dplyr::mutate(condition_ix = row_number())
 
 model_data$interactions <- tidyr::crossing(object_id = sel_object_ids,
                                        condition_ix = model_data$conditions$condition_ix) %>%
@@ -123,7 +123,7 @@ model_data$objects <- dplyr::mutate(model_data$objects, protgroup_id = object_id
 # entries for an interaction in all replicate experiments
 model_data$observations <- dplyr::inner_join(model_data$interactions, model_data$mschannels) %>%
   dplyr::arrange(glm_object_ix, glm_iaction_ix, mschannel_ix) %>%
-  dplyr::mutate(glm_observation_ix = seq_len(n()))
+  dplyr::mutate(glm_observation_ix = seq_len(dplyr::n()))
 
 if (quantobj == "pepmodstate") {
   model_data$msdata <- dplyr::inner_join(model_data$observations, model_data$subobjects) %>%
@@ -135,9 +135,9 @@ if (quantobj == "pepmodstate") {
     dplyr::arrange(glm_observation_ix)
 }
 
-model_data$msdata <- mutate(model_data$msdata,
-                qdata_ix = if_else(!is.na(intensity), cumsum(!is.na(intensity)), NA_integer_),
-                mdata_ix = if_else(is.na(intensity), cumsum(is.na(intensity)), NA_integer_))
+model_data$msdata <- dplyr::mutate(model_data$msdata,
+                qdata_ix = dplyr::if_else(!is.na(intensity), cumsum(!is.na(intensity)), NA_integer_),
+                mdata_ix = dplyr::if_else(is.na(intensity), cumsum(is.na(intensity)), NA_integer_))
 
 model_data <- prepare_effects(model_data, underdefined_iactions=FALSE)
 

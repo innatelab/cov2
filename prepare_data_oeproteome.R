@@ -103,7 +103,7 @@ msdata_full$msruns <- dplyr::select(msdata_full$protgroup_intensities, msrun_ix,
                 replicate = parse_integer(replicate)) %>%
   left_join(dplyr::select(baits_info.df, bait_kind, bait_code, bait_full_id, bait_id, bait_homid, organism, orgcode)) %>%
   left_join(dplyr::select(msruns_info.df, msrun_sn, batch, is_older_batch)) %>%
-  mutate(bait_full_id = str_c(bait_full_id, ifelse(is_older_batch, "?", "")),
+  dplyr::mutate(bait_full_id = str_c(bait_full_id, ifelse(is_older_batch, "?", "")),
          batch = case_when(is.na(batch) & bait_code_orig == "31.2" ~ 4L,
                            TRUE ~ batch),
          # fix bait id for the candidates to throw away, homid is not touched

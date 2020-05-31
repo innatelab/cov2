@@ -17,11 +17,11 @@ orgcodes = list("SARS-CoV-2" = "SARS2",
                 "HCV" = "9HEPC",
                 "HUMAN" = "HUMAN")
 
-baits_info.df <- read_xlsx(file.path(analysis_path, "data", "baits_info.xlsx"))
+baits_info.df <- read_xlsx(file.path(data_path, "baits_info.xlsx"))
 baits_info.df <- mutate(baits_info.df,
                         used_uniprot_ac = ifelse(!is.na(uniprot_ac), uniprot_ac, bait_id)) %>%
-  filter(!is.na(bait_id)) %>%
-  rename(organism = virus, bait_full_id = bait_id, bait_id = short_name, bait_kind=bait_type) %>%
+  dplyr::filter(!is.na(bait_id)) %>%
+  dplyr::rename(organism = virus, bait_full_id = bait_id, bait_id = short_name, bait_kind=bait_type) %>%
   mutate(bait_id = relevel(factor(bait_id), "Ctrl_NT"),
          # bait homology id -- which baits are homologs to each other?
          # sometimes (ORF3) the names of the homologs in different strains is different
