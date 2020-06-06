@@ -1,7 +1,7 @@
 proj_info = (id = "cov2",
              data_ver = "20200428",
              fit_ver = "20200428",
-             oesc_ver = "20200512",
+             oesc_ver = "20200526",
              modelobj = "ptmgroup",
              msfolder = "cov2timecourse_phospho_dia_20200423")
 
@@ -44,12 +44,12 @@ for df in [obj_contrasts_df, obj_effects_df]
     df.ptmgroup_shortid = replace.(df.ptmgroup_id, Ref(r"_M\d$" => ""))
 end
 # pick the most significant comparison/effect
-obj_contrasts_df = by(obj_contrasts_df, [:contrast, :std_type, :ptmgroup_shortid]) do df
+obj_contrasts_df = combine(groupby(obj_contrasts_df, [:contrast, :std_type, :ptmgroup_shortid])) do df
     selix= findmin(df.p_value)[2]
     df[selix:selix, :]
 end
 obj_contrasts_df.object_id = copy(obj_contrasts_df.ptmgroup_shortid)
-obj_effects_df = by(obj_effects_df, [:effect, :std_type, :ptmgroup_shortid]) do df
+obj_effects_df = combine(groupby(obj_effects_df, [:effect, :std_type, :ptmgroup_shortid])) do df
     selix= findmin(df.p_value)[2]
     df[selix:selix, :]
 end
@@ -93,6 +93,30 @@ for df in [perseus_ptm_annots_df, perseus_obj_annots_df]
 end
 perseus_colls = FrameUtils.frame2collections(perseus_obj_annots_df, set_col=:term_id, obj_col=:ptmgroup_shortid, coll_col=:coll_id)
 
+perseus_cov2el_report_wide_df = CSV.read(joinpath(data_path, "cov2earlylate_fp_phos_ubi_dda_20200429",
+                                             "20200526_DDA_phospho_PSP_annotated_uniprot.txt"),
+                                         delim='\t')
+rename!(perseus_cov2el_report_wide_df, :ph_Protein => :protein_ac,
+        Symbol("ph_PhosphoSitePlus kinase") => :psp_kinases)
+perseus_cov2el_report_wide_df.position = [isnan(pos) ? missing : convert(Int, pos) for pos in perseus_cov2el_report_wide_df.position]
+
+perseus_cov2el_report_df = FrameUtils.pivot_longer(perseus_cov2el_report_wide_df,
+                        [:protein_ac, :gene_name, :site, :position, :psp_kinases],
+                        measure_vars_regex = r"(?<value>sig_norm|log2_diff|is_sig)_(?<var>\d+)h?",
+                        var_col=:timepoint)
+perseus_cov2el_report_df.change = [ifelse(r.is_sig, ifelse(r.log2_diff > 0, "+", "-"), ".")
+                                   for r in eachrow(perseus_cov2el_report_df)]
+perseus_cov2el_report_df.ptm_id = perseus_cov2el_report_df.protein_ac .* "_" .*
+    perseus_cov2el_report_df.site .* string.(perseus_cov2el_report_df.position)
+perseus_cov2el_report_df.ptmgroup_shortid = perseus_cov2el_report_df.gene_name .* "_" .*
+    perseus_cov2el_report_df.site .* string.(perseus_cov2el_report_df.position)
+perseus_cov2el_annots_df = unique!(dropmissing!(DelimDataUtils.expand_delim_column(perseus_cov2el_report_df,
+        list_col=:psp_kinases, elem_col=:term_id, key_col=:ptm_id, delim=";")))
+perseus_cov2el_annots_df[!, :coll_id] .= :KinaseSubstrate
+perseus_cov2el_annots_ptmgroup_df = unique!(dropmissing!(DelimDataUtils.expand_delim_column(perseus_cov2el_report_df,
+        list_col=:psp_kinases, elem_col=:term_id, key_col=:ptmgroup_shortid, delim=";")))
+perseus_cov2el_annots_ptmgroup_df[!, :coll_id] .= :KinaseSubstrate
+
 #CSV.write(joinpath(data_path, proj_info.msfolder, "Perseus_motifs.txt"),
 #          DataFrame(motif = collect(keys(perseus_colls[:seq_motifs]))),
 #          delim='\t')
@@ -123,12 +147,14 @@ linkphinder_annots_df.ptm_id = [
 linkphinder_annots_df[!, :coll_id] .= "LinkPhinder"
 
 ptm_annots_df = vcat(
-        select(psitep_annots_df, [:coll_id, :term_id, :ptm_id]),
+        vcat(select(psitep_annots_df, [:coll_id, :term_id, :ptm_id]),
+             select(perseus_cov2el_annots_df, [:coll_id, :term_id, :ptm_id])) |> unique!,
         select(linkphinder_annots_df, [:coll_id, :term_id, :ptm_id]),
         perseus_ptm_annots_df,
         perseus_ptm_regulators_df)
 ptm_colls = FrameUtils.frame2collections(ptm_annots_df,
     set_col=:term_id, obj_col=:ptm_id, coll_col=:coll_id)
+countmap(psitep_annots_df.term_id)
 
 ptmcollapsed2psitep_best_df.ptmgroup_shortid = replace.(ptmcollapsed2psitep_best_df.PTM_collapse_key, Ref(r"_M\d$" => ""))
 ptmcollapsed_short2psitep_best_df = unique!(select(ptmcollapsed2psitep_best_df, Not([:PTM_collapse_key, :pepmodstate_seq])))
@@ -136,9 +162,12 @@ ptmcollapsed_short2psitep_best_df.ptm_id = [
     !ismissing(r.psitep_ptm_AA) ? r.protein_ac * "_" * uppercase(r.psitep_ptm_AA) * string(r.psitep_ptm_pos) : missing
     for r in eachrow(ptmcollapsed_short2psitep_best_df)]
 obj_annots_df = vcat(
+    vcat(
     select(join(psitep_annots_df, select(ptmcollapsed_short2psitep_best_df, Not(:gene_name)),
          on=[:protein_ac, :ptm_pos=>:psitep_ptm_pos, :ptm_id]),
         [:coll_id, :term_id, :ptmgroup_shortid]),
+    select(perseus_cov2el_annots_ptmgroup_df, [:coll_id, :term_id, :ptmgroup_shortid])
+    ) |> unique!,
     select(join(linkphinder_annots_df, select(ptmcollapsed_short2psitep_best_df, Not(:gene_name)),
         on=[:protein_ac, :ptm_pos=>:psitep_ptm_pos, :ptm_id]),
         [:coll_id, :term_id, :ptmgroup_shortid]),
@@ -154,57 +183,66 @@ terms_df[!, :term_descr] .= missing
 
 @info "Preparing sets of hits"
 ObjectType = eltype(obj_annots_df.ptmgroup_shortid)
-obj_hit_sets = Dict{Tuple{String, String, String}, Set{ObjectType}}()
+obj_hit_sets = Dict{Tuple{String, String, String, String}, Set{ObjectType}}()
 for hit_df in groupby(obj_contrasts_df[coalesce.(obj_contrasts_df.is_hit_nomschecks, false), :], [:std_type, :contrast, :change])
-    obj_hit_sets[(string.(hit_df[1, :std_type], "_std"), hit_df[1, :contrast], hit_df[1, :change])] = Set(skipmissing(hit_df.object_id))
+    obj_hit_sets[("DIA", string.(hit_df[1, :std_type], "_std"), hit_df[1, :contrast], hit_df[1, :change])] = Set(skipmissing(hit_df.object_id))
+end
+for hit_df in groupby(perseus_cov2el_report_df[coalesce.(perseus_cov2el_report_df.is_sig, false), :], [:timepoint, :change])
+    timept = hit_df[1, :timepoint]
+    obj_hit_sets[("DDA", "median_std",
+                  "SARS_COV2@$(timept)h_vs_mock@$(timept)h",
+                  hit_df[1, :change])] = Set(skipmissing(hit_df.ptmgroup_shortid))
 end
 # only relevant ones
 sel_std_type = "median"
-obj_hit_selsets = filter(kv -> (kv[1][1] == sel_std_type*"_std") &&
-                         occursin(r"SARS.+_vs_mock", kv[1][2]), obj_hit_sets);
+obj_hit_selsets = filter(kv -> (kv[1][2] == sel_std_type*"_std") &&
+                         occursin(r"SARS.+_vs_mock", kv[1][3]), obj_hit_sets);
 
 @info "Preparing mosaics..."
-observed_ptms = Set(skipmissing(join(ptmcollapsed_short2psitep_best_df, ptm_annots_df, on=:ptm_id, kind=:semi).ptm_id)) # all annotation ACs observed in the data
+observed_ptms = union!(Set(skipmissing(join(ptmcollapsed_short2psitep_best_df, ptm_annots_df, on=:ptm_id, kind=:semi).ptm_id)),
+                       Set(skipmissing(perseus_cov2el_report_df.ptm_id))) # all annotation ACs observed in the data
 obj_mosaics = OptCoverUtils.collections2mosaics(obj_colls, ptm_colls, observed_ptms,
                                     setXset_frac_extra_elms=0.05,
                                     verbose=true);
 
 obj_hit_mosaics = Dict(begin
     @info "Masking $mosaic_name dataset by hits..."
-    mosaic_name => OptCoverUtils.automask(mosaic, obj_hit_selsets,
-                                          max_sets=2000, min_nmasked=2, max_setsize=2000)
+    mosaic_name => OptCoverUtils.automask(mosaic, obj_hit_selsets, max_log10_pvalue=0.0,
+                                          max_sets=2000, min_nmasked=1, max_setsize=2000)
     end for (mosaic_name, mosaic) in pairs(obj_mosaics));
 
 using OptEnrichedSetCover
 
-cover_params = CoverParams(setXset_factor=0.5,
+cover_params = CoverParams(setXset_factor=0.1,
                            uncovered_factor=0.0, covered_factor=0.0)#, covered_factor=0.002)
 
 obj_hit_covers = Dict(begin
     @info "Covering $mosaic_name by hits..."
     mosaic_name => collect(masked_mosaic, cover_params,
             CoverEnumerationParams(max_set_score=0.0, max_covers=1),
-            MultiobjOptimizerParams(ϵ=[0.02, 0.02], MaxSteps=3_000_000, WeightDigits=2, NWorkers=Threads.nthreads()-1, MaxRestarts=200),
+            MultiobjOptimizerParams(ϵ=[0.02, 0.02], MaxSteps=2_000_000, WeightDigits=2,
+                                    NWorkers=Threads.nthreads()-1, MaxRestarts=200),
             true)
     end for (mosaic_name, masked_mosaic) in pairs(obj_hit_mosaics))
 
 using JLD2
 
 @info "Saving data and analysis results"
-hit_covers_filename = joinpath(scratch_path, "$(proj_info.id)_$(proj_info.msfolder)_hit_covers_$(proj_info.oesc_ver).jld2")
+hit_covers_filename = joinpath(scratch_path, "$(proj_info.id)_$(proj_info.msfolder)_hit_covers_$(proj_info.oesc_ver)b.jld2")
 @save(hit_covers_filename,
       proj_info, ptm_colls, obj_colls, obj_mosaics,
-      terms_df,
+      terms_df, ptmcollapsed_short2psitep_best_df, contrasts_df,
       objects_df, obj_effects_df, obj_contrasts_df,
       obj_hit_sets, obj_hit_selsets, obj_hit_mosaics,
       cover_params, obj_hit_covers)
 if !@isdefined(obj_effect_covers)
 using JLD2, CSV, DataFrames, OptEnrichedSetCover
-@load(effect_covers_filename,
-      proj_info, protac_colls, obj_colls, obj_mosaics,
-      objects_df, obj_effects_df, obj_effects_weak_df,
-      obj_effect_sets, obj_effect_selsets, obj_effect_mosaics, obj_effect_selmosaics, #obj_effect_weak_sets,
-      cover_params, obj_effect_covers, obj_effect_selcovers)
+@load(hit_covers_filename,
+      proj_info, ptm_colls, obj_colls, obj_mosaics,
+      terms_df, ptmcollapsed_short2psitep_best_df,
+      objects_df, obj_effects_df, obj_contrasts_df,
+      obj_hit_sets, obj_hit_selsets, obj_hit_mosaics,
+      cover_params, obj_hit_covers)
 end
 
 Revise.includet(joinpath(misc_scripts_path, "optcover_utils.jl"));
@@ -213,26 +251,27 @@ Revise.includet(joinpath(misc_scripts_path, "optcover_utils.jl"));
 obj_id2name = Dict(r.ptmgroup_shortid => r.gene_name * "_" * uppercase(r.psitep_ptm_AA) * string(r.psitep_ptm_pos)
                    for r in eachrow(filter(r -> !ismissing(r.psitep_ptm_AA), ptmcollapsed_short2psitep_best_df)))
 
-obj_hit_covers_df = join(OptCoverUtils.covers_report(
+obj_hit_covers_df = innerjoin(OptCoverUtils.covers_report(
     obj_hit_covers, obj_hit_selsets, obj_colls, obj_mosaics, obj_id2name,
     terms_df,
-    maskid_col=[:std_type, :contrast, :change],
+    maskid_col=[:dataset, :std_type, :contrast, :change],
     maskedset_col_prefix="contrast"),
-    contrasts_df, on=[:contrast], kind=:inner)
+    contrasts_df, on=[:contrast])
+filter!(r -> r.term_id != "CHEK2" && r.term_id != "CK1E", obj_hit_covers_df) # redundant with Chk2 and CSK1E
 
-obj_hit_covers_signif_df = by(obj_hit_covers_df, :term_collection) do coll_df
+obj_hit_covers_signif_df = combine(groupby(obj_hit_covers_df, :term_collection)) do coll_df
     @info "Processing $(coll_df.term_collection[1])..."
-    return select!(OptCoverUtils.filter_multicover(coll_df, set_cols=[:std_type, :contrast, :change],
+    return select!(OptCoverUtils.filter_multicover(coll_df, set_cols=[:dataset, :std_type, :contrast, :change],
                                                    max_term_pvalue=1E-3, max_set_pvalue=1E-2, max_entry_pvalue=1.0),
                    Not(:term_collection))
 end
 
 using CSV
 CSV.write(joinpath(analysis_path, "reports", "$(proj_info.id)_$(proj_info.msfolder)_hit_covers_$(proj_info.oesc_ver).txt"),
-          obj_hit_covers_df[obj_hit_covers_df.nmasked .> 0, :],
+          filter(r -> r.nmasked > 0, obj_hit_covers_df),
           missingstring="", delim='\t');
 CSV.write(joinpath(analysis_path, "reports", "$(proj_info.id)_$(proj_info.msfolder)_hit_covers_signif_$(proj_info.oesc_ver).txt"),
-          obj_hit_covers_signif_df[obj_hit_covers_signif_df.nmasked .> 0, :],
+          filter(r -> r.nmasked > 0, obj_hit_covers_signif_df),
           missingstring="", delim='\t');
 
 Revise.includet(joinpath(misc_scripts_path, "frame_utils.jl"))
@@ -242,8 +281,10 @@ Revise.includet(joinpath(misc_scripts_path, "optcover_heatmap.jl"))
 using PlotlyJS, TextWrap, ORCA
 
 heatmap_layout_attrs = Dict(
-    ("GO_CC", true) => Dict(:margin_l => 200),
-    ("GO_CC", false) => Dict(:margin_l => 200),
+    (:seq_motifs, true) => Dict(:margin_l => 300),
+    (:seq_motifs, false) => Dict(:margin_l => 300),
+    (:regulators, true) => Dict(:margin_l => 150),
+    (:regulators, false) => Dict(:margin_l => 150),
 )
 
 for (plot_mosaic, cover_coll) in obj_hit_covers
@@ -256,51 +297,71 @@ for (plot_mosaic, cover_coll) in obj_hit_covers
     PlotlyJS.savehtml(paretofront_plot, "$plot_filename.html")
 end
 
+datasets = Dict(
+    :DIA => (label = "DIA", color="black"),
+    :DDA => (label = "DDA", color="maroon"),
+)
+
+stylize_dataset(ds) =
+    "<span style=\"font-weight: bold; color: $(datasets[Symbol(ds)].color);\">" * datasets[Symbol(ds)].label * "</span>"
+
 stylize_contrast(str) = foldl(replace, [
-    r"(SARS_COV2+)@(\d+)h" => s"<span style=\"font-weight: bold\">\2</span>h: SARS-CoV-2",
-    r"mock@(\d)h" => "mock",
-    "_vs_" => "&nbsp;<span style=\"color: #808080;\">vs</span>&nbsp;",
+    r"(SARS_COV2+)@(\d+)h" => s"<span style=\"font-weight: bold\">\2</span>h",#: SARS-CoV-2",
+    r"mock@(\d+)h" => "",#"mock",
+    "_vs_" => "",#"&nbsp;<span style=\"color: #808080;\">vs</span>&nbsp;",
     ],
     init = str)
 
 function process_contrast_axis(contrast_df)
     contrast_df,
-    stylize_contrast.(contrast_df.contrast) .* " " .* OptCoverHeatmap.stylize_change.(contrast_df.change),
-    stylize_contrast.(contrast_df.contrast) .* " " .* OptCoverHeatmap.stylize_change.(contrast_df.change)#stylize_effect.(effect_df.effect)
+    stylize_dataset.(contrast_df.dataset) .* "&nbsp;" .*
+        stylize_contrast.(contrast_df.contrast) .* "&nbsp;" .*
+        OptCoverHeatmap.stylize_change.(contrast_df.change),
+    stylize_dataset.(contrast_df.dataset) .* "&nbsp;" .*
+        stylize_contrast.(contrast_df.contrast) .* "&nbsp;" .*
+        OptCoverHeatmap.stylize_change.(contrast_df.change)#stylize_effect.(effect_df.effect)
 end
 
 for term_coll in unique(obj_hit_covers_df.term_collection), signif in (false, true)
     @info "Plotting $(signif ? "signif " : "")hit heatmap for $term_coll..."
     layout_attrs = get(heatmap_layout_attrs, (term_coll, signif), Dict())
     df = signif ? obj_hit_covers_signif_df : obj_hit_covers_df
+    for outformat in ("html", "pdf", "svg")
     coll_heatmap = OptCoverHeatmap.oesc_heatmap(df,
             Symbol(term_coll), elements_label="PTM",
             maskedset_axis_title = "contrast",
-            maskedset_cols = [:contrast, :change, :ncontrast],
+            maskedset_cols = [:dataset, :contrast, :change, :ncontrast],
             process_maskedset_axis=process_contrast_axis,
             process_term_axis=OptCoverHeatmap.process_term_axis,
-            margin_l=get(layout_attrs, :margin_l, 400),
-            margin_b=get(layout_attrs, :margin_b, 160),
-            cell_width=25, cell_height=25,
+            margin_l=get(layout_attrs, :margin_l, 80),
+            margin_b=get(layout_attrs, :margin_b, 60),
+            colorscale = "Hot", reversescale=false,
+            plot_bgcolor="#FFF", gridcolor="#DDD",#outformat in ["svg", "pdf"] ? "#000" : "#BBB",
+            zmin=-5, cell_width=18, cell_height=14, gridwidth=1,
             row_order=contrasts -> begin
                 contrast_matches = match.(Ref(r"SARS_COV2@(\d+)h"), contrasts.contrast)
                 contrasts.timepoint = parse.(Int, getindex.(contrast_matches, 1))
-                return sortperm(contrasts, [:change, :timepoint])
+                return reverse(sortperm(contrasts, [order(:change, rev=true), :timepoint, :dataset]))
             end,
-            transpose=false)
+            transpose=true)
     (coll_heatmap === nothing) && continue
     for (k, v) in [#:width=>800, :height=>400,
-                   :margin_r=>80,
+                   :margin_r=>60,
+                   :margin_t=>20,
                    :yaxis_tickfont_size=>12, :xaxis_tickangle=>45]
         coll_heatmap.plot.layout[k] = v
     end
-    plotname = joinpath(plots_path, "$(proj_info.msfolder)", "oesc_hits_$(sel_std_type)",
-                        "$(proj_info.id)_$(proj_info.oesc_ver)_$(term_coll)_X_contrast$(signif ? "_signif" : "")_heatmap")
-    PlotlyJS.savehtml(coll_heatmap, "$(plotname).html", :embed);
-    try
-        savefig(coll_heatmap.plot, "$(plotname).pdf");
-    catch e
-        @warn e
+    plot_fname = joinpath(plots_path, "$(proj_info.msfolder)", "oesc_hits_$(sel_std_type)",
+                          "$(proj_info.id)_$(proj_info.oesc_ver)_$(term_coll)_X_contrast$(signif ? "_signif" : "")_heatmap.$(outformat)")
+    if outformat == "html"
+        PlotlyJS.savehtml(coll_heatmap, plot_fname, :embed);
+    else
+        try
+            savefig(coll_heatmap.plot, plot_fname);
+        catch e
+            @warn e
+        end
+    end
     end
 end
 
