@@ -1,13 +1,13 @@
 proj_info = (id = "cov2",
-             data_ver = "20200515",
-             fit_ver = "20200515",
-             msfolder = "mq_apms_20200510",
-             prev_network_ver = "20200503",
-             network_ver = "20200503")
+             data_ver = "20200525",
+             fit_ver = "20200525",
+             msfolder = "mq_apms_20200525",
+             prev_network_ver = "20200515",
+             network_ver = "20200525")
 using Pkg
 Pkg.activate(@__DIR__)
 using Revise
-using DataFrames, CSV, Statistics, RData
+using DataFrames, CSV, Statistics, StatsBase, RData
 
 const misc_scripts_path = joinpath(base_scripts_path, "misc_jl");
 const analysis_path = joinpath(base_analysis_path, proj_info.id)
@@ -20,10 +20,24 @@ const plots_path = joinpath(analysis_path, "plots")
 Revise.includet(joinpath(misc_scripts_path, "clustering_utils.jl"))
 Revise.includet(joinpath(misc_scripts_path, "delimdata_utils.jl"))
 
+input_rdata = load(joinpath(scratch_path, "$(proj_info.id)_msglm_data_$(proj_info.msfolder)_$(proj_info.fit_ver).RData"))
 network_rdata = load(joinpath(networks_path, "$(proj_info.id)_4graph_$(proj_info.msfolder)_$(proj_info.fit_ver).RData"))
 
 objects_orig_df = network_rdata["objects_4graphml.df"]
 iactions_orig_df = network_rdata["iactions_ex_4graphml.df"]
+
+modelobjs_df = copy(input_rdata["msdata"]["protregroups"])
+modelobjs_df.object_id = copy(modelobjs_df.protregroup_id)
+modelobjs_df.object_label = copy(modelobjs_df.protregroup_label)
+modelobjs_df.chunk = 1:nrow(modelobjs_df)
+processed_object_ids = Set(network_rdata["object_contrasts_slim.df"].object_id)
+toprocess_objs_df = vcat(select(filter(r -> #(r.object_id ∉ processed_object_ids) ||
+        occursin(r"(?:^|;)ITG", coalesce(r.gene_names, "")), modelobjs_df),
+       [:chunk, :object_id, :object_label, :gene_names]),
+#=toprocess_objs_df = =#
+select(semijoin(modelobjs_df, objects_orig_df, on=:object_id),
+      [:chunk, :object_id, :object_label, :gene_names]))
+unique(toprocess_objs_df.chunk)
 
 nodesize_scale = 0.006
 node_type_props = Dict("bait" => (mass=2.0, width=6nodesize_scale, height=6nodesize_scale),
@@ -115,6 +129,7 @@ FA.layout!(gr, FA.ForceAtlas3Settings(gr,
             gravityRodCorners=((0.0, -6.0), (0.0, 6.0)), gravityRodCenterWeight=0.1),
             nsteps=5000, progressbar=true)
 
+objects_df.object_label = replace.(objects_df.object_label, Ref(r"\.+$" => ""))
 objects_df.layout_x = FA.extract_layout(gr)[1] .* 30
 objects_df.layout_y = FA.extract_layout(gr)[2] .* 30
 
@@ -193,7 +208,7 @@ bait_nodes_df = join(baits_df, objects_df, on=:bait_full_id=>:object_bait_full_i
 bait_nodes_df.is_alt = occursin.(Ref(r"\?$"), bait_nodes_df.bait_full_id)
 bait_nodes_df.is_merged = occursin.(Ref("SARS"), bait_nodes_df.organism) .& .! bait_nodes_df.is_alt
 bait_nodes_df.bait_homid = copy(bait_nodes_df.bait_id) # stricter "homology" match
-bait_nodes_df.is_used = (bait_nodes_df.is_merged .| occursin.(Ref(r"ORF[34]"), bait_nodes_df.bait_full_id)) .&
+bait_nodes_df.is_used = (bait_nodes_df.is_merged .| occursin.(Ref(r"ORF[34]"), String.(bait_nodes_df.bait_full_id))) .&
     .!bait_nodes_df.is_alt
 SkipBaitId = -10000
 bait_nodes_df[!, :baitmerge_object_id] .= SkipBaitId
@@ -204,7 +219,16 @@ for hombaits_df in groupby(bait_nodes_df, [:bait_homid])
             minimum(hombaits_df.object_id[hombaits_df.is_merged])
     end
 end
-objects_baitmerge_map_df = leftjoin(objects_df, select(bait_nodes_df, [:object_id, :baitmerge_object_id]), on=:object_id)
+objects_genemerge_map_df = combine(groupby(objects_df, :object_label)) do df
+    (nrow(df) == 1) && return DataFrame(object_id = Vector{eltype(df.object_id)}(),
+                                        baitmerge_object_id = Vector{eltype(df.object_id)}())
+    DataFrame(object_id = df.object_id,
+              baitmerge_object_id = repeat([minimum(df.object_id)], nrow(df)))
+end
+select!(objects_genemerge_map_df, Not(:object_label))
+objects_baitmerge_map_df = leftjoin(objects_df, vcat(select(bait_nodes_df, [:object_id, :baitmerge_object_id]),
+                                                     objects_genemerge_map_df),
+                                    on=:object_id)
 objects_baitmerge_map_df.old_object_id = copy(objects_baitmerge_map_df.object_id)
 objects_baitmerge_map_df.object_label = ifelse.(ismissing.(objects_baitmerge_map_df.baitmerge_object_id),
                                                 objects_baitmerge_map_df.object_label,
@@ -224,23 +248,24 @@ end
 # expand interactions so that if the interaction is present in SARS/SARS-CoV-2, we also get the
 # p-values for the corresponding interaction of the other virus
 object_contrasts_df = network_rdata["object_contrasts_slim.df"]
-apms_iactions_ex_df = join(unique!(select!(filter(r -> occursin("experiment", String(r.type)), iactions_df),
-                                           [:bait_id, :dest_object_id])),
-                           rename!(filter(r -> (r.std_type == "replicate") && occursin("_vs_others", r.contrast),
-                                          object_contrasts_df), :object_id => :dest_object_id),
-                           on=[:bait_id, :dest_object_id])
+apms_iactions_ex_df = innerjoin(unique!(select!(filter(r -> occursin("experiment", String(r.type)), iactions_df),
+                                        [:bait_id, :dest_object_id])),
+                                rename!(filter(r -> (r.std_type == "replicate") && occursin("_vs_others", String(r.contrast)),
+                                        object_contrasts_df), :object_id => :dest_object_id),
+                                on=[:bait_id, :dest_object_id])
 unique!(rename!(select(bait_nodes_df, [:bait_full_id, :object_id]), :object_id=>:src_object_id))
 apms_iactions_ex_df = leftjoin(apms_iactions_ex_df,
     unique!(rename!(select(bait_nodes_df, [:bait_full_id, :object_id]), :object_id=>:src_object_id)),
     on=:bait_full_id)
-select!(apms_iactions_ex_df, union(setdiff(propertynames(apms_iactions_ex_df), iaction))
+iaction_key_cols = [:contrast, :bait_id, :bait_full_id, :src_object_id, :dest_object_id]
+select!(apms_iactions_ex_df, union(setdiff(propertynames(apms_iactions_ex_df), propertynames(iactions_df)), iaction_key_cols))
 intersect(propertynames(apms_iactions_ex_df), propertynames(iactions_df))
 countmap(apms_iactions_ex_df.bait_full_id)
 
 iactions_ex_df = vcat(
-    leftjoin(iactions_df, apms_iactions_ex_df[!, ], on=[:contrast, :bait_id, :bait_full_id, :src_object_id, :dest_object_id]),
+    leftjoin(iactions_df, apms_iactions_ex_df, on=iaction_key_cols),
     filter(r -> ismissing(r.type),
-           rightjoin(iactions_df, apms_iactions_ex_df, on=[:contrast, :bait_id, :bait_full_id, :src_object_id, :dest_object_id]))
+           rightjoin(iactions_df, apms_iactions_ex_df, on=iaction_key_cols))
 )
 iactions_ex_df[!, :type] .= coalesce.(iactions_ex_df.type, "experiment")
 countmap(iactions_ex_df.type)
@@ -250,7 +275,7 @@ nrow(unique(iactions_ex_df[!, [:src_object_id, :dest_object_id]]))
 iactions_baitmerge_pre_df = filter!(r -> r.src_object_id != r.dest_object_id,
         rename!(join(rename!(filter(r -> r.type != "homology", iactions_ex_df),
                          :src_object_id => :old_src_object_id),
-                 select(filter(r -> r.object_id != SkipBaitId, objects_baitmerge_map_df),
+                select(filter(r -> r.object_id != SkipBaitId, objects_baitmerge_map_df),
                         [:old_object_id, :object_id, :organism]),
                  on=:old_src_object_id => :old_object_id),
                  :object_id => :src_object_id))
@@ -258,9 +283,8 @@ countmap(iactions_baitmerge_pre_df.type)
 
 # remove unattached nodes
 filter!(r -> r.object_id ∈ union(Set(filter(r -> r.type == "experiment", iactions_baitmerge_pre_df).src_object_id),
-                                 Set(filter(r -> r.type == "experiment", iactions_baitmerge_pre_df).dest_object_id)),
+                                 Set(filter(r -> r.type == "experiment" && coalesce(r.is_hit, false), iactions_baitmerge_pre_df).dest_object_id)),
         objects_baitmerge_df)
-nrow(unique(iactions_baitmerge_pre_df[!, [:src_object_id, :dest_object_id]]))
 
 # merge interactions of SARS/SARS-CoV-2
 iactions_baitmerge_df = combine(groupby(filter(r -> r.src_object_id ∈ Set(objects_baitmerge_df.object_id) &&
@@ -288,12 +312,15 @@ iactions_baitmerge_df = combine(groupby(filter(r -> r.src_object_id ∈ Set(obje
               iaction_ids = df.iaction_ids[1],
               edge_weight = maximum(w -> coalesce(w, 0.0), df.edge_weight),
               contrast_comparison = isnothing(cov1ix) || isnothing(cov2ix) ? missing :
-                df.bait_full_id[cov2ix] * "_vs_" * df.bait_full_id[cov1ix],
+                df.bait_full_id[cov2ix] * "_vs_" * df.bait_full_id[cov1ix] * "_corrected",
               oeproteome_p_value = min_pval_oeprot[1] == 2.0 ? missing : min_pval_oeprot[1],
               oeproteome_median_log2 = min_pval_oeprot[1] == 2.0 ? missing : df.oeproteome_median_log2[min_pval_oeprot[2]],
               oeproteome_is_hit = min_pval_oeprot[1] == 2.0 ? missing : df.oeproteome_is_hit[min_pval_oeprot[2]],
     )
 end
+filter!(r -> r.is_hit || r.type != "experiment", iactions_baitmerge_df)
+
+nrow(unique(iactions_baitmerge_pre_df[!, [:src_object_id, :dest_object_id]]))
 
 comparison_cols = [:contrast, :p_value, :median_log2, :is_signif, :is_hit, :is_hit_nomschecks, :change]
 iactions_baitmerge_df = leftjoin(iactions_baitmerge_df,
@@ -304,12 +331,12 @@ iactions_baitmerge_df = leftjoin(iactions_baitmerge_df,
     on=[:contrast_comparison, :dest_object_id])
 
 using CSV
-gene_groups_df = CSV.read(joinpath(data_path, "cov2_apms_prey-network_annotations_20200522_groups.txt"), delim='\t')
-rename!(gene_groups_df, Symbol("term_genes_all (5-30)") => :term_genes_all)
+gene_groups_df = CSV.read(joinpath(analysis_path, "networks", "cov2_contrasts_oesc_replicate_std_20200522_vigi_20200528_cat.txt"), delim='\t')
 for col in propertynames(gene_groups_df) # FIXME workaround for CSV.Column missing methods
     gene_groups_df[!, col] = convert(Vector, gene_groups_df[!, col])
 end
-dropmissing!(gene_groups_df, :term_name)
+gene_groups_df.annotation_label = replace.(gene_groups_df.annotation_label, "\\n" => "\n")
+filter!(r -> r.in_network > 0, gene_groups_df)
 gene_groups_df[!, :group_object_id] .= -1000 .- (1:nrow(gene_groups_df))
 
 object2gene_df = semijoin(join(rename!(DelimDataUtils.expand_delim_column(objects_df, list_col=:gene_names, elem_col=:gene_name, key_col=:object_id, delim=";"),
@@ -317,13 +344,13 @@ object2gene_df = semijoin(join(rename!(DelimDataUtils.expand_delim_column(object
                       select(objects_baitmerge_map_df, [:object_id, :old_object_id]), on=:old_object_id),
                       objects_baitmerge_df, on=:object_id)
 unique!(select!(object2gene_df, [:object_id, :gene_name]))
-gene_groups_expanded_df = DelimDataUtils.expand_delim_column(gene_groups_df, list_col=:term_genes_all, elem_col=:term_gene, key_col=:group_object_id, delim=" ")
+gene_groups_expanded_df = DelimDataUtils.expand_delim_column(gene_groups_df, list_col=:annotation_genes, elem_col=:term_gene, key_col=:group_object_id, delim=" ")
 object_groups_expanded_df = combine(groupby(join(gene_groups_expanded_df, object2gene_df, on=[:term_gene => :gene_name]), [:group_object_id, :object_id])) do df
     df[1:1, :]
 end
 used_groups_df = semijoin(gene_groups_df, object_groups_expanded_df, on=:group_object_id)
 
-gene_hits_df = CSV.read(joinpath(data_path, "cov2_apms_prey-network_annotations_20200522_hits.txt"), delim='\t')
+gene_hits_df = CSV.read(joinpath(networks_path, "mq_apms_20200525_20200525_prg_review_hits_vigi.txt"), delim='\t')
 object_hits_df = leftjoin(gene_hits_df, object2gene_df, on=:gene_name)
 filter(r -> ismissing(r.object_id), object_hits_df)
 
@@ -336,14 +363,15 @@ iactions_group_matrix_df = join(rename(select(object_groups_expanded_df, :object
                                 rename(select(object_groups_expanded_df, :object_id, :group_object_id), :object_id=>:dest_object_id),
                                 on=:group_object_id)
 filter!(r -> r.src_object_id < r.dest_object_id, iactions_group_matrix_df)
-iactions_group_matrix_df[!, :edge_weight] .= 10.0
+iactions_group_matrix_df[!, :edge_weight] .= 8
 
 iactions_baitmerge_layout_df = vcat(select(iactions_baitmerge_df, [:src_object_id, :dest_object_id, :edge_weight]),
-                          select(iactions_group_matrix_df, [:src_object_id, :dest_object_id, :edge_weight]))
+                                    select(iactions_group_matrix_df, [:src_object_id, :dest_object_id, :edge_weight]))
 
 bm_nodesize_scale = 0.02
-bm_node_type_props = Dict("bait" => (mass=2.0, width=4bm_nodesize_scale, height=4bm_nodesize_scale),
-                          "prey" => (mass=2.0, width=0.1bm_nodesize_scale, height=0.1bm_nodesize_scale))
+bm_node_type_props = Dict("bait" => (mass=2.0, width=6bm_nodesize_scale, height=6bm_nodesize_scale),
+                          "prey" => (mass=2.0, width=1.0bm_nodesize_scale, height=1.0bm_nodesize_scale),
+                          "prey hilight" => (mass=0.5, width=2.5bm_nodesize_scale, height=2.5bm_nodesize_scale))
 select!(objects_baitmerge_df, Not([:layout_x, :layout_y]))
 objects_baitmerge_df.width = getproperty.(getindex.(Ref(bm_node_type_props), objects_baitmerge_df.exp_role), :width);
 objects_baitmerge_df.height = getproperty.(getindex.(Ref(bm_node_type_props), objects_baitmerge_df.exp_role), :height);
@@ -353,17 +381,12 @@ for col in propertynames(group_objects_df)
     group_objects_df[!, col] = missings(eltype(group_objects_df[!, col]), nrow(group_objects_df))
 end
 group_objects_df.object_id = copy(used_groups_df.group_object_id)
-group_objects_df.object_label = copy(used_groups_df.term_name)
+group_objects_df.object_label = copy(used_groups_df.annotation_label)
 group_objects_df[!, :exp_role] .= "group"
 group_objects_df[!, :is_contaminant] .= false
 group_objects_df[!, :is_reverse] .= false
 group_objects_df[!, :is_viral] .= false
 group_objects_df[!, :show_label] .= true
-
-objects_baitmerge_and_groups_df = vcat(objects_baitmerge_df, group_objects_df)
-objects_baitmerge_and_groups_df = leftjoin(objects_baitmerge_and_groups_df,
-                                           combine(df -> df[1:1, :], groupby(select(object_groups_expanded_df, [:object_id, :group_object_id]), :object_id)),
-                                           on=:object_id)
 
 # the graph to define socioaffinity
 gr_bm_apms = SimpleGraph(FA.Graph(iactions_baitmerge_layout_df,
@@ -374,9 +397,14 @@ gr_bm_apms = SimpleGraph(FA.Graph(iactions_baitmerge_layout_df,
 node_dislikes = FA.socioaffinity(gr_bm_apms, p=(0.0, 1.0), q=1.0)
 node_dislikes_baits = FA.socioaffinity(gr_bm_apms, p=(1.25, 1.25), q=2.0)
 for (i, r1) in enumerate(eachrow(objects_baitmerge_df)), (j, r2) in enumerate(eachrow(objects_baitmerge_df))
+    r1_label = replace(r1.gene_label, r"\?$" => "")
+    r2_label = replace(r2.gene_label, r"\?$" => "")
     if r1.exp_role == "bait" && r2.exp_role == "bait" &&
-       replace(r1.gene_label, r"\?$" => "") != replace(r2.gene_label, r"\?$" => "")
-       node_dislikes[i, j] = 15 * node_dislikes_baits[i, j]
+       (r1_label != r2_label)
+       orf3_cluster =
+        (r1_label ∈ ["ORF3", "ORF3a", "ORF3b", "ORF4", "ORF4a"] &&
+         r2_label ∈ ["ORF3", "ORF3a", "ORF3b", "ORF4", "ORF4a"])
+       node_dislikes[i, j] = ifelse(orf3_cluster, 5, 15) * node_dislikes_baits[i, j]
     end
 end
 
@@ -388,22 +416,35 @@ bmgr = FA.Graph(iactions_baitmerge_layout_df, objects_baitmerge_df,
 FA.layout!(bmgr, FA.ForceAtlas3Settings(bmgr,
             outboundAttractionDistribution=false,
             attractionStrength=10.0, attractionEdgeWeightInfluence=0.5, jitterTolerance=0.1,
-            repulsionStrength=0.1.*(1.0 .+ node_dislikes),
+            repulsionStrength=1.0*(1.0 .+ node_dislikes),
             repulsionNodeModel=:Point,
-            gravity=1.0, gravityFalloff=1.3, gravityShape=:Rod,
-            gravityRodCorners=((0.0, -4.0), (0.0, 4.0)), gravityRodCenterWeight=0.1),
+            gravity=1.0, gravityFalloff=1.3, gravityShape=:Point,
+            #gravityRodCorners=((0.0, -4.0), (0.0, 4.0)), gravityRodCenterWeight=0.1
+            ),
             nsteps=1000, progressbar=true)
 FA.layout!(bmgr, FA.ForceAtlas3Settings(bmgr,
             outboundAttractionDistribution=false,
-            attractionStrength=8.0, attractionEdgeWeightInfluence=0.75, jitterTolerance=0.1,
-            repulsionStrength=3 .* (1.0 .+ node_dislikes),
+            attractionStrength=5.0, attractionEdgeWeightInfluence=0.75, jitterTolerance=0.1,
+            repulsionStrength=2 .* (0.5 .+ node_dislikes),
             repulsionNodeModel=:Circle,
-            gravity=1.5, gravityFalloff=1.2, gravityShape=:Rod,
-            gravityRodCorners=((0.0, -6.0), (0.0, 6.0)), gravityRodCenterWeight=0.1),
+            gravity=1.2, gravityFalloff=1.2, gravityShape=:Point,
+            #gravityRodCorners=((0.0, -6.0), (0.0, 6.0)), gravityRodCenterWeight=0.1
+            ),
             nsteps=5000, progressbar=true)
 
 objects_baitmerge_df.layout_x = FA.extract_layout(bmgr)[1] .* 20
 objects_baitmerge_df.layout_y = FA.extract_layout(bmgr)[2] .* 20
+group_objects_df[!, :layout_x] .= NaN
+group_objects_df[!, :layout_y] .= NaN
+group_objects_df[!, :group_object_id] = missings(Int, nrow(group_objects_df))
+
+# assign object to a single group
+objects_baitmerge_and_groups_df = leftjoin(objects_baitmerge_df,
+                                           combine(df -> df[1:1, :], groupby(select(object_groups_expanded_df, [:object_id, :group_object_id]), :object_id)),
+                                           on=:object_id)
+objects_baitmerge_and_groups_df = vcat(objects_baitmerge_and_groups_df,
+                                       filter(r -> r.object_id ∈ Set(objects_baitmerge_and_groups_df.group_object_id), group_objects_df))
+objects_baitmerge_and_groups_df.exp_role = objects_baitmerge_and_groups_df.exp_role .* ifelse.(objects_baitmerge_and_groups_df.show_label, " hilight", "")
 
 objects_baitmerge_and_groups_df.object_idstr = string.(objects_baitmerge_and_groups_df.object_id)
 objects_baitmerge_and_groups_df.group_object_idstr = ifelse.(ismissing.(objects_baitmerge_and_groups_df.group_object_id), missing,
@@ -477,3 +518,27 @@ end,
 open(joinpath(networks_path, "$(proj_info.id)_baitsmerged_graph_$(proj_info.msfolder)_$(proj_info.fit_ver)_FA3.graphml"), "w") do io
     write(io, bm_apms_graph)
 end
+
+# final stats
+
+baits_merged_df = leftjoin(select(semijoin(objects_baitmerge_df,
+         filter(r -> occursin("experiment", r.type), iactions_baitmerge_df),
+         on=:object_id=>:src_object_id), [:object_id, :object_label, :organism]),
+         rename!(select(bait_nodes_df, [:object_id, :bait_full_id, :organism]),
+                 :organism => :bait_organism),
+         on=:object_id)
+baits_merged_df.is_sars = occursin.("SARS_CoV_", baits_merged_df.bait_full_id)
+baits_merged_df.is_cov2 = occursin.("SARS_CoV2_", baits_merged_df.bait_full_id)
+
+# SARS/CoV-2 interactions
+sars_iactions_df = filter(r -> coalesce(r.is_hit, false) && occursin("experiment", r.type),
+       innerjoin(iactions_baitmerge_df, select(filter(r -> r.is_sars || r.is_cov2, baits_merged_df), [:object_id, :is_sars, :is_cov2]),
+                 on=:src_object_id=>:object_id))
+length(unique(sars_iactions_df.dest_object_id))
+length(unique(filter(r -> coalesce(r.is_hit, false) && occursin("experiment", r.type), iactions_baitmerge_df).dest_object_id))
+countmap(sars_iactions_df.change_comparison)
+countmap(coalesce.(sars_iactions_df.change_comparison,
+    ifelse.(sars_iactions_df.is_sars, "-",
+        ifelse.(sars_iactions_df.is_cov2, "+", "?"))))
+
+countmap(filter(r -> ismissing(r.change_comparison), sars_iactions_df).src_object_id)
