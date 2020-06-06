@@ -48,13 +48,13 @@ term_hclu = hclust(term_dist, linkage=:ward)
 encode_heatmap = plot(heatmap(z=coalesce.(encode_tfea_mtx[conditions_perm, term_hclu.order]', 0.0),
             hoverinfo="text",
             y=condition_axis.condition_label[conditions_perm], x=term_axis.TF[term_hclu.order],
-        colorscale="Blackbody", reversescale=true,
+        colorscale="Hot", reversescale=false,
         #zmax=zmax, zmin=zmin, zauto=false, connectgaps=false,
         xtype="array", ytype="array", xgap=1, ygap=1),
         Layout(#paper_bgcolor=paper_bgcolor,
                #plot_bgcolor=plot_bgcolor,
                modebar_bgcolor="#FFF",
-               xaxis = attr(tickson="boundaries", tickangle=45),
-               yaxis = attr(tickson="boundaries"),
+               xaxis = attr(tickson="boundaries", gridcolor="#DDD", gridwidth=1, tickangle=45),
+               yaxis = attr(tickson="boundaries", gridcolor="#DDD", gridwidth=1),
                width = 1200, height = 250, margin_l = 60, margin_t=20))
-savefig(encode_heatmap.plot, joinpath(plots_path, "$(proj_info.id)_ENCODE_TFEA_all_20200519.pdf"));
+savefig(encode_heatmap.plot, joinpath(plots_path, "$(proj_info.id)_ENCODE_TFEA_all_20200606.svg"));
