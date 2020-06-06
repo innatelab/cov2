@@ -1,13 +1,13 @@
 #parmeth = :thread
 parmeth = :cluster
 proj_info = (id = "cov2",
-             apms_folder = "mq_apms_20200510",
-             apms_data_ver = "20200515",
-             apms_fit_ver = "20200515",
-             oeproteome_folder = "spectronaut_oeproteome_20200519",
-             oeproteome_data_ver = "20200519",
-             oeproteome_fit_ver = "20200519",
-             hotnet_ver = "20200525")
+             apms_folder = "mq_apms_20200525",
+             apms_data_ver = "20200525",
+             apms_fit_ver = "20200525",
+             oeproteome_folder = "spectronaut_oeproteome_20200527",
+             oeproteome_data_ver = "20200527",
+             oeproteome_fit_ver = "20200527",
+             hotnet_ver = "20200603")
 using Pkg
 Pkg.activate(joinpath(base_scripts_path, "adhoc", proj_info.id))
 
@@ -86,27 +86,34 @@ oeproteome_data_rdata = load(joinpath(scratch_path, "$(proj_info.id)_msdata_full
 oeproteome_fit_rdata = load(joinpath(scratch_path, "$(proj_info.id)_msglm_fit_$(proj_info.oeproteome_folder)_$(proj_info.oeproteome_data_ver).RData"))
 
 #--- map OE proteome to reactome network
-oeproteome_objeffects_df = filter(r ->
-                                  r.std_type == "replicate" && occursin(r"_vs_controls$", r.contrast),
-                                  oeproteome_fit_rdata["object_contrasts.df"])
-oeproteome_batchcontrasts_df = filter(r -> r.std_type == "replicate" &&
-                                      occursin(r"_vs_B\d+_others$", r.contrast),
-                                      oeproteome_fit_rdata["object_contrasts.df"])
-oeproteome_objeffects_df = innerjoin(oeproteome_objeffects_df,
+objects_df = copy(oeproteome_data_rdata["msdata_full"]["protgroups"])
+objects_df.is_used = objects_df.q_value .<= 0.001
+oeproteome_contrasts_df = filter!(r -> r.std_type == "replicate" && occursin(r"_vs_controls$", r.contrast),
+                                  semijoin(oeproteome_fit_rdata["object_contrasts.df"],
+                                          filter(r -> r.is_used, objects_df), on=:object_id=>:protgroup_id))
+oeproteome_batchcontrasts_df = filter!(r -> r.std_type == "replicate" &&
+                                       occursin(r"_vs_B\d+_others$", r.contrast),
+                                       semijoin(oeproteome_fit_rdata["object_contrasts.df"],
+                                                filter(r -> r.is_used, objects_df), on=:object_id=>:protgroup_id))
+oeproteome_contrasts_df = innerjoin(oeproteome_contrasts_df,
     rename!(select(oeproteome_batchcontrasts_df, [:bait_full_id, :contrast, :std_type, :object_id, :median_log2, :p_value]),
             :contrast => :contrast_batch, :median_log2 => :median_log2_batch, :p_value => :p_value_batch),
             on = [:bait_full_id, :std_type, :object_id])
 
+countmap(oeproteome_contrasts_df.bait_full_id)
+
 # calculate vertex weights
-oeproteome_objeffects_df[!, :is_source] = [
-    (coalesce(r.p_value, 1.0) <= 0.01 && abs(r.median_log2) >= 0.25) &&
-    (coalesce(r.p_value_batch, 1.0) <= 0.01 && abs(r.median_log2_batch) >= 0.25)
-    for r in eachrow(oeproteome_objeffects_df)]
-oeproteome_objeffects_df[!, :vertex_weight] = [ifelse(r.is_source,
+oeproteome_contrasts_df[!, :is_source] = [
+    (coalesce(r.p_value, 1.0) <= 0.005 && abs(r.median_log2) >= 0.25) &&
+    (coalesce(r.p_value_batch, 1.0) <= 0.005 && abs(r.median_log2_batch) >= 0.25)
+    for r in eachrow(oeproteome_contrasts_df)]
+oeproteome_contrasts_df[!, :vertex_weight] = [ifelse(r.is_source,
     (-log10(max(1E-20, r.p_value)))^0.5 * abs(r.median_log2)^0.5, 0.0)
-    for r in eachrow(oeproteome_objeffects_df)]
-extrema(oeproteome_objeffects_df[oeproteome_objeffects_df.vertex_weight .> 0, :vertex_weight])
-quantile(oeproteome_objeffects_df[oeproteome_objeffects_df.vertex_weight .> 0, :vertex_weight], 0.5)
+    for r in eachrow(oeproteome_contrasts_df)]
+extrema(oeproteome_contrasts_df[oeproteome_contrasts_df.vertex_weight .> 0, :vertex_weight])
+quantile(oeproteome_contrasts_df[oeproteome_contrasts_df.vertex_weight .> 0, :vertex_weight], 0.5)
+oeproteome_contrasts_stats_df = combine(groupby(oeproteome_contrasts_df, [:bait_full_id, :contrast]),
+        :vertex_weight => (w -> quantile(filter(>(0), w), 0.5)) => :vertex_weight_median)
 
 oeproteome_obj2gene_df = innerjoin(
     filter(r -> r.is_majority, oeproteome_data_rdata["msdata_full"]["protein2protgroup"]),
@@ -114,12 +121,13 @@ oeproteome_obj2gene_df = innerjoin(
     on=:protein_ac)
 rename!(oeproteome_obj2gene_df, :protgroup_id => :object_id)
 oeproteome_obj2gene_df[!, :reactomefi_geneid] = get.(Ref(reactomefi_gene2index), oeproteome_obj2gene_df.gene_name, 0)
-oeproteome_gene_effects_df = combine(groupby(innerjoin(select(oeproteome_objeffects_df, Not([:is_viral, :is_contaminant])),
+oeproteome_gene_effects_df = combine(groupby(innerjoin(select(oeproteome_contrasts_df, Not([:is_viral, :is_contaminant])),
                                      oeproteome_obj2gene_df, on=:object_id),
           [:contrast, :gene_name, :reactomefi_geneid])) do df
     rowix = findmin(df.p_value)[2]
     return df[rowix:rowix, :]
 end;
+countmap(oeproteome_gene_effects_df.vertex_weight .> 0)
 
 gene_info_df = combine(groupby(filter(r -> !ismissing(r.gene_name),
                       vcat(select(apms_data_rdata["msdata_full"]["proteins"], [:gene_name, :protein_description]),
@@ -146,10 +154,10 @@ for bait_genes_df in groupby(filter(r -> r.is_source && r.reactomefi_geneid > 0,
     bait2oeproteome_vertices[baitkey] = vertex_weights
 end
 
-
 #--- map APMS data to reactome network
 apms_iactions_df = filter(r -> coalesce(r.is_hit, false),
                           apms_network_rdata["iactions_4table.df"])
+countmap(apms_iactions_df.bait_full_id)
 apms_obj2gene_df = innerjoin(
     filter(r -> r.is_majority, apms_data_rdata["msdata_full"]["protein2protregroup"]),
     filter!(r -> !ismissing(r.gene_name), select(apms_data_rdata["msdata_full"]["proteins"], Not(:protgroup_id))),
@@ -240,6 +248,16 @@ for (bait_id, vertex_weights) in bait2vertex_weights
     bait2vertex_weights_perms[bait_id] = vertex_weights_perms
 end
 
+using Serialization, CodecZstd
+open(ZstdCompressorStream, joinpath(scratch_path, "$(proj_info.id)_hotnet_prepare_$(proj_info.hotnet_ver).jlser.zst"), "w") do io
+    serialize(io, (vertex2gene, gene2vertex,
+              reactomefi_genes, reactomefi_digraph_rev,
+              bait2apms_vertices, apms_gene_iactions_df,
+              bait_ids, bait2vertex_weights,
+              reactomefi_walkmtx, bait2reactomefi_tree,
+              vertex_bins, bait2vertex_weights_perms))
+end
+
 @save(joinpath(scratch_path, "$(proj_info.id)_hotnet_prepare_$(proj_info.hotnet_ver).jld2"),
       vertex2gene, gene2vertex,
       reactomefi_genes, reactomefi_digraph_rev,
@@ -327,8 +345,12 @@ vertex_stats_df = leftjoin(vertex_stats_df,
 vertex_stats_df.prob_perm_walkweight_greater = 1.0 .- vertex_stats_df.ngreater_walkweight ./ length.(get.(Ref(bait2reactomefi_perm_trees), vertex_stats_df.bait_full_id, 0))
 vertex_stats_df.is_hit = vertex_stats_df.prob_perm_walkweight_greater .<= 0.05
 vertex_stats_df = leftjoin(vertex_stats_df, gene_info_df, on=:gene_name)
+open(ZstdCompressorStream, joinpath(scratch_path, "$(proj_info.id)_hotnet_vertex_stats_$(proj_info.hotnet_ver).jlser.zst"), "w") do io
+    serialize(io, vertex_stats_df)
+end
 @save(joinpath(scratch_path, "$(proj_info.id)_hotnet_vertex_stats_$(proj_info.hotnet_ver).jld2"),
       vertex_stats_df)
+
 @load(joinpath(scratch_path, "$(proj_info.id)_hotnet_vertex_stats_$(proj_info.hotnet_ver).jld2"),
       vertex_stats_df)
 
@@ -361,7 +383,12 @@ reactomefi_tree_stats_dfs = Vector{DataFrame}()
 reactomefi_perm_tree_stats_dfs = Vector{DataFrame}()
 chunk_prefix = "$(proj_info.id)_hotnet_perm_treecut_stats_$(proj_info.hotnet_ver)"
 for (root, dirs, files) in Filesystem.walkdir(joinpath(scratch_path, chunk_prefix))
-    isempty(files) && continue # skip the empty folder
+    if isempty(files)
+        @warn "Found no files in $root"
+        continue # skip the empty folder
+    else
+        @info "Found $(length(files)) file(s) in $root, processing..."
+    end
     for file in files
         if startswith(file, chunk_prefix) && endswith(file, ".jlser.zst")
             _, _, _, chunkstats_df =
@@ -376,9 +403,10 @@ for (root, dirs, files) in Filesystem.walkdir(joinpath(scratch_path, chunk_prefi
         end
     end
 end
-countmap(reactomefi_tree_stats_df.bait_full_id)
 reactomefi_tree_stats_df = reduce(vcat, values(reactomefi_tree_stats_dfs))
+countmap(reactomefi_tree_stats_df.bait_full_id)
 reactomefi_perm_tree_stats_df = reduce(vcat, values(reactomefi_perm_tree_stats_dfs))
+countmap(reactomefi_perm_tree_stats_df.bait_full_id)
 @save(joinpath(scratch_path, "$(proj_info.id)_hotnet_perm_treecut_stats_$(proj_info.hotnet_ver).jld2"),
       vertex_stats_df, reactomefi_tree_stats_df, reactomefi_perm_tree_stats_df)
 
@@ -387,7 +415,6 @@ reactomefi_perm_tree_stats_df = reduce(vcat, values(reactomefi_perm_tree_stats_d
 
 reactomefi_tree_all_stats_df = vcat(reactomefi_tree_stats_df,
                                     reactomefi_perm_tree_stats_df)
-
 threshold_range = (0.0, 0.05)
 reactomefi_tree_binstats_df = combine(groupby(reactomefi_tree_all_stats_df, :bait_full_id)) do orf_cutstats_df
     @info "binstats($(orf_cutstats_df.bait_full_id[1]))"
@@ -410,7 +437,7 @@ reactomefi_tree_extremes_df = HHN.extreme_treecut_binstats(
     reactomefi_tree_perm_aggstats_df,
     join_cols = [:bait_full_id, :threshold_bin, :threshold])
 
-include(joinpath(misc_scripts_path, "plots", "plotly_utils.jl"))
+includet(joinpath(misc_scripts_path, "plots", "plotly_utils.jl"))
 
 using PlotlyJS, PlotlyBase
 using Printf: @sprintf
@@ -420,6 +447,9 @@ filter(r -> r.compflow_avglen < 2 && r.bait_full_id == "VZV-9", reactomefi_tree_
 
 sel_bait_id = "SARS_CoV2_ORF7b"
 sel_metric = :maxcomponent_size
+sel_metric = :topn_components_sizesum
+sel_metric = :components_signif_sizesum_mw
+sel_metric = :compflow_distance
 PlotlyUtils.permstats_plot(
     filter(r -> !r.is_permuted && (r.bait_full_id == sel_bait_id) && !ismissing(r[sel_metric]),
            reactomefi_tree_binstats_df),
@@ -431,11 +461,13 @@ PlotlyUtils.permstats_plot(
     yaxis_metric=sel_metric)
 
 includet(joinpath(misc_scripts_path, "graphml_writer.jl"))
-
-bait2optcut_threshold = Dict(r.bait_full_id => max(r.compflow_distance_threshold,
-                                                   r.flow_distance_threshold)
-                             for r in eachrow(reactomefi_tree_extremes_df)
-                                 if (r.type == "min") && !ismissing(r.flow_distance))
+print(propertynames(reactomefi_tree_extremes_df))
+bait2optcut_threshold = Dict(df.bait_full_id[1] => begin
+    minr = df[findfirst(==("min"), df.type), :]
+    maxr = df[findfirst(==("max"), df.type), :]
+    !ismissing(minr.flow_distance) ? minr.flow_distance_threshold :#max(minr.compflow_distance_threshold, minr.flow_distance_threshold) :
+    maxr.topn_components_sizesum_threshold #max(maxr.topn_components_sizesum_threshold, maxr.maxcomponent_size_threshold)
+end for df in groupby(reactomefi_tree_extremes_df, :bait_full_id))
 bait2reactomefi_tree_optcut = Dict(bait_id =>
     HHN.cut(bait2reactomefi_tree[bait_id], optcut_threshold, minsize=1)
     for (bait_id, optcut_threshold) in bait2optcut_threshold)
@@ -466,7 +498,7 @@ function flowgraphml(bait_id::AbstractString, threshold::Number;
     graph_def = HHN.export_flowgraph(tree, threshold,
                 reactomefi_walkmtx * Diagonal(convert(Vector{Float64}, bait2vertex_weights[bait_id])),
                 findall(>(1.5), bait2vertex_weights[bait_id]),
-                bait2apms_vertices[bait_id];
+                get(bait2apms_vertices, bait_id, valtype(bait2apms_vertices)());
                 flow_edges=flow_edges, verbose=verbose,
                 orig_diedges=orig_diedges,
                 vertices_stats=@isdefined(vertex_stats_df) ? filter(r -> r.bait_full_id == bait_id, vertex_stats_df) : nothing,
@@ -581,7 +613,7 @@ function layout_flowgraph!(graph::GraphML.Graph)
 
     FA.layout!(fa_graph, FA.ForceAtlas3Settings(fa_graph,
                outboundAttractionDistribution=false,
-               attractionStrength=10.0, attractionEdgeWeightInfluence=0.5, jitterTolerance=0.1,
+               attractionStrength=3.0, attractionEdgeWeightInfluence=0.1, jitterTolerance=0.1,
                repulsionStrength=1 .* (1.0 .+ fa_node_dislikes),
                repulsionNodeModel=:Point,
                gravity=0.1, gravityFalloff=1.0, gravityShape=:Rod,
@@ -589,7 +621,7 @@ function layout_flowgraph!(graph::GraphML.Graph)
                nsteps=1000, progressbar=true)
     FA.layout!(fa_graph, FA.ForceAtlas3Settings(fa_graph,
                outboundAttractionDistribution=false,
-               attractionStrength=10.0, attractionEdgeWeightInfluence=0.5, jitterTolerance=0.1,
+               attractionStrength=3.0, attractionEdgeWeightInfluence=0.1, jitterTolerance=0.1,
                repulsionStrength = 1 .+ 1 * fa_node_dislikes,
                repulsionNodeModel=:Circle,
                gravity=0.75, gravityFalloff=1.0, gravityShape=:Rod,
@@ -620,19 +652,26 @@ for bait_id in sel_bait_ids
 end
 
 using ORCA
-for bait_id in sel_bait_ids
-    @info "Flow stats for $bait_id"
+sel_bait_ids = ["SARS_CoV2_ORF7a"]
+for bait_id in sel_bait_ids, metric in [:flow_distance, :maxcomponent_size]
+    @info "Plotting $metric stats for $bait_id"
     bait_stats_plot = PlotlyUtils.permstats_plot(
         filter(r -> !r.is_permuted && (r.bait_full_id == bait_id), reactomefi_tree_binstats_df),
         filter(r -> r.bait_full_id == bait_id, reactomefi_tree_perm_aggstats_df),
         filter(r -> r.bait_full_id == bait_id, reactomefi_tree_extremes_df),
-        threshold_range=(0.00, 0.002),
-        yaxis_metric=:flow_distance)
+        threshold_range=(0.00, 0.005),
+        yaxis_metric=metric)
+    bait_stats_plot.plot.layout[:width] = 10
+    bait_stats_plot.plot.layout[:height] = 6
     try
         savefig(bait_stats_plot.plot,
             joinpath(analysis_path, "networks", "apms_oeproteome_flows_$(proj_info.hotnet_ver)_optcut",
-                     "$(proj_info.id)_$(bait_id)_flow_distance_$(proj_info.hotnet_ver).pdf"))
+                     "$(proj_info.id)_$(bait_id)_$(metric)_$(proj_info.hotnet_ver)_4figure.pdf"))
     catch e
-        @warn e
+        if e isa InterruptException
+            rethrow(e)
+        else
+            @warn e
+        end
     end
 end
