@@ -3,7 +3,7 @@ proj_info = (id = "cov2",
              fit_ver = "20200525",
              msfolder = "mq_apms_20200525",
              prev_network_ver = "20200515",
-             network_ver = "20200525")
+             network_ver = "20200606")
 using Pkg
 Pkg.activate(@__DIR__)
 using Revise
@@ -331,7 +331,7 @@ iactions_baitmerge_df = leftjoin(iactions_baitmerge_df,
     on=[:contrast_comparison, :dest_object_id])
 
 using CSV
-gene_groups_df = CSV.read(joinpath(analysis_path, "networks", "cov2_contrasts_oesc_replicate_std_20200522_vigi_20200528_cat.txt"), delim='\t')
+gene_groups_df = CSV.read(joinpath(analysis_path, "networks", "cov2_mq_apms_20200525_hit_oesc_20200604_vigi_20200606_annotations.txt"), delim='\t')
 for col in propertynames(gene_groups_df) # FIXME workaround for CSV.Column missing methods
     gene_groups_df[!, col] = convert(Vector, gene_groups_df[!, col])
 end
@@ -350,7 +350,7 @@ object_groups_expanded_df = combine(groupby(join(gene_groups_expanded_df, object
 end
 used_groups_df = semijoin(gene_groups_df, object_groups_expanded_df, on=:group_object_id)
 
-gene_hits_df = CSV.read(joinpath(networks_path, "mq_apms_20200525_20200525_prg_review_hits_vigi.txt"), delim='\t')
+gene_hits_df = CSV.read(joinpath(networks_path, "mq_apms_20200525_20200525_prg_review_hits_vigi_20200607.txt"), delim='\t')
 object_hits_df = leftjoin(gene_hits_df, object2gene_df, on=:gene_name)
 filter(r -> ismissing(r.object_id), object_hits_df)
 
