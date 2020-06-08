@@ -1,5 +1,5 @@
 Sys.setenv(TZ='Etc/GMT+1') # issue#612@rstan
-#job.args <- c("cov2", "ast_cov2_oeproteome", "spectronaut_oeproteome_20200527", "20200527", "20200527", "0", "1235")
+#job.args <- c("cov2", "ast_cov2_oeproteome", "spectronaut_oeproteome_20200527", "20200527", "20200608", "0", "1235")
 if (!exists('job.args')) {
   job.args <- commandArgs(trailingOnly = TRUE)
 }
@@ -154,7 +154,7 @@ gc()
 msglm.stan_data <- stan.prepare_data(instr_calib, model_data,
                                      global_labu_shift = global_labu_shift,
                                      obj_labu_min = obj_labu_min, obj_labu_min_scale = 1,
-                                     batch_effect_sigma=0.25)
+                                     batch_effect_sigma=0.5)
 
 message('Running STAN in NUTS mode...')
 options(mc.cores=mcmc_nchains)
