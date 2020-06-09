@@ -9,7 +9,7 @@ job_info = (project = ARGS[1],
             hotnet_ver = ARGS[3],
             id = parse(Int, ARGS[4]),
             chunk = parse(Int, ARGS[5]),
-            ntrees_perchunk = 10)
+            ntrees_perchunk = 50)
 
 @info "Tree stats for $(job_info.project) (job '$(job_info.name)' id=$(job_info.id))" *
       " chunk #$(job_info.chunk)"
@@ -28,19 +28,30 @@ using JLD2, DataFrames, Serialization, CodecZstd
 using LinearAlgebra, HierarchicalHotNet
 HHN = HierarchicalHotNet
 
-@load(joinpath(scratch_path, "$(proj_info.id)_hotnet_prepare_$(proj_info.hotnet_ver).jld2"),
+_, _, _, _,
+bait2apms_vertices, _,
+bait_ids, bait2vertex_weights,
+reactomefi_walkmtx, bait2reactomefi_tree,
+_, bait2vertex_weights_perms =
+open(ZstdDecompressorStream, joinpath(scratch_path, "$(proj_info.id)_hotnet_prepare_$(proj_info.hotnet_ver).jlser.zst"), "r") do io
+    deserialize(io)
+end
+#=@load(joinpath(scratch_path, "$(proj_info.id)_hotnet_prepare_$(proj_info.hotnet_ver).jld2"),
       bait_ids, bait2vertex_weights,
       bait2apms_vertices,
       reactomefi_walkmtx, bait2reactomefi_tree,
-      bait2vertex_weights_perms)
+      bait2vertex_weights_perms)=#
 #=@load(joinpath(scratch_path, "$(proj_info.id)_hotnet_permtrees_$(proj_info.hotnet_ver).jld2"),
       bait2reactomefi_perm_trees)
 =#
 bait2reactomefi_perm_trees = open(ZstdDecompressorStream, joinpath(scratch_path, "$(proj_info.id)_hotnet_permtrees_$(proj_info.hotnet_ver).jlser.zst"), "r") do io
     deserialize(io)
 end
-@load(joinpath(scratch_path, "$(proj_info.id)_hotnet_vertex_stats_$(proj_info.hotnet_ver).jld2"),
-      vertex_stats_df)
+vertex_stats_df = open(ZstdDecompressorStream, joinpath(scratch_path, "$(proj_info.id)_hotnet_vertex_stats_$(proj_info.hotnet_ver).jlser.zst"), "r") do io
+    deserialize(io)
+end
+#@load(joinpath(scratch_path, "$(proj_info.id)_hotnet_vertex_stats_$(proj_info.hotnet_ver).jld2"),
+#      vertex_stats_df)
 
 ntrees_pergroup = size.(getindex.(Ref(bait2vertex_weights_perms), bait_ids), 2)
 pushfirst!(ntrees_pergroup, length(bait_ids)) # non-permuted trees
@@ -57,6 +68,19 @@ chunk_trees = ((localchunk-1)*job_info.ntrees_perchunk + 1):min(
 treestats_dfs = sizehint!(Vector{DataFrame}(), length(chunk_trees))
 W = eltype(reactomefi_walkmtx)
 tree_mtx = similar(reactomefi_walkmtx)
+
+function append_missing_slowstats!(statsdf)
+    statsdf[!, :topn_nsinks] = missings(Int, nrow(statsdf))
+    statsdf[!, :ncompsources] = missings(Int, nrow(statsdf))
+    statsdf[!, :ncompsinks] = missings(Int, nrow(statsdf))
+    statsdf[!, :nflows] = missings(Int, nrow(statsdf))
+    statsdf[!, :ncompflows] = missings(Int, nrow(statsdf))
+    statsdf[!, :flow_avglen] = missings(Float64, nrow(statsdf))
+    statsdf[!, :compflow_avglen] = missings(Float64, nrow(statsdf))
+    statsdf[!, :flow_distance] = missings(Float64, nrow(statsdf))
+    statsdf[!, :compflow_distance] = missings(Float64, nrow(statsdf))
+    return statsdf
+end
 
 if chunkgroup > 1
 bait_id = bait_ids[chunkgroup-1]
@@ -78,6 +102,7 @@ for i in chunk_trees
                                      sinks=apms_vertices,
                                      nflows_ratio=0.99,
                                      pools=nothing)
+    isnothing(apms_vertices) && append_missing_slowstats!(treestats_df)
     treestats_df[!, :tree] .= i
     treestats_df[!, :bait_full_id] .= bait_id
     treestats_df[!, :is_permuted] .= true
@@ -100,6 +125,7 @@ for i in chunk_trees
                                      sinks=apms_vertices,
                                      nflows_ratio=0.999,
                                      pools=nothing)
+    isnothing(apms_vertices) && append_missing_slowstats!(treestats_df)
     treestats_df[!, :tree] .= 0
     treestats_df[!, :bait_full_id] .= bait_id
     treestats_df[!, :is_permuted] .= false

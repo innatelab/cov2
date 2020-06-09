@@ -29,17 +29,23 @@ using JLD2, DataFrames, Serialization, CodecZstd
 using LinearAlgebra, HierarchicalHotNet
 HHN = HierarchicalHotNet
 
+_, _, _, _, _, _,
+bait_ids, bait2vertex_weights, reactomefi_walkmtx,
+_, _, bait2vertex_weights_perms =
+open(ZstdDecompressorStream, joinpath(scratch_path, "$(proj_info.id)_hotnet_prepare_$(proj_info.hotnet_ver).jlser.zst"), "r") do io
+    deserialize(io)
+end
+#=      
 @load(joinpath(scratch_path, "$(proj_info.id)_hotnet_prepare_$(proj_info.hotnet_ver).jld2"),
       bait_ids, bait2vertex_weights,
-      bait2apms_vertices,
       reactomefi_walkmtx, bait2vertex_weights_perms)
+=#
 
 nbaittrees = cumsum(size.(getindex.(Ref(bait2vertex_weights_perms), bait_ids), 2))
 chunk_1st_tree = (job_info.chunk-1) * job_info.ntrees_perchunk + 1
 bait_ix = searchsortedfirst(nbaittrees, chunk_1st_tree)
 @assert (bait_ix <= length(bait_ids)) "Chunk #$(job_info.chunk) outside of permuted trees range"
 bait_id = bait_ids[bait_ix]
-apms_vertices = bait2apms_vertices[bait_id]
 vertex_weights_perms = bait2vertex_weights_perms[bait_id]
 bait_idprev_lastree = bait_ix > 1 ? nbaittrees[bait_ix-1] : 0
 # indices of chunk trees to process (within bait_id perm_trees vector)
