@@ -1,42 +1,45 @@
 proj_info = (id = "cov2",
-             data_ver = "20200428",
-             fit_ver = "20200428",
-             oesc_ver = "20200519",
-             modelobj = "ptmgroup",
-             cov2ts_msfolder = "cov2timecourse_dia_20200423",
-             cov2el_msfolder = "cov2earlylate_fp_phos_ubi_dda_20200429")
+             oesc_ver = "20200606")
 
 datasets = Dict(
     :cov2ts_proteome => (msfolder="cov2timecourse_dia_20200423",
                          fit_ver="20200429",
                          analysis=:msglm, ptm=nothing,
-                         label="DIA Proteome",
-                         color="#000"),
+                         datatype=:proteome,
+                         label="Proteome (DIA)",
+                         color="#226430"),
     :cov2ts_phospho => (msfolder="cov2timecourse_phospho_dia_20200423",
                         fit_ver="20200428",
                         analysis=:msglm, ptm=:phospho,
-                        label="DIA Phospho",
-                        color="maroon"),
+                        datatype=:phospho,
+                        label="Phosphoproteome (DIA)",
+                        color="#5e268f"),
     :cov2ts_rnaseq => (msfolder="cov2ts_tx",
                        fit_ver="20200518",
                        analysis=:deseq, ptm=:nothing,
+                       datatype=:rnaseq,
                        label="RNA-Seq",
-                       color="royalblue"),
+                       color="#383c9b"),
     :cov2el_proteome => (msfolder="cov2earlylate_fp_phos_ubi_dda_20200429",
                          fit_ver="20200514",
                          analysis=:msglm, ptm=nothing,
-                         label="DDA Proteome",
-                         color="#000"),
-    :cov2el_phospho => (msfolder="cov2earlylate_fp_phos_ubi_dda_20200429",
+                         datatype=:proteome,
+                         label="Proteome (DDA)",
+                         color="#226430"),
+    :cov2el_phospho => (msfolder="cov2earlylate_fp_phos_ubi_dda_20200601",
                         fit_ver="20200510",
-                        analysis=:perseus, ptm=:phospho, prefix=:ph,
-                        label="DDA Phospho",
-                        color="maroon"),
-    :cov2el_ubi => (msfolder="cov2earlylate_fp_phos_ubi_dda_20200429",
+                        analysis=:perseus, ptm=:phospho, prefix=:pho,
+                        datatype=:phospho,
+                        label="Phosphoproteome (DDA)",
+                        filename="output_Phospho (STY)Sites",
+                        color="#5e268f"),
+    :cov2el_ubi => (msfolder="cov2earlylate_fp_phos_ubi_dda_20200601",
                     fit_ver="20200510",
                     analysis=:perseus, ptm=:ubiquitin, prefix=:ubi,
-                    label="DDA Ubiquitin",
-                    color="seagreen"),
+                    datatype=:ubi,
+                    label="Ubiquitinome (DDA)",
+                    filename="output_S0-01_GlyGly (K)Sites",
+                    color="#bf1c2c"),
 )
 
 using Pkg
@@ -47,7 +50,7 @@ using RData, CSV, DataFrames, FastaIO
 using JLD2
 using StatsBase
 
-@info "Project '$(proj_info.id)' dataset version=$(proj_info.data_ver)"
+@info "Project '$(proj_info.id)' analysis version=$(proj_info.oesc_ver)"
 
 const misc_scripts_path = joinpath(base_scripts_path, "misc_jl");
 const analysis_path = joinpath(base_analysis_path, proj_info.id)
@@ -78,9 +81,15 @@ comparison_matches = match.(Ref(r"(?:(?<tp_lhs>\d+)h|(?<trt_lhs>SARSCoV2))_vs_(?
 getmatch(regmatch, m, mfallback) = !isnothing(regmatch[m]) ? regmatch[m] : regmatch[mfallback]
 rnaseq_contrasts_df.ComparisonName[isnothing.(comparison_matches)]
 rnaseq_contrasts_df.dataset = :cov2ts_rnaseq
-rnaseq_contrasts_df.contrast = [replace(replace(getmatch(m ,:trt_lhs, :trt), "SARSCoV2" => "SARS_COV2"), "MOCK" => "mock") * "@" * getmatch(m, :tp_lhs, :tp) * "h_vs_" *
-                                replace(replace(getmatch(m ,:trt_rhs, :trt), "SARSCoV2" => "SARS_COV2"), "MOCK" => "mock") * "@" * getmatch(m, :tp_rhs, :tp) * "h"
-                                for m in comparison_matches]
+rnaseq_contrasts_df.timepoint_lhs = [parse(Int, getmatch(m, :tp_lhs, :tp)) for m in comparison_matches]
+rnaseq_contrasts_df.timepoint_rhs = [parse(Int, getmatch(m, :tp_rhs, :tp)) for m in comparison_matches]
+rnaseq_contrasts_df.treatment_lhs = [replace(replace(getmatch(m, :trt_lhs, :trt), "SARSCoV2" => "SARS_CoV2"), "MOCK" => "mock")
+                                     for m in comparison_matches]
+rnaseq_contrasts_df.treatment_rhs = [replace(replace(getmatch(m, :trt_rhs, :trt), "SARSCoV2" => "SARS_CoV2"), "MOCK" => "mock")
+                                     for m in comparison_matches]
+rnaseq_contrasts_df.contrast = [r.treatment_lhs * "@" * string(r.timepoint_lhs) * "h_vs_" *
+                                r.treatment_rhs * "@" * string(r.timepoint_rhs) * "h"
+                                for r in eachrow(rnaseq_contrasts_df)]
 rnaseq_protgroups_df = combine(groupby(
     filter(r -> !ismissing(r.protein_ac), unique!(select(rnaseq_contrasts_df, [:GeneName, :protein_ac]))),
     :GeneName)) do df
@@ -103,17 +112,14 @@ ptmcollapsed2psitep_best_df
 perseus_analysis_orig_df = vcat([begin
     @info "Loading $ds analysis..."
     wide_df = CSV.read(joinpath(data_path, dsinfo.msfolder,
-            "combined quanting", "SARS-COV2_Phospho_Ubi_FP_DDA_diff-exp-names_noPTM",
-            "with normalization",
-            "200503_$(dsinfo.prefix)_fp_output.txt"),
+            "curban_analysis", "$(dsinfo.filename).txt"),
             header=1, datarow=3, comment="#", delim='\t')
-    long_df = FrameUtils.pivot_longer(wide_df, Symbol.(dsinfo.prefix, "_",
-        ["Positions within proteins", "Leading proteins",
+    long_df = FrameUtils.pivot_longer(wide_df,
+        Symbol.(["Positions within proteins", "Leading proteins",
          "Protein", "Protein names", "Gene names"]),
-        measure_vars_regex=Regex("^$(dsinfo.prefix)_(?<value>[^.]+) $(dsinfo.prefix)_(?<var>.+)\$"),
+        measure_vars_regex=Regex("^(?<value>[^.]+) (?<var>$(dsinfo.prefix)_.+)\$"),
         var_col=:comparison)
-    long_df.is_normalized = occursin.(Ref(r"^norm_"), string.(long_df.comparison))
-    comparison_matches = match.(Ref(Regex("(?:norm_)?SARS_COV2_(\\d+)h_$(dsinfo.prefix)(?:_norm)?_mock_(?:\\d+)h")),
+    comparison_matches = match.(Ref(Regex("$(dsinfo.prefix)_SARS_COV2_(\\d+)h_$(dsinfo.prefix)_mock_(?:\\d+)h")),
                                 string.(long_df.comparison))
     long_df[!, :contrast_lhs] .= "SARS_COV2"
     long_df[!, :contrast_rhs] .= "mock"
@@ -122,11 +128,11 @@ perseus_analysis_orig_df = vcat([begin
     long_df.timepoint = parse.(Int, getindex.(comparison_matches, 1))
     long_df.contrast = ["$(r.contrast_lhs)@$(r.timepoint)h_vs_$(r.contrast_rhs)@$(r.timepoint)h" for r in eachrow(long_df)]
     rename!(long_df,
-        "$(dsinfo.prefix)_Positions within proteins" => :ptm_poses,
-        "$(dsinfo.prefix)_Leading proteins" => :lead_protein_acs,
-        "$(dsinfo.prefix)_Protein" => :protein_acs,
-        "$(dsinfo.prefix)_Protein names" => :protein_descriptions,
-        "$(dsinfo.prefix)_Gene names" => :gene_names,
+        "Positions within proteins" => :ptm_poses,
+        "Leading proteins" => :lead_protein_acs,
+        "Protein" => :protein_acs,
+        "Protein names" => :protein_descriptions,
+        "Gene names" => :gene_names,
         "Student's T-test Significant" => :is_signif,
         "-Log Student's T-test p-value" => :mlog10_pvalue,
         "Student's T-test Test statistic" => :ttest_stat,
@@ -139,6 +145,14 @@ perseus_analysis_orig_df = vcat([begin
     long_df
 end for (ds, dsinfo) in datasets if dsinfo.analysis == :perseus]...)
 countmap(perseus_analysis_orig_df.contrast)
+cov2el_new_protgroups_df = rename!(select(rename!(x -> replace(x, "fp_" => ""), CSV.read(joinpath(data_path, datasets[:cov2el_ubi].msfolder,
+        "curban_analysis", "output_proteinGroups.txt"),
+        header=1, datarow=3, comment="#", delim='\t')),
+        ["Protein IDs", "Majority protein IDs", "Protein names", "Gene names", "id"]),
+        ["Protein IDs" => :protein_acs, "Majority protein IDs" => :majority_protein_acs,
+         "Protein names" => :protein_names, "Gene names" => :gene_names,
+         "id" => :protgroup_id])
+
 #=
 using VegaLite
 p = perseus_tests_df |>
@@ -216,7 +230,7 @@ for (ds, rdata) in msglm_rdata
         push!(protgroups_dfs, ds => pg_df)
     end
 end
-push!(protgroups_dfs, :cov2el_phospho => msglm_rdata[:cov2el_proteome].input_data["msdata"]["protgroups"])
+push!(protgroups_dfs, :cov2el_phospho => cov2el_new_protgroups_df)
 push!(protgroups_dfs, :cov2ts_phospho => protgroups_cov2ts_phospho_df)
 push!(protgroups_dfs, :cov2ts_rnaseq => rnaseq_protgroups_df)
 # FIXME? not importing the proteins of cov2ts_phospho
@@ -241,8 +255,12 @@ pg_matches_df = ProtgroupXMatch.match_protgroups(collect(pairs(protgroups_dfs)),
 pg_matches_df[!, :protgroup_id_united] = 1:nrow(pg_matches_df)
 # add protgroup ids of each dataset and add protgroup_id_common to each dataset
 for (dsname, pg_df) in pairs(protgroups_dfs)
-    pg_col = Symbol("protgroup_id_", dsname)
     rowix_col = Symbol("rowix_", dsname)
+    if !hasproperty(pg_matches_df, rowix_col)
+        @warn "Dataset $dsname key does not exist, skipping"
+        continue
+    end
+    pg_col = Symbol("protgroup_id_", dsname)
     pg_matches_df[!, pg_col] = missings(nonmissingtype(eltype(pg_df.protgroup_id)), nrow(pg_matches_df))
     pg_df[!, :protgroup_id_united] = missings(Int, nrow(pg_df))
     for (i, rowix) in enumerate(pg_matches_df[!, rowix_col])
@@ -307,8 +325,9 @@ obj_contrasts_pg_agg_df = combine(groupby(filter(r -> !ismissing(r.protgroup_id_
    return df
 end
 
-rnaseq_pg_agg_df = combine(groupby(join(rnaseq_contrasts_df, filter(r -> r.dataset == :cov2ts_rnaseq, pg_matches_long_expanded_df),
-                        on=:protein_ac), [:dataset, :contrast, :protgroup_id_united])) do compXpg_df
+rnaseq_pg_agg_df = combine(groupby(innerjoin(rnaseq_contrasts_df, filter(r -> r.dataset == :cov2ts_rnaseq, pg_matches_long_expanded_df),
+                        on=[:dataset, :protein_ac]),
+                        [:dataset, :contrast, :protgroup_id_united])) do compXpg_df
    top_signif_ix = findmin(compXpg_df.pvalue)[2]
    df = compXpg_df[top_signif_ix:top_signif_ix, :]
    return df
@@ -328,7 +347,7 @@ perseus_analysis_df = join(perseus_analysis_df,
                            on=:ptmprotgroup_id, kind=:left)
 
 perseus_pg_agg_df = combine(groupby(filter(r -> !ismissing(r.protgroup_id_united) && !ismissing(r.ptm_poses), perseus_analysis_df),
-        [:dataset, :ptm_type, :contrast, :is_normalized, :protgroup_id_united])) do compXpg_df
+        [:dataset, :ptm_type, :contrast, :protgroup_id_united])) do compXpg_df
    top_signif_ix = findmax(compXpg_df.mlog10_pvalue)[2]
    df = compXpg_df[top_signif_ix:top_signif_ix, :]
    df[!, :nptm_hits] .= sum(c -> c != ".", compXpg_df.change)
@@ -392,7 +411,7 @@ for hits_df in groupby(filter(r -> coalesce(r.is_hit_nomschecks, false), obj_con
                   hits_df[1, :contrast], hits_df[1, :change])] =
         Set(skipmissing(hits_df[!, objid_col]))
 end
-for hits_df in groupby(filter(r -> r.is_normalized && coalesce(r.is_signif, false), perseus_pg_agg_df),
+for hits_df in groupby(filter(r -> coalesce(r.is_signif, false), perseus_pg_agg_df),
                        [:dataset, :contrast, :change])
     obj_hit_sets[(string(hits_df[1, :dataset]), "median_std",
                   hits_df[1, :contrast], hits_df[1, :change])] =
@@ -423,13 +442,15 @@ obj_mosaics = OptCoverUtils.collections2mosaics(obj_colls,
 obj_hit_mosaics = Dict(begin
     @info "Masking $mosaic_name dataset by hits..."
     mosaic_name => OptCoverUtils.automask(mosaic, obj_hit_selsets,
-                                          max_sets=1000, min_nmasked=2, max_setsize=150)
+                                          max_sets=2000, min_nmasked=2, max_setsize=200, verbose=true)
     end for (mosaic_name, mosaic) in pairs(obj_mosaics));
 
 using OptEnrichedSetCover
 
 cover_params = CoverParams(setXset_factor=0.5,
                            uncovered_factor=0.0, covered_factor=0.0)#, covered_factor=0.002)
+
+ENV["MKL_NUM_THREADS"] = 1
 
 obj_hit_covers = Dict(begin
     @info "Covering $mosaic_name by hits..."
@@ -472,18 +493,18 @@ obj_id2name = Dict(r.protgroup_id_united => !ismissing(r.gene_names) ? DelimData
                     string(r.protgroup_id_united)
                    for r in eachrow(filter(r -> !ismissing(r.protgroup_id_united), pg_matches_df)))
 
-obj_hit_covers_df = join(OptCoverUtils.covers_report(
+obj_hit_covers_df = innerjoin(OptCoverUtils.covers_report(
     obj_hit_covers, obj_hit_selsets, obj_colls, obj_mosaics, obj_id2name,
     terms_df,
     maskid_col=[:dataset, :std_type, :contrast, :change],
     maskedset_col_prefix="contrast"),
-    contrasts_df, on=[:dataset, :contrast, :change], kind=:inner)
+    contrasts_df, on=[:dataset, :contrast, :change])
 
 # don't remove the sets since they are timecourses timepoints
 obj_hit_covers_signif_df = combine(groupby(obj_hit_covers_df, :term_collection)) do coll_df
     @info "Processing $(coll_df.term_collection[1])..."
     return select!(OptCoverUtils.filter_multicover(coll_df, set_cols=[:dataset, :std_type, :contrast, :change],
-                                                   max_term_pvalue=5E-4, max_set_pvalue=1.0, max_entry_pvalue=1.0),
+                                                   max_term_pvalue=3E-4, max_set_pvalue=1.0, max_entry_pvalue=1.0),
                    Not(:term_collection))
 end
 
@@ -504,6 +525,7 @@ using PlotlyJS, TextWrap, ORCA
 heatmap_layout_attrs = Dict(
     ("GO_CC", true) => Dict(:margin_l => 200),
     ("GO_CC", false) => Dict(:margin_l => 200),
+    ("Reactome", true) => Dict(:margin_l => 220),
 )
 
 for (plot_mosaic, cover_coll) in obj_hit_covers
@@ -526,27 +548,27 @@ stylize_hit(str) = foldl(replace, [
     init = str)
 
 stylize_contrast(str) = foldl(replace, [
-    r"(SARS_COV2+)@(\d+)h" => s"<span style=\"font-weight: bold; color: firebrick;\">\2</span>h: SARS-CoV-2",
-    r"mock@(\d)h" => "mock",
-    "_vs_" => "&nbsp;<span style=\"color: #808080;\">vs</span>&nbsp;",
+    r"(SARS_C[oO]V2+)@(\d+)h_vs_mock@(\d+)h" => s"<span style=\"font-weight: bold; color: black;\">\2</span>h",
     ],
     init = str)
 
 function process_contrast_axis(contrast_df)
     contrast_df,
-    stylize_dataset.(contrast_df.dataset) .* " " .*
+    stylize_dataset.(contrast_df.dataset) .* ":&nbsp;" .*
         stylize_contrast.(contrast_df.contrast) .*
         " " .* OptCoverHeatmap.stylize_change.(contrast_df.change),
-    stylize_dataset.(contrast_df.dataset) .* " " .*
+    stylize_dataset.(contrast_df.dataset) .* ":&nbsp;" .*
         stylize_contrast.(contrast_df.contrast) .*
         " " .* OptCoverHeatmap.stylize_change.(contrast_df.change)#stylize_effect.(effect_df.effect)
 end
+
+datatype_order = Dict(:rnaseq => 1, :proteome => 2, :ubi => 3, :phospho => 4)
 
 for term_coll in unique(obj_hit_covers_df.term_collection), signif in (false, true)
     @info "Plotting $(signif ? "signif " : "")hit heatmap for $term_coll..."
     layout_attrs = get(heatmap_layout_attrs, (term_coll, signif), Dict())
     df = signif ? obj_hit_covers_signif_df : obj_hit_covers_df
-    for outformat in ("html", "pdf")
+    for outformat in ("html", "pdf", "svg")
     coll_heatmap = OptCoverHeatmap.oesc_heatmap(df,
             Symbol(term_coll), elements_label="protein",
             maskedset_axis_title = "contrast",
@@ -554,18 +576,21 @@ for term_coll in unique(obj_hit_covers_df.term_collection), signif in (false, tr
             process_maskedset_axis=process_contrast_axis,
             process_term_axis=OptCoverHeatmap.process_term_axis,
             margin_l=get(layout_attrs, :margin_l, 400),
-            margin_b=get(layout_attrs, :margin_b, 250),
-            cell_width=25, cell_height=25,
+            margin_b=get(layout_attrs, :margin_b, 120),
             transpose=false,
-            plot_bgcolor=outformat=="pdf" ? "#000" : "#BBB",
+            colorscale = "Hot", reversescale=false,
+            plot_bgcolor="#FFF", gridcolor="#DDD",#outformat in ["svg", "pdf"] ? "#000" : "#BBB",
+            cell_width=25, cell_height=20, gridwidth=1,
             row_order=contrasts -> begin
-                contrast_matches = match.(Ref(r"SARS_COV2@(\d+)h"), contrasts.contrast)
+                contrast_matches = match.(Ref(r"SARS_C[oO]V2@(\d+)h"), contrasts.contrast)
                 contrasts.timepoint = parse.(Int, getindex.(contrast_matches, 1))
-                return sortperm(contrasts, [:dataset, :change, :timepoint])
+                contrasts.datatype_order = [datatype_order[datasets[Symbol(r.dataset)].datatype]
+                                            for r in eachrow(contrasts)]
+                return sortperm(contrasts, [:datatype_order, :change, :timepoint, :dataset])
             end)
         (coll_heatmap === nothing) && continue
         for (k, v) in [#:width=>800, :height=>400,
-                       :margin_r=>200,
+                       :margin_r=>100, :margin_t=>20,
                        :yaxis_tickfont_size=>12, :xaxis_tickangle=>45]
             coll_heatmap.plot.layout[k] = v
         end
