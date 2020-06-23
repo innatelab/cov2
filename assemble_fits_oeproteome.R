@@ -270,10 +270,30 @@ save(results_info, fit_stats, fit_contrasts,
 message('Done.')
 
 object_contrasts_report.df <- filter(object_contrasts.df, TRUE) %>%
-  dplyr::inner_join(select(msdata_full$protgroups, protgroup_id, protein_descriptions)) %>%
-  select(object_id, object_label, majority_protein_acs, protein_descriptions,
-         std_type, contrast,
-         median_log2, mean_log2, sd_log2, any_of(c("prob_nonpos", "prob_nonneg", "p_value")),
-         is_signif, is_hit_nomschecks, is_hit, change)
+  dplyr::mutate(contrast_kind = case_when(str_detect(contrast, "_vs_B\\d+_others") ~ "batch",
+                                          str_detect(contrast, "_vs_controls") ~ "controls",
+                                          str_detect(contrast, "_vs_others") ~ "background",
+                                          str_detect(conditions_rhs, "HCoV|ORF8[ab]|ORF3[ab]") ~ NA_character_, # ignore human covs comparisons (ORF3) or ORF8 vs ORF8a
+                                          str_detect(contrast, "_corrected") ~ "homolog",
+                                          TRUE ~ NA_character_ # ignore uncorrected homologs contrasts
+                                          )) %>%
+  dplyr::filter(!is.na(contrast_kind)) %>%
+  dplyr::inner_join(select(msdata_full$protgroups, protgroup_id, is_contaminant, gene_names, protein_descriptions)) %>%
+  dplyr::inner_join(select(baits_info.df, bait_id, bait_full_id, virus = organism)) %>%
+  #select(protgroup_id, gene_names, majority_protein_acs, protein_descriptions,
+  #       std_type, contrast, contrast_kind,
+  #       bait_id, bait_full_id, conditions_rhs,
+  #       median_log2, mean_log2, sd_log2, any_of(c("prob_nonpos", "prob_nonneg", "p_value")),
+  #       is_signif, is_hit_nomschecks, is_hit, change) %>%
+  pivot_wider(c(std_type, bait_full_id, bait_id, virus, gene_names, majority_protein_acs, is_contaminant),
+              names_from = "contrast_kind", values_from = c("contrast", "median_log2", "p_value", "sd_log2", "conditions_rhs")) %>%
+  filter(std_type == "median") %>% dplyr::select(-std_type, -conditions_rhs_homolog, -conditions_rhs_controls,
+                                                 -contrast_controls, -contrast_background, -contrast_batch,
+                                                 -conditions_rhs_background, -conditions_rhs_batch) %>%
+  dplyr::select(bait_id, virus, bait_full_id, gene_names, majority_protein_acs, is_contaminant,
+                ends_with("_controls"), ends_with("_batch"), ends_with("_background"), ends_with("_homolog")) %>%
+  dplyr::arrange(virus, bait_full_id, is_contaminant,
+                 p_value_background, p_value_controls, p_value_batch)
+
 write_tsv(object_contrasts_report.df, file.path(analysis_path, "reports", paste0(project_id, '_', ms_folder, '_contrasts_report_', fit_version, '.txt.gz')))
 
