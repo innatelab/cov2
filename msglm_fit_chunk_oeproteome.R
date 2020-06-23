@@ -22,7 +22,7 @@ source("/projects/R/config.R")
 source(file.path(base_scripts_path, 'R/misc/setup_base_paths.R'))
 source(file.path(base_scripts_path, 'R/misc/setup_project_paths.R'))
 
-rdata_filepath <- file.path(scratch_path, paste0(project_id, '_msglm_data_', ms_folder, '_', data_version, '.RData'))
+rdata_filepath <- file.path(scratch_path, paste0(project_id, '_msglm_data_', ms_folder, '_', fit_version, '.RData'))
 message('Loading data from ', rdata_filepath)
 load(rdata_filepath)
 
@@ -154,7 +154,7 @@ gc()
 msglm.stan_data <- stan.prepare_data(instr_calib, model_data,
                                      global_labu_shift = global_labu_shift,
                                      obj_labu_min = obj_labu_min, obj_labu_min_scale = 1,
-                                     batch_effect_sigma=0.5)
+                                     batch_effect_sigma=0.25)
 
 message('Running STAN in NUTS mode...')
 options(mc.cores=mcmc_nchains)

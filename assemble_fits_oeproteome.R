@@ -5,9 +5,9 @@
 
 project_id <- 'cov2'
 message('Project ID=', project_id)
-data_version <- "20200519"
-fit_version <- "20200519"
-ms_folder <- 'spectronaut_oeproteome_20200519'
+data_version <- "20200527"
+fit_version <- "20200610"
+ms_folder <- 'spectronaut_oeproteome_20200527'
 message("Assembling fit results for project ", project_id,
         " (dataset v", data_version, ", fit v", fit_version, ")")
 
@@ -25,7 +25,7 @@ require(stringr)
 require(maxquantUtils)
 
 message('Loading data...')
-load(file.path(scratch_path, str_c(project_id, '_msglm_data_', ms_folder, '_', data_version, '.RData')))
+load(file.path(scratch_path, str_c(project_id, '_msglm_data_', ms_folder, '_', fit_version, '.RData')))
 load(file.path(scratch_path, str_c(project_id, '_msdata_full_', ms_folder, '_', data_version, '.RData')))
 
 modelobj <- "protgroup"
@@ -198,17 +198,25 @@ object_contrasts.df <- dplyr::inner_join(pre_object_contrasts.df, fit_contrasts$
                                    p.adjust(c(prob_nonneg, prob_nonpos), method = "BY")[1:n()])) %>%
   dplyr::ungroup()
 
-object_contrasts_thresholds.df <- select(object_contrasts.df, contrast, contrast_type, std_type) %>%
+object_contrasts_thresholds.df <-
+  dplyr::full_join(dplyr::transmute(contrasts.df, contrast, contrast_type, contrast_offset_log2=offset/log(2)),
+                  tibble(std_type = unique(object_contrasts.df$std_type)), by=character()) %>%
+  dplyr::inner_join(dplyr::select(dplyr::filter(contrastXcondition.df, is_lhs),
+                                  contrast, condition, bait_full_id, bait_id)) %>%
   distinct() %>%
   tidyr::extract(contrast, c("bait_full_id"), "(.+)_vs_(?:.+)", remove=FALSE) %>%
-  mutate(p_value_threshold = case_when(bait_full_id %in% weak_bait_ids ~ 0.01,
+  mutate(p_value_threshold = case_when(bait_full_id %in% weak_bait_ids ~ 0.001,
                                        TRUE ~ 0.001),
-         median_log2_threshold = case_when(bait_full_id %in% weak_bait_ids ~ 0.5,
+         median_log2_threshold = case_when(bait_full_id %in% weak_bait_ids ~ 1.0,
                                            TRUE ~ 1.0))
 
 object_contrasts.df <- object_contrasts.df %>%
   select(-any_of(c("p_value_threshold", "median_log2_threshold", "median_log2_max"))) %>%
   left_join(object_contrasts_thresholds.df) %>%
+  # fix S baits
+  dplyr::mutate_at(vars(bait_full_id, contrast, conditions_lhs, conditions_rhs,
+                        metacondition),
+                   ~ str_replace(str_replace(str_replace(., "CoV2_S", "CoVII_S"), "CoV_S", "CoV2_S"), "CoVII_S", "CoV_S")) %>%
   dplyr::mutate(is_signif = p_value <= p_value_threshold & abs(median_log2) >= median_log2_threshold,
                 is_hit_nomschecks = is_signif & !is_contaminant & !is_reverse &
                   ((contrast_type == "comparison") | (median_log2 >= 0.0)),
@@ -218,6 +226,10 @@ object_contrasts.df <- object_contrasts.df %>%
                 #          (nmsruns_idented_rhs_max>2) & (nmsruns_quanted_rhs_max>2)) &
                   is_msvalid_object,
                 change = if_else(is_signif, if_else(median_log2 < 0, "-", "+"), "."))
+
+object_contrasts_thresholds.df <- dplyr::mutate_at(object_contrasts_thresholds.df,
+                                                   vars(bait_full_id, contrast),
+                                                   ~ str_replace(str_replace(str_replace(., "CoV2_S", "CoVII_S"), "CoV_S", "CoV2_S"), "CoVII_S", "CoV_S"))
 
 object_contrast_stats.df <- dplyr::group_by(object_contrasts.df, contrast, contrast_type, std_type) %>%
   dplyr::summarise(p_value_001 = quantile(p_value, 0.001),
@@ -230,6 +242,10 @@ object_contrast_stats.df <- dplyr::group_by(object_contrasts.df, contrast, contr
                    n_plus = sum(change == "+"),
                    n_minus = sum(change == "-")) %>%
   dplyr::ungroup()
+
+group_by(object_effects.df, std_type, object_id, object_label, majority_protein_acs, gene_names, effect) %>%
+  filter(n() > 1) %>%
+  ungroup() %>% View()
 
 object_effects_wide.df <- pivot_wider(object_effects.df,
                                       id_cols = c("std_type", "object_id", "object_label", "majority_protein_acs", "gene_names"),
