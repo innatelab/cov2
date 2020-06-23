@@ -1,9 +1,10 @@
 proj_info = (id = "cov2",
              data_ver = "20200525",
              fit_ver = "20200525",
+             report_ver = "20200612",
              msfolder = "mq_apms_20200525",
              prev_network_ver = "20200515",
-             network_ver = "20200606")
+             network_ver = "20200612")
 using Pkg
 Pkg.activate(@__DIR__)
 using Revise
@@ -21,7 +22,7 @@ Revise.includet(joinpath(misc_scripts_path, "clustering_utils.jl"))
 Revise.includet(joinpath(misc_scripts_path, "delimdata_utils.jl"))
 
 input_rdata = load(joinpath(scratch_path, "$(proj_info.id)_msglm_data_$(proj_info.msfolder)_$(proj_info.fit_ver).RData"))
-network_rdata = load(joinpath(networks_path, "$(proj_info.id)_4graph_$(proj_info.msfolder)_$(proj_info.fit_ver).RData"))
+network_rdata = load(joinpath(networks_path, "$(proj_info.id)_4graph_$(proj_info.msfolder)_$(proj_info.report_ver).RData"))
 
 objects_orig_df = network_rdata["objects_4graphml.df"]
 iactions_orig_df = network_rdata["iactions_ex_4graphml.df"]
@@ -79,6 +80,14 @@ for obj_iactions_df in groupby(iactions_df, :src_object_id)
     max_weight = quantile(obj_iactions_df[exp_iactions_mask, :edge_weight], 0.75)
     obj_iactions_df[exp_iactions_mask, :edge_weight] .= clamp.(obj_iactions_df[exp_iactions_mask, :edge_weight] ./ max_weight, 0.5, 1.25)
 end
+nrow(iactions_df)
+
+# FIXME hombait_contrasts_merged_df is defined later
+iactions_df = leftjoin(iactions_df,
+                       rename!(select(hombait_contrasts_merged_df, :bait_homid, :old_object_id, comparison_cols...),
+                               :old_object_id=>:dest_object_id,
+                               [col => Symbol(String(col), "_comparison") for col in comparison_cols]...),
+                       on=[:bait_homid, :dest_object_id])
 
 #using StatsBase
 #countmap(iactions_df.ppi_type[.!ismissing.(iactions_df.ppi_type)])
@@ -129,11 +138,14 @@ FA.layout!(gr, FA.ForceAtlas3Settings(gr,
             gravityRodCorners=((0.0, -6.0), (0.0, 6.0)), gravityRodCenterWeight=0.1),
             nsteps=5000, progressbar=true)
 
-objects_df.object_label = replace.(objects_df.object_label, Ref(r"\.+$" => ""))
+objects_df.object_label = replace.(replace.(replace.(objects_df.object_label, Ref(r"\.+$" => "")), Ref("SARS_CoV2" => "CoV-2")), Ref("SARS_CoV" => "SARS"))
 objects_df.layout_x = FA.extract_layout(gr)[1] .* 30
 objects_df.layout_y = FA.extract_layout(gr)[2] .* 30
 
+objects_df.cov2_proteome_is_hit = coalesce.(objects_df.cov2ts_proteome_is_hit, false) .| coalesce.(objects_df.cov2el_proteome_is_hit, false)
+objects_df.cov2_phospho_is_hit = coalesce.(objects_df.cov2ts_phospho_is_hit, false) .| coalesce.(objects_df.cov2el_phospho_is_hit, false)
 objects_df.object_idstr = string.(objects_df.object_id)
+objects_df.object_label_shorter = replace.(objects_df.object_label, Ref(r"^(.+)\n" => ""))
 iactions_df.src_object_idstr = string.(iactions_df.src_object_id)
 iactions_df.dest_object_idstr = string.(iactions_df.dest_object_id)
 
@@ -141,7 +153,7 @@ apms_graph = GraphML.import_graph(objects_df, iactions_df,
                              node_col=:object_idstr,
                              source_col=:src_object_idstr, target_col=:dest_object_idstr,
                              node_attrs = [:object_idstr => "Protein Group ID",
-                                           :object_label => "Protein Group Label",
+                                           :object_label_shorter => "Protein Group Label",
                                            :majority_protein_acs => "Majority ACs",
                                            :gene_names => "Gene Names",
                                            :exp_role => "Experimental Role",
@@ -164,6 +176,19 @@ apms_graph = GraphML.import_graph(objects_df, iactions_df,
                                            :cov2ts_phospho_p_value => "CoV-2 Phospho: Most Signif. P-value",
                                            :cov2ts_phospho_median_log2 => "CoV-2 Phospho: Most Signif. Median Log2",
                                            :cov2ts_phospho_is_hit => "CoV-2 Phospho: Is Hit",
+                                           :cov2el_proteome_p_value => "CoV-2 Proteome DDA: Most Signif. P-value",
+                                           :cov2el_proteome_median_log2 => "CoV-2 Proteome DDA: Most Signif. Median Log2",
+                                           :cov2el_proteome_is_hit => "CoV-2 Proteome DDA: Is Hit",
+                                           :cov2el_phospho_ptms => "CoV-2 Phospho DDA: PTMs and Timepoints of Significant Changes",
+                                           :cov2el_phospho_p_value => "CoV-2 Phospho DDA: Most Signif. P-value",
+                                           :cov2el_phospho_median_log2 => "CoV-2 Phospho DDA: Most Signif. Median Log2",
+                                           :cov2el_phospho_is_hit => "CoV-2 Phospho DDA: Is Hit",
+                                           :cov2el_ubi_ptms => "CoV-2 Ubiquitin DDA: PTMs and Timepoints of Significant Changes",
+                                           :cov2el_ubi_p_value => "CoV-2 Ubiquitin DDA: Most Signif. P-value",
+                                           :cov2el_ubi_median_log2 => "CoV-2 Ubiquitin DDA: Most Signif. Median Log2",
+                                           :cov2el_ubi_is_hit => "CoV-2 Ubiquitin DDA: Is Hit",
+                                           :cov2_proteome_is_hit => "CoV-2 Proteome (all data): Is Hit",
+                                           :cov2_phospho_is_hit => "CoV-2 Phospho (all data): Is Hit",
                                            :layout_x, :layout_y],
                              edge_attrs = [Symbol("prob_nonpos") => "P-value (vs Background)",
                                            Symbol("median_log2") => "Enrichment (vs Background)",
@@ -186,7 +211,12 @@ apms_graph = GraphML.import_graph(objects_df, iactions_df,
                                            :virhostnet_confidence => "VirHostNet Confidence",
                                            :virhostnet_references => "VirHostNet PubMeds",
                                            #`Known types` = "known_types",
-                                           :iaction_ids => "Known Interaction IDs"])
+                                           :iaction_ids => "Known Interaction IDs",
+
+                                           :p_value_comparison => "P-value of CoV-2 vs SARS",
+                                           :median_log2_comparison => "Log2(enrichment of CoV-2 vs SARS)",
+                                           :change_comparison => "Is Hit CoV-2 vs SARS",
+                                           ])
  #edge.attrs = c( `P-value (vs Background)` = 'p_value_min.vs_background',
  #                 `P-value (WT vs Mock)` = 'p_value.SC35MWT',
  #                 `P-value (delNS1 vs Mock)` = 'p_value.SC35MdelNS1',
@@ -196,7 +226,7 @@ apms_graph = GraphML.import_graph(objects_df, iactions_df,
  #                 `Weight` = 'weight',
  #                 `type` = "type" )
                              # verbose=verbose)
-open(joinpath(networks_path, "$(proj_info.id)_4graph_$(proj_info.msfolder)_$(proj_info.fit_ver)_FA3.graphml"), "w") do io
+open(joinpath(networks_path, "$(proj_info.id)_4graph_$(proj_info.msfolder)_$(proj_info.network_ver)_FA3.graphml"), "w") do io
     write(io, apms_graph)
 end
 
