@@ -6,7 +6,7 @@
 project_id <- 'cov2'
 message('Project ID=', project_id)
 data_version <- "20200527"
-fit_version <- "20200608"
+fit_version <- "20200610"
 ms_folder <- 'spectronaut_oeproteome_20200527'
 message('Dataset version is ', data_version)
 
@@ -274,8 +274,8 @@ effects.df <- dplyr::mutate(effects.df,
                             effect_type = case_when(!is.na(bait_id) & !is.na(orgcode) ~ "baitXvirus",
                                                     !is.na(bait_id) ~ "bait"),
                             effect_label = factor(effect_label, levels=effect_label)) %>%
-  dplyr::mutate(prior_tau = case_when(effect_type == "baitXvirus" ~ 0.5,
-                                      effect_type == "bait" ~ 1.0,
+  dplyr::mutate(prior_tau = case_when(effect_type == "baitXvirus" ~ 0.1,
+                                      effect_type == "bait" ~ 0.1,
                                       TRUE ~ 5.0))
 # prior_mean for baitXvirus is calculated as the shift between the homologous baits at the normalization step?
 
@@ -422,17 +422,17 @@ msruns_hnorm$msruns_shifts <- msruns_hnorm$mschannel_shifts
 total_msrun_shifts.df <- msruns_hnorm$msruns_shifts
 
 # normalize (calculate offset for contrasts) homologous baits using shared specific interactions
-prev_apms.env <- new.env(parent=baseenv())
-load(file.path(scratch_path, paste0(project_id, '_msglm_fit_', 'spectronaut_oeproteome_20200527', '_', '20200527', '.RData')), envir=prev_apms.env)
-load(file.path(scratch_path, paste0(project_id, '_msglm_data_', 'spectronaut_oeproteome_20200527', '_', '20200527', '.RData')), envir=prev_apms.env)
-iactions4norm.df <- filter(prev_apms.env$object_contrasts.df, std_type == "median" & str_detect(contrast, "_vs_controls")) %>%
+prev_oeprot.env <- new.env(parent=baseenv())
+load(file.path(scratch_path, paste0(project_id, '_msglm_fit_', 'spectronaut_oeproteome_20200527', '_', '20200527', '.RData')), envir=prev_oeprot.env)
+load(file.path(scratch_path, paste0(project_id, '_msglm_data_', 'spectronaut_oeproteome_20200527', '_', '20200527', '.RData')), envir=prev_oeprot.env)
+iactions4norm.df <- filter(prev_oeprot.env$object_contrasts.df, std_type == "median" & str_detect(contrast, "_vs_controls")) %>%
     dplyr::left_join(dplyr::select(baits_info.df, bait_full_id, bait_id)) %>%
     group_by(bait_full_id, contrast) %>%
     dplyr::filter((abs(median_log2) >= 0.5 & p_value <= 1E-3) | row_number(pmin(prob_nonpos, prob_nonneg)) <= 30) %>%
     ungroup()
 msdata4hombait_norm.df <- inner_join(iactions4norm.df,
-                                     select(prev_apms.env$msdata$msruns, msrun, raw_file, bait_full_id)) %>%
-    inner_join(select(prev_apms.env$msdata$protein2protgroup, object_id=protgroup_id, protein_ac)) %>%
+                                     select(prev_oeprot.env$msdata$msruns, msrun, raw_file, bait_full_id)) %>%
+    inner_join(select(prev_oeprot.env$msdata$protein2protgroup, object_id=protgroup_id, protein_ac)) %>%
     select(protein_ac, raw_file) %>% distinct() %>%
     inner_join(select(msdata$msruns, msrun, raw_file, condition, bait_id, bait_full_id)) %>%
     inner_join(select(msdata$protein2protgroup, protein_ac, protgroup_id)) %>%
@@ -718,7 +718,7 @@ msrunXbatchEffect_orig.mtx <- model.matrix(
   mutate(msdata$msruns, batch = factor(batch)))
 batch_effects_mask <- str_detect(colnames(msrunXbatchEffect_orig.mtx), "\\(Intercept\\)", negate = TRUE)
 
-msrunXprcompEffect.mtx <- matrix(msdata$msruns$PC2 / median(abs(msdata$msruns$PC2)),
+msrunXprcompEffect.mtx <- matrix(2*msdata$msruns$PC2 / median(abs(msdata$msruns$PC2)),
                                  dimnames = list(msruns = msdata$msruns$msrun,
                                                  effects = "PC2"))
 msrunXbatchEffect.mtx <- cbind(msrunXbatchEffect_orig.mtx[, batch_effects_mask, drop=FALSE],
@@ -731,7 +731,7 @@ pheatmap(msrunXbatchEffect.mtx[arrange(msdata$msruns, batch, condition, replicat
                          paste0(project_id, "_", ms_folder, "_", fit_version, "_batch_effects.pdf")), width=12, height=40)
 
 batch_effects.df <- tibble(batch_effect=colnames(msrunXbatchEffect.mtx),
-                           is_positive=FALSE,
+                           is_positive=str_detect(batch_effect, "^PC"),
                            prior_mean = 0.0)
 
 # no subbatch effects so far
@@ -739,7 +739,7 @@ msrunXsubbatchEffect.mtx <- zero_matrix(msrun = rownames(msrunXbatchEffect.mtx),
                                         subbatch_effect = c())
 
 subbatch_effects.df <- tibble(subbatch_effect=character(0),
-                           is_positive=logical(0))
+                              is_positive=logical(0))
 
 bait_checks_protgroup.df <- dplyr::left_join(dplyr::select(baits_info.df, bait_full_id, bait_id, bait_homid, bait_orgcode=orgcode, bait_organism=organism,
                                                            protein_ac = used_uniprot_ac),
