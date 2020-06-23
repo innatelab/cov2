@@ -6,8 +6,8 @@ proj_info = (id = "cov2",
              apms_fit_ver = "20200525",
              oeproteome_folder = "spectronaut_oeproteome_20200527",
              oeproteome_data_ver = "20200527",
-             oeproteome_fit_ver = "20200527",
-             hotnet_ver = "20200603")
+             oeproteome_fit_ver = "20200608",
+             hotnet_ver = "20200609")
 using Pkg
 Pkg.activate(joinpath(base_scripts_path, "adhoc", proj_info.id))
 
@@ -88,10 +88,11 @@ oeproteome_fit_rdata = load(joinpath(scratch_path, "$(proj_info.id)_msglm_fit_$(
 #--- map OE proteome to reactome network
 objects_df = copy(oeproteome_data_rdata["msdata_full"]["protgroups"])
 objects_df.is_used = objects_df.q_value .<= 0.001
-oeproteome_contrasts_df = filter!(r -> r.std_type == "replicate" && occursin(r"_vs_controls$", r.contrast),
+sel_std_type = "median"
+oeproteome_contrasts_df = filter!(r -> r.std_type == sel_std_type && occursin(r"_vs_controls$", r.contrast),
                                   semijoin(oeproteome_fit_rdata["object_contrasts.df"],
                                           filter(r -> r.is_used, objects_df), on=:object_id=>:protgroup_id))
-oeproteome_batchcontrasts_df = filter!(r -> r.std_type == "replicate" &&
+oeproteome_batchcontrasts_df = filter!(r -> r.std_type == sel_std_type &&
                                        occursin(r"_vs_B\d+_others$", r.contrast),
                                        semijoin(oeproteome_fit_rdata["object_contrasts.df"],
                                                 filter(r -> r.is_used, objects_df), on=:object_id=>:protgroup_id))
@@ -104,8 +105,8 @@ countmap(oeproteome_contrasts_df.bait_full_id)
 
 # calculate vertex weights
 oeproteome_contrasts_df[!, :is_source] = [
-    (coalesce(r.p_value, 1.0) <= 0.005 && abs(r.median_log2) >= 0.25) &&
-    (coalesce(r.p_value_batch, 1.0) <= 0.005 && abs(r.median_log2_batch) >= 0.25)
+    (coalesce(r.p_value, 1.0) <= 0.001 && abs(r.median_log2) >= 0.25) &&
+    (coalesce(r.p_value_batch, 1.0) <= 0.001 && abs(r.median_log2_batch) >= 0.25)
     for r in eachrow(oeproteome_contrasts_df)]
 oeproteome_contrasts_df[!, :vertex_weight] = [ifelse(r.is_source,
     (-log10(max(1E-20, r.p_value)))^0.5 * abs(r.median_log2)^0.5, 0.0)
@@ -258,6 +259,15 @@ open(ZstdCompressorStream, joinpath(scratch_path, "$(proj_info.id)_hotnet_prepar
               vertex_bins, bait2vertex_weights_perms))
 end
 
+vertex2gene, gene2vertex,
+reactomefi_genes, reactomefi_digraph_rev,
+bait2apms_vertices, apms_gene_iactions_df,
+bait_ids, bait2vertex_weights,
+reactomefi_walkmtx, bait2reactomefi_tree,
+vertex_bins, bait2vertex_weights_perms = open(ZstdDecompressorStream, joinpath(scratch_path, "$(proj_info.id)_hotnet_prepare_$(proj_info.hotnet_ver).jlser.zst"), "r") do io
+    deserialize(io)
+end
+
 @save(joinpath(scratch_path, "$(proj_info.id)_hotnet_prepare_$(proj_info.hotnet_ver).jld2"),
       vertex2gene, gene2vertex,
       reactomefi_genes, reactomefi_digraph_rev,
@@ -282,7 +292,12 @@ bait2reactomefi_perm_trees = Dict{String, Vector{HHN.SCCTree{Float64}}}()
 using Base.Filesystem, Serialization, CodecZstd
 chunk_prefix = "$(proj_info.id)_hotnet_permtrees_$(proj_info.hotnet_ver)"
 for (root, dirs, files) in Filesystem.walkdir(joinpath(scratch_path, chunk_prefix))
-    isempty(files) && continue # skip the empty folder
+    if isempty(files)
+        @warn "Found no files in $root"
+        continue # skip the empty folder
+    else
+        @info "Found $(length(files)) file(s) in $root, processing..."
+    end
     for file in files
         if startswith(file, chunk_prefix) && endswith(file, ".jlser.zst")
             job_info, bait_id, chunk_tree_indices, permtrees =
@@ -312,6 +327,7 @@ bait2reactomefi_walkweights = Dict(bait_id => reactomefi_walkmtx * vweights
 bait2reactomefi_perm_walkweights = Dict(bait_id => reactomefi_walkmtx * convert(Matrix{eltype(reactomefi_walkmtx)}, vweights_perm)
                                         for (bait_id, vweights_perm) in bait2vertex_weights_perms)
 
+@info "Calculating vertex statistics"
 vertex_stats_df = reduce(vcat, [begin
     stats_df = HHN.vertex_stats(bait2vertex_weights[bait_id],
                                 bait2reactomefi_walkweights[bait_id],
