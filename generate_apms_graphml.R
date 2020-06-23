@@ -548,9 +548,12 @@ observed_ppi_participants.df <- ppi_participants.df %>%
 # matrix expand PPIs (pairs should be visible by the same or homologous bait)
 # leave only confident interactions
 known_ppi_pairs.df <- dplyr::inner_join(observed_ppi_participants.df, observed_ppi_participants.df,
-                                        by=c("interaction_id", "bait_homid", 'ppi_type')) %>%
+                                        by=c("interaction_id", "bait_homid", "bait_id", 'ppi_type')) %>%
     dplyr::filter(((is_bait.x & !is_bait.y) | ((is_bait.x == is_bait.y) & (object_id.x < object_id.y)))
-                  & (protein_ac.x != protein_ac.y)) %>%
+                  & (protein_ac.x != protein_ac.y)
+                  & ((bait_full_id.x == bait_full_id.y) |
+                     (str_detect(bait_full_id.x, "SARS_CoV") & str_detect(bait_full_id.y, "SARS_CoV")))
+                  ) %>%
     dplyr::left_join(select(ppi.env$interaction_info.df, interaction_ix, pubmed_id, is_negative,
                             interaction_type, interaction_detection_method) %>%
                          mutate(interaction_id = str_c("i", interaction_ix))) %>%  
@@ -596,11 +599,11 @@ known_ppi_pairs.df <- dplyr::inner_join(observed_ppi_participants.df, observed_p
 
 # virtual interactions between homologous baits
 homology_iactions.df <- dplyr::inner_join(
-    dplyr::transmute(filter(objects_4graphml.df, is_bait), gene_label=str_remove(gene_label, "\\?$"), src_object_id=object_id),
-    dplyr::transmute(filter(objects_4graphml.df, is_bait), gene_label=str_remove(gene_label, "\\?$"), dest_object_id=object_id),
-    by="gene_label") %>%
+    dplyr::transmute(filter(objects_4graphml.df, is_bait), object_bait_homid, src_object_id=object_id),
+    dplyr::transmute(filter(objects_4graphml.df, is_bait), object_bait_homid, dest_object_id=object_id),
+    by="object_bait_homid") %>%
     dplyr::filter(src_object_id < dest_object_id) %>%
-    dplyr::select(-gene_label) %>%
+    dplyr::select(-object_bait_homid) %>%
     dplyr::mutate(is_homology = TRUE, weight = 50.0)
 
 iactions_ex_4graphml.df <- dplyr::full_join(iactions_4graphml.df,
