@@ -100,6 +100,7 @@ save_results(BlackBoxOptim.problem(bbox_opt), bbox_res, res_jld_file, res_json_f
 
 Revise.includet(joinpath(misc_scripts_path, "plots", "plotly_utils.jl"))
 @load("/pool/analysis/astukalov/cov2/scratch/instr_QX7_intensity_ptmgroup_calib_cov2_20200428_borg.jld2", calib_model)
+@load("/pool/analysis/astukalov/cov2/scratch/instr_QX7_intensity_protgroup_calib_cov2_20200430.jld2", calib_model)
 instr_calib_model = calib_model
 
 instr_calib_model = MSInstrumentCalibration.params2model(BlackBoxOptim.problem(bbox_opt).factory, best_candidate(bbox_res))
@@ -119,7 +120,7 @@ pepmod_mscalib_data = MSInstrumentCalibration.MSErrorCalibrationData(
     msdata_dict["pepmod_intensities"], pepmods_df, msdata_dict["msruns"],
     object_col=:pepmod_id, msrun_col=:msrun, exp_col=:condition,
     missed_intensity_factor = 1.0, # assume intensity was missed in replicate because it was really less abundant
-    bin_oversize=2, nbins=40, max_objXexp=5000, error_scale=0.33) # assume 1/3 of variation comes from measurement
+    bin_oversize=2, nbins=40, max_objXexp=5000, error_scale=0.5) # assume 1/2 of variation comes from measurement
 
 ini_population = Matrix{Float64}(undef, 0, 0)
 MaxTime = 200.0
@@ -153,3 +154,13 @@ plot_intensities = exp.((log(first(ref_intensities))-3):0.01:(log(last(ref_inten
 PlotlyUtils.MSInstrument.plot_rel_sd(instr_calib_model, intensity_range = plot_intensities)
 PlotlyUtils.MSInstrument.plot_sd(instr_calib_model, intensity_range = plot_intensities)
 PlotlyUtils.MSInstrument.plot_detection(instr_calib_model, intensity_range = plot_intensities)
+
+using PlotlyJS
+plot(scatter(filter(r -> true, mscalib_data.intensities_df),
+             x=:intensity_predicted, y=:intensity, color=:relerr,
+             text=:intensity_bin, marker_opacity=0.1, marker_hoverinfo="text",
+             mode="markers", marker_size=2),
+     Layout(hovermode="closest", xaxis=attr(type="log"), yaxis=attr(type="log")))
+plot(scatter(x=mscalib_data.intensity, y=mscalib_data.logintensity_predicted,
+          mode="markers", marker_size=1),
+  Layout(xaxis=attr(type="log")))#, yaxis=attr(type="log")))
