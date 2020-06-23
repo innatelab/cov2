@@ -238,17 +238,44 @@ object_effects_report.df <- left_join(object_effects.df, effects.df) %>%
          is_signif, is_hit_nomschecks, is_hit, change)
 write_tsv(object_effects_report.df, file.path(analysis_path, "reports", paste0(project_id, '_', ms_folder, '_effects_report_', fit_version, '.txt')))
 
-ptm_annots.df <- read_tsv(file.path(data_path, ms_folder, "COV2_DIA_phospho_0.75probablity_no normalization_psitep_nodata.txt"))
+require(purrr)
+
+ptm_info.df <- read_tsv(file.path(data_path, ms_folder, "COV2_DIA_phospho_0.75probablity_no normalization_psitep_nodata.txt"))
+ptm_annots.df <- read_tsv(file.path(data_path, ms_folder, "COV2_DIA_phospho_psitep_annotations.txt"))
 object_contrasts_report.df <- filter(object_contrasts.df, str_detect(contrast, "SARS_COV2.+_vs_mock")) %>%
   left_join(select(msdata$ptmgroups, ptmgroup_id, ptmseq = EG.PTMLocalizationProbabilities, protein_descriptions)) %>%
-  left_join(rename(ptm_annots.df, ptmgroup_id=PTM_collapse_key)) %>%
-  select(ptmgroup_id, gene_name=PTM_collapse_gene_name, protein_ac, ptm_pos = data_ptm_pos, ptmseq,
+  left_join(rename(ptm_info.df, ptmgroup_id=PTM_collapse_key)) %>%
+  left_join(select(ptm_annots.df, ptmgroup_id=PTM_collapse_key, kinase_gene_names, reg_function, reg_prot_iactions, reg_other_iactions, reg_pubmed_ids)) %>%
+  select(ptmgroup_id, gene_name=PTM_collapse_gene_name, protein_ac, ptm_AA = data_ptm_AA, ptm_pos = data_ptm_pos, ptmseq,
          majority_protein_acs, protein_descriptions,
          flanking_15AAs, psitep_ptm_pos,
+         kinase_gene_names, reg_function, reg_prot_iactions, reg_other_iactions, reg_pubmed_ids,
          std_type, contrast,
          median_log2, mean_log2, sd_log2, any_of(c("prob_nonpos", "prob_nonneg", "p_value")),
-         is_signif, is_hit_nomschecks, is_hit, change)
-write_tsv(object_contrasts_report.df, file.path(analysis_path, "reports", paste0(project_id, '_', ms_folder, '_contrasts_report_', fit_version, '.txt.gz')))
+         is_signif, is_hit_nomschecks, is_hit, change) %>%
+  tidyr::extract(contrast, c("timepoint"), "SARS_COV2@(\\d+h)_.+", remove = FALSE) %>%
+  pivot_wider(c(std_type, ptmgroup_id, gene_name, protein_ac,
+                majority_protein_acs, protein_descriptions, ptm_AA, ptm_pos, psitep_ptm_pos,
+                ptmseq, flanking_15AAs,
+                kinase_gene_names, reg_function, reg_prot_iactions, reg_other_iactions, reg_pubmed_ids),
+              names_from = "timepoint", values_from = c("is_hit_nomschecks", "change", "median_log2", "p_value", "sd_log2")) %>%
+  # limit ptmseq length
+  dplyr::mutate(ptmseq = map_chr(ptmseq, function(x) {
+    y = str_split(x, fixed(";"))[[1]]
+    if (length(y) > 10) {
+      y <- y[1:10]
+    }
+    str_c(y, collapse=';')
+  })) %>%
+  dplyr::select(std_type, ptmgroup_id, gene_name, protein_ac,
+                majority_protein_acs, protein_descriptions,
+                ptm_AA, ptm_pos, psitep_ptm_pos, ptmseq, flanking_15AAs,
+                kinase_gene_names, reg_function, reg_prot_iactions, reg_other_iactions, reg_pubmed_ids,
+                ends_with("3h"), ends_with("6h"), ends_with("12h"), ends_with("18h"), ends_with("24h"), ends_with("30h")) %>%
+  filter(std_type == "replicate") %>% dplyr::select(-std_type) %>%
+  dplyr::arrange(gene_name, psitep_ptm_pos)
+
+write_tsv(object_contrasts_report.df, file.path(analysis_path, "reports", paste0(project_id, '_', ms_folder, '_contrasts_report_', fit_version, '_wide.txt.gz')))
 
 View(select(filter(object_effects.df, object_id==5400 & std_type == "median"), object_id, object_label, std_type, effect, median_log2, mean_log2, sd_log2, ends_with("%"), Rhat, any_of(c("prob_nonpos", "prob_nonneg", "p_value"))))
 

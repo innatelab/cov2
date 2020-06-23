@@ -185,6 +185,7 @@ object_effect_stats.df <- dplyr::group_by(object_effects.df, effect, std_type) %
                    n_plus = sum(change == "+"),
                    n_minus = sum(change == "-")) %>%
   dplyr::ungroup()
+View(filter(object_effect_stats.df, std_type == "median" & str_detect(effect, ":treatment")) %>% dplyr::arrange(desc(n_hits)))
 
 object_contrasts.df <- dplyr::inner_join(pre_object_contrasts.df, fit_contrasts$iactions) %>%
   dplyr::left_join(select(modelobjs_df, object_id, is_msvalid_object)) %>%
@@ -226,6 +227,7 @@ object_contrast_stats.df <- dplyr::group_by(object_contrasts.df, contrast, contr
                    n_plus = sum(change == "+"),
                    n_minus = sum(change == "-")) %>%
   dplyr::ungroup()
+View(filter(object_contrast_stats.df, std_type == "median" & str_detect(contrast, "SARS.+_vs_mock")) %>% dplyr::arrange(desc(n_hits)))
 
 object_effects_wide.df <- pivot_wider(object_effects.df,
                                       id_cols = c("std_type", "object_id", "object_label", "majority_protein_acs", "gene_names"),
@@ -250,10 +252,18 @@ save(results_info, fit_stats, fit_contrasts,
 message('Done.')
 
 object_contrasts_report.df <- filter(object_contrasts.df, str_detect(contrast, "SARS_COV2.+_vs_mock")) %>%
-  dplyr::inner_join(select(msdata_full$protgroups, protgroup_id, protein_descriptions)) %>%
-  select(object_id, object_label, majority_protein_acs, protein_descriptions,
-         std_type, contrast,
-         median_log2, mean_log2, sd_log2, any_of(c("prob_nonpos", "prob_nonneg", "p_value")),
-         is_signif, is_hit_nomschecks, is_hit, change)
-write_tsv(object_contrasts_report.df, file.path(analysis_path, "reports", paste0(project_id, '_', ms_folder, '_contrasts_report_', fit_version, '.txt.gz')))
+  dplyr::inner_join(select(msdata_full$protgroups, protgroup_id, protein_descriptions, is_contaminant)) %>%
+  dplyr::select(object_id, gene_names, majority_protein_acs, protein_descriptions, is_contaminant,
+                std_type, contrast,
+                median_log2, mean_log2, sd_log2, any_of(c("prob_nonpos", "prob_nonneg", "p_value")),
+                is_signif, is_hit_nomschecks, is_hit, change) %>%
+  tidyr::extract(contrast, c("timepoint"), "SARS_COV2@(\\d+h)_.+", remove = FALSE) %>%
+  pivot_wider(c(std_type, gene_names, majority_protein_acs, protein_descriptions, is_contaminant),
+              names_from = "timepoint", values_from = c("is_hit_nomschecks", "change", "median_log2", "p_value", "sd_log2")) %>%
+  dplyr::select(std_type, gene_names, majority_protein_acs, protein_descriptions, is_contaminant,
+                ends_with("3h"), ends_with("6h"), ends_with("12h"), ends_with("18h"), ends_with("24h"), ends_with("30h")) %>%
+  filter(std_type == "replicate") %>% dplyr::select(-std_type) %>%
+  dplyr::arrange(gene_names, majority_protein_acs)
+
+write_tsv(object_contrasts_report.df, file.path(analysis_path, "reports", paste0(project_id, '_', ms_folder, '_contrasts_report_', fit_version, '_wide.txt.gz')))
 
