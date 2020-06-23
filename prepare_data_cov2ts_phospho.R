@@ -370,7 +370,7 @@ batch_effects.df <- tibble(batch_effect = character(0),
 rmsglmdata_filepath <- file.path(scratch_path, str_c(project_id, '_msglm_data_', ms_folder, '_', data_version, '.RData'))
 message('Saving MS data for MSGLM to ', rmsglmdata_filepath, '...')
 save(data_info, msdata,
-     conditions.df, effects.df,
+     conditions.df, effects.df, contrasts.df,
      conditionXeffect.mtx, inv_conditionXeffect.mtx, conditionXeffect.df,
      conditionXmetacondition.mtx, conditionXmetacondition.df,
      contrastXmetacondition.mtx, contrastXmetacondition.df, contrastXcondition.df,
