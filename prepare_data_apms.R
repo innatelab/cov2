@@ -456,10 +456,10 @@ contrastXmetacondition.df <- as_tibble(as.table(contrastXmetacondition.mtx)) %>%
                 # define the rule to dynamically select control baits for _vs_others comparison based on the protein abundance
                 # select the baits with abundance within 50%-90% percentiles
                 quantile_min = case_when(condition_role == "background" & str_detect(contrast, "_vs_others") ~ 0.5,
-                                         condition_role == "background" & str_detect(contrast, "_vs_B\\d+_others") ~ 0.2,
+                                         condition_role == "background" & str_detect(contrast, "_vs_B\\d+_others") ~ 0.4,
                                          TRUE ~ NA_real_),
                 quantile_max = case_when(condition_role == "background" & str_detect(contrast, "_vs_others") ~ 0.9,
-                                         condition_role == "background" & str_detect(contrast, "_vs_B\\d+_others") ~ 0.7,
+                                         condition_role == "background" & str_detect(contrast, "_vs_B\\d+_others") ~ 0.8,
                                          TRUE ~ NA_real_))
 
 contrastXcondition.df <- dplyr::select(contrastXmetacondition.df, -starts_with("quantile")) %>%

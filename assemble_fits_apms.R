@@ -5,9 +5,9 @@
 
 project_id <- 'cov2'
 message('Project ID=', project_id)
-data_version <- "20200515"
-fit_version <- "20200515"
-ms_folder <- 'mq_apms_20200510'
+data_version <- "20200525"
+fit_version <- "20200525"
+ms_folder <- 'mq_apms_20200525'
 message("Assembling fit results for project ", project_id,
         " (dataset v", data_version, ", fit v", fit_version, ")")
 
@@ -204,11 +204,16 @@ weak_bait_ids <- c("ORF3b", "ORF4", "ORF6",
 
 object_contrasts_thresholds.df <- select(object_contrasts.df, contrast, contrast_type, std_type, bait_full_id) %>%
   distinct() %>%
+  dplyr::left_join(transmute(contrasts.df, contrast, contrast_offset_log2=offset/log(2))) %>%
   dplyr::left_join(select(conditions.df, bait_full_id, bait_id)) %>%
-  mutate(p_value_threshold = case_when(contrast_type == "filter" & bait_id %in% weak_bait_ids ~ 0.001,
+  mutate(is_batch = str_detect(contrast, "B\\d_vs_others"),
+         p_value_threshold = case_when(contrast_type == "filter" & bait_id %in% weak_bait_ids ~ 0.001,
                                        TRUE ~ 0.001),
-         median_log2_threshold = case_when(bait_id %in% weak_bait_ids ~ 2,
-                                           TRUE ~ 4))
+         median_log2_threshold = case_when(is_batch & bait_id %in% weak_bait_ids ~ 2,
+                                           is_batch ~ 4,
+                                           bait_id %in% weak_bait_ids ~ 2,
+                                           TRUE ~ 4)) %>%
+  select(-is_batch)
 
 object_contrasts.df <- object_contrasts.df %>%
   select(-any_of(c("p_value_threshold", "median_log2_threshold", "median_log2_max"))) %>%
@@ -242,9 +247,7 @@ object_contrasts.df <- left_join(object_contrasts.df,
   mutate(is_hit_nomschecks = is_hit_nomschecks & coalesce(is_hit_nomschecks_batch, TRUE),
          is_hit = is_hit & is_hit_nomschecks)
 
-require(readxl)
-
-msruns_seq.df <- read_tsv(file.path(data_path, data_info$ms_folder, "SARS_COV2_MS_samples_sequence_20200519.txt")) %>%
+msruns_seq.df <- read_tsv(file.path(data_path, "SARS_COV2_MS_samples_sequence_20200519.txt")) %>%
   left_join(dplyr::select(msdata$msruns, raw_file, condition, bait_full_id, bait_homid, msrun))
 
 conditions_seq.df <- group_by(msruns_seq.df, condition, bait_full_id, bait_homid) %>%
@@ -294,7 +297,11 @@ object_contrasts_carryover.df <- inner_join(select(object_contrasts.df, object_i
   ungroup()
 
 object_contrasts.df <- left_join(object_contrasts.df, object_contrasts_carryover.df) %>%
-  mutate(is_carryover = is_hit_nomschecks &
+    # fix S baits
+    dplyr::mutate_at(vars(bait_full_id, bait_full_id_rhs, contrast, conditions_lhs, conditions_rhs,
+                          metacondition, contrast_batch, contrast_carryover),
+                     ~ str_replace(str_replace(str_replace(., "CoV2_S", "CoVII_S"), "CoV_S", "CoV2_S"), "CoVII_S", "CoV_S")) %>%
+    dplyr::mutate(is_carryover = is_hit_nomschecks &
          (coalesce(p_value_carryover, 1.0) <= 0.01 & coalesce(median_log2_carryover, -Inf) >= 1.0) &
          median_log2 <= coalesce(median_log2_carryover, -Inf),
          is_hit = is_hit & !is_carryover)
