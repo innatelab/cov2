@@ -234,16 +234,20 @@ cov1_organisms = ["SARS-CoV", "SARS-CoV-GZ02"]
 cov2_organisms = ["SARS-CoV-2"]
 
 baits_df = network_rdata["bait_labels.df"]
-bait_nodes_df = join(baits_df, objects_df, on=:bait_full_id=>:object_bait_full_id)
+bait_nodes_df = leftjoin(baits_df, select(objects_df, Not(:bait_homid)),
+                         on=:bait_full_id=>:object_bait_full_id)
+bait_nodes_df.is_sars = occursin.("SARS_CoV_", bait_nodes_df.bait_full_id)
+bait_nodes_df.is_cov2 = occursin.("SARS_CoV2_", bait_nodes_df.bait_full_id)
+bait_nodes_df.is_hcov = occursin.("HCoV_", bait_nodes_df.bait_full_id)
 bait_nodes_df.is_alt = occursin.(Ref(r"\?$"), bait_nodes_df.bait_full_id)
-bait_nodes_df.is_merged = occursin.(Ref("SARS"), bait_nodes_df.organism) .& .! bait_nodes_df.is_alt
-bait_nodes_df.bait_homid = copy(bait_nodes_df.bait_id) # stricter "homology" match
+bait_nodes_df.is_merged = (bait_nodes_df.is_sars .| bait_nodes_df.is_cov2) .& .!bait_nodes_df.is_alt
+bait_nodes_df.bait_mergeid = copy(bait_nodes_df.bait_id)
 bait_nodes_df.is_used = (bait_nodes_df.is_merged .| occursin.(Ref(r"ORF[34]"), String.(bait_nodes_df.bait_full_id))) .&
-    .!bait_nodes_df.is_alt
+    .!bait_nodes_df.is_alt .& .!bait_nodes_df.is_merged .& .!bait_nodes_df.is_hcov
 SkipBaitId = -10000
 bait_nodes_df[!, :baitmerge_object_id] .= SkipBaitId
 bait_nodes_df[bait_nodes_df.is_used, :baitmerge_object_id] .= bait_nodes_df.object_id[bait_nodes_df.is_used]
-for hombaits_df in groupby(bait_nodes_df, [:bait_homid])
+for hombaits_df in groupby(bait_nodes_df, [:bait_mergeid])
     if any(hombaits_df.is_merged)
         hombaits_df[hombaits_df.is_merged, :baitmerge_object_id] .=
             minimum(hombaits_df.object_id[hombaits_df.is_merged])
@@ -302,25 +306,25 @@ countmap(iactions_ex_df.type)
 
 nrow(unique(iactions_ex_df[!, [:src_object_id, :dest_object_id]]))
 
-iactions_baitmerge_pre_df = filter!(r -> r.src_object_id != r.dest_object_id,
-        rename!(join(rename!(filter(r -> r.type != "homology", iactions_ex_df),
-                         :src_object_id => :old_src_object_id),
-                select(filter(r -> r.object_id != SkipBaitId, objects_baitmerge_map_df),
-                        [:old_object_id, :object_id, :organism]),
-                 on=:old_src_object_id => :old_object_id),
-                 :object_id => :src_object_id))
-countmap(iactions_baitmerge_pre_df.type)
+iactions_baitmerge_pre_df = rename!(
+    innerjoin(rename(iactions_ex_df, :src_object_id => :old_src_object_id),
+              select(filter(r -> r.object_id != SkipBaitId, objects_baitmerge_map_df),
+                     [:old_object_id, :object_id, :organism]),
+              on=:old_src_object_id => :old_object_id),
+    :object_id => :src_object_id)
 
 # remove unattached nodes
 filter!(r -> r.object_id ∈ union(Set(filter(r -> r.type == "experiment", iactions_baitmerge_pre_df).src_object_id),
                                  Set(filter(r -> r.type == "experiment" && coalesce(r.is_hit, false), iactions_baitmerge_pre_df).dest_object_id)),
         objects_baitmerge_df)
+filter!(r -> r.src_object_id != r.dest_object_id &&
+        r.src_object_id ∈ Set(objects_baitmerge_df.object_id) &&
+        r.dest_object_id ∈ Set(objects_baitmerge_df.object_id),
+        iactions_baitmerge_pre_df)
+countmap(iactions_baitmerge_pre_df.type)
 
 # merge interactions of SARS/SARS-CoV-2
-iactions_baitmerge_df = combine(groupby(filter(r -> r.src_object_id ∈ Set(objects_baitmerge_df.object_id) &&
-                                                    r.dest_object_id ∈ Set(objects_baitmerge_df.object_id),
-                                               iactions_baitmerge_pre_df),
-                                        [:src_object_id, :dest_object_id])) do df
+iactions_baitmerge_df = combine(groupby(iactions_baitmerge_pre_df, [:bait_homid, :src_object_id, :dest_object_id])) do df
     cov1ix = findfirst(in(["SARS-CoV", "SARS-CoV-GZ02"]), df.organism)
     cov2ix = findfirst(==("SARS-CoV-2"), df.organism)
     min_pval = findmin(coalesce.(df.prob_nonpos, 2.0))
@@ -341,8 +345,8 @@ iactions_baitmerge_df = combine(groupby(filter(r -> r.src_object_id ∈ Set(obje
               ppi_type = df.ppi_type[1],
               iaction_ids = df.iaction_ids[1],
               edge_weight = maximum(w -> coalesce(w, 0.0), df.edge_weight),
-              contrast_comparison = isnothing(cov1ix) || isnothing(cov2ix) ? missing :
-                df.bait_full_id[cov2ix] * "_vs_" * df.bait_full_id[cov1ix] * "_corrected",
+              #contrast_comparison = isnothing(cov1ix) || isnothing(cov2ix) ? missing :
+              #  df.bait_full_id[cov2ix] * "_vs_" * df.bait_full_id[cov1ix] * "_corrected",
               oeproteome_p_value = min_pval_oeprot[1] == 2.0 ? missing : min_pval_oeprot[1],
               oeproteome_median_log2 = min_pval_oeprot[1] == 2.0 ? missing : df.oeproteome_median_log2[min_pval_oeprot[2]],
               oeproteome_is_hit = min_pval_oeprot[1] == 2.0 ? missing : df.oeproteome_is_hit[min_pval_oeprot[2]],
@@ -352,16 +356,76 @@ filter!(r -> r.is_hit || r.type != "experiment", iactions_baitmerge_df)
 
 nrow(unique(iactions_baitmerge_pre_df[!, [:src_object_id, :dest_object_id]]))
 
+baits_merged_df = leftjoin(select(semijoin(objects_baitmerge_df,
+         filter(r -> occursin("experiment", r.type), iactions_baitmerge_df),
+         on=:object_id=>:src_object_id), [:object_id, :object_label, :organism]),
+         rename!(select(bait_nodes_df, [:object_id, :bait_full_id, :bait_id, :bait_homid, :organism]),
+                 :organism => :bait_organism),
+         on=:object_id)
+baits_merged_df.is_sars = occursin.("SARS_CoV_", baits_merged_df.bait_full_id)
+baits_merged_df.is_cov2 = occursin.("SARS_CoV2_", baits_merged_df.bait_full_id)
+baits_merged_df.is_hcov = occursin.("HCoV_", baits_merged_df.bait_full_id)
+
+hombait_contrasts_df = innerjoin(innerjoin(rename!(filter(r -> r.contrast_type == "comparison" &&
+                                      r.std_type == "replicate" && occursin(r"^SARS_.+_corrected", r.contrast),
+                                      object_contrasts_df),
+                            :object_id=>:old_object_id),
+                            select(objects_baitmerge_map_df, [:old_object_id, :object_id]), on=:old_object_id),
+                            unique!(select(bait_nodes_df, [:bait_full_id, :bait_homid])), on=:bait_full_id)
+hombait_contrasts_df.bait_full_id_rhs = replace.(replace.(hombait_contrasts_df.contrast, Ref(r".+_vs_" => "")),
+                                                 Ref("_corrected" => ""))
+countmap(hombait_contrasts_df.change)
+
+hombait_iactions_lhs_df = innerjoin(iactions_baitmerge_df, filter(r -> r.is_cov2, baits_merged_df),
+                                    on=[:bait_homid, :src_object_id => :object_id])
+rename!(hombait_iactions_lhs_df, :is_hit => :is_hit_lhs)
+hombait_iactions_rhs_df = innerjoin(iactions_baitmerge_df, filter(r -> !r.is_cov2, baits_merged_df),
+                                    on=[:bait_homid, :src_object_id => :object_id])
+rename!(hombait_iactions_rhs_df, :bait_full_id => :bait_full_id_rhs, :is_hit => :is_hit_rhs)
+
+hombait_contrasts_merged_pre_df = leftjoin(
+        leftjoin(hombait_contrasts_df,
+                 select(hombait_iactions_lhs_df, [:bait_full_id, :dest_object_id, :is_hit_lhs]),
+                 on = [:bait_full_id, :object_id=>:dest_object_id]),
+        select(hombait_iactions_rhs_df, [:bait_full_id_rhs, :dest_object_id, :is_hit_rhs]),
+        on = [:bait_full_id_rhs, :object_id=>:dest_object_id])
+filter(r -> r.bait_full_id_rhs == "SARS_CoV_ORF8a" && r.old_object_id == 4465,
+       hombait_contrasts_merged_pre_df)[:, [:bait_homid, :bait_full_id, :object_id, :bait_full_id_rhs, :is_hit_lhs, :is_hit_rhs,
+       :contrast, :p_value, :median_log2]]
+
+hombait_contrasts_merged_df = combine(groupby(hombait_contrasts_merged_pre_df, [:bait_homid, :object_id])) do df
+    ishit_lhs = coalesce.(df.is_hit_lhs, false)
+    ishit_rhs = coalesce.(df.is_hit_rhs, false)
+    min_row = findmax(ifelse.(ishit_lhs .| ishit_rhs, df.p_value, -1.0))[2]
+    if any(==("ORF8"), df.bait_homid) && any(==(4465), df.object_id)
+        @show df[!, [:bait_homid, :bait_full_id, :object_id, :bait_full_id_rhs, :is_hit_lhs, :is_hit_rhs, :contrast, :p_value, :median_log2]]
+    end
+    if df.change[min_row] != "." # specific interaction, find out which
+        min_row = any(ishit_lhs) ?
+            findmax(ifelse.(ishit_lhs, df.p_value, -1.0))[2] :
+            findmax(ifelse.(ishit_rhs, df.p_value, -1.0))[2]
+    end
+    res = df[min_row:min_row, :]
+    res[!, :is_hit_iaction] .= any(ishit_lhs) || any(ishit_rhs)
+    res[!, :comparison_contrasts] .= join(sort(df.contrast), " ")
+    res[!, :n_iactions] .= nrow(df)
+    return res
+end
+filter!(r -> r.is_hit_iaction, hombait_contrasts_merged_df)
+countmap(hombait_contrasts_merged_df.change)
+filter(r -> r.bait_full_id == "SARS_CoV2_ORF8" && r.object_id == 4465,
+       hombait_contrasts_merged_df)[:, [:bait_homid, :bait_full_id, :bait_full_id_rhs, :object_id, :is_hit_lhs, :is_hit_rhs,
+       :contrast, :p_value, :median_log2]]
+
 comparison_cols = [:contrast, :p_value, :median_log2, :is_signif, :is_hit, :is_hit_nomschecks, :change]
 iactions_baitmerge_df = leftjoin(iactions_baitmerge_df,
-    rename!(select!(filter(r -> r.std_type == "replicate", object_contrasts_df),
-                    :object_id, comparison_cols...),
+    rename!(select(hombait_contrasts_merged_df, :bait_homid, :object_id, comparison_cols...),
             :object_id=>:dest_object_id,
             [col => Symbol(String(col), "_comparison") for col in comparison_cols]...),
-    on=[:contrast_comparison, :dest_object_id])
+    on=[:bait_homid, :dest_object_id])
 
 using CSV
-gene_groups_df = CSV.read(joinpath(analysis_path, "networks", "cov2_mq_apms_20200525_hit_oesc_20200604_vigi_20200606_annotations.txt"), delim='\t')
+gene_groups_df = CSV.read(joinpath(analysis_path, "networks", "cov2_mq_apms_20200525_hit_oesc_signif_20200604_vigi_20200609.txt"), delim='\t')
 for col in propertynames(gene_groups_df) # FIXME workaround for CSV.Column missing methods
     gene_groups_df[!, col] = convert(Vector, gene_groups_df[!, col])
 end
@@ -402,7 +466,7 @@ bm_nodesize_scale = 0.02
 bm_node_type_props = Dict("bait" => (mass=2.0, width=6bm_nodesize_scale, height=6bm_nodesize_scale),
                           "prey" => (mass=2.0, width=1.0bm_nodesize_scale, height=1.0bm_nodesize_scale),
                           "prey hilight" => (mass=0.5, width=2.5bm_nodesize_scale, height=2.5bm_nodesize_scale))
-select!(objects_baitmerge_df, Not([:layout_x, :layout_y]))
+hasproperty(objects_baitmerge_df, :layout_x) && select!(objects_baitmerge_df, Not([:layout_x, :layout_y]))
 objects_baitmerge_df.width = getproperty.(getindex.(Ref(bm_node_type_props), objects_baitmerge_df.exp_role), :width);
 objects_baitmerge_df.height = getproperty.(getindex.(Ref(bm_node_type_props), objects_baitmerge_df.exp_role), :height);
 
@@ -482,6 +546,25 @@ objects_baitmerge_and_groups_df.group_object_idstr = ifelse.(ismissing.(objects_
 iactions_baitmerge_df.src_object_idstr = string.(iactions_baitmerge_df.src_object_id)
 iactions_baitmerge_df.dest_object_idstr = string.(iactions_baitmerge_df.dest_object_id)
 
+specificity_palette = Dict("+" => "#ff9900",
+                           "-" => "#800000",
+                           "." => "#808080")
+iactions_baitmerge_df.enrichment_score =
+    clamp.(iactions_baitmerge_df.median_log2, 0.0, 10.0) .*
+    clamp.(-log10.(iactions_baitmerge_df.p_value), 0.0, 10.0)
+iactions_baitmerge_df.transparency = ifelse.(
+    .!ismissing.(iactions_baitmerge_df.change_comparison),
+    min.(iactions_baitmerge_df.enrichment_score ./
+         quantile(skipmissing(iactions_baitmerge_df.enrichment_score), 0.99), 1.0),
+    missing)
+iactions_baitmerge_df.specificity_color = get.(Ref(specificity_palette),
+    iactions_baitmerge_df.change_comparison, missing)
+iactions_baitmerge_df.specificity_color .=
+    ifelse.(.!ismissing.(iactions_baitmerge_df.change_comparison),
+            iactions_baitmerge_df.specificity_color .*
+            string.(ceil.(Int, 255*coalesce.(iactions_baitmerge_df.transparency, 0)), base=16),
+            iactions_baitmerge_df.specificity_color)
+
 bm_apms_graph = GraphML.import_graph(objects_baitmerge_and_groups_df, combine(groupby(iactions_baitmerge_df, [:src_object_idstr, :dest_object_idstr])) do df
     df[1:1, :]
 end,
@@ -533,6 +616,7 @@ end,
                                            :p_value_comparison => "P-value of CoV-2 vs SARS",
                                            :median_log2_comparison => "Log2(enrichment of CoV-2 vs SARS)",
                                            :change_comparison => "Is Hit CoV-2 vs SARS",
+                                           :specificity_color => "Specificity Color",
 
                                            #`Known types` = "known_types",
                                            :iaction_ids => "Known Interaction IDs"])
@@ -545,21 +629,11 @@ end,
  #                 `Weight` = 'weight',
  #                 `type` = "type" )
                              # verbose=verbose)
-open(joinpath(networks_path, "$(proj_info.id)_baitsmerged_graph_$(proj_info.msfolder)_$(proj_info.fit_ver)_FA3.graphml"), "w") do io
+open(joinpath(networks_path, "$(proj_info.id)_baitsmerged_graph_$(proj_info.msfolder)_$(proj_info.network_ver)_FA3.graphml"), "w") do io
     write(io, bm_apms_graph)
 end
 
 # final stats
-
-baits_merged_df = leftjoin(select(semijoin(objects_baitmerge_df,
-         filter(r -> occursin("experiment", r.type), iactions_baitmerge_df),
-         on=:object_id=>:src_object_id), [:object_id, :object_label, :organism]),
-         rename!(select(bait_nodes_df, [:object_id, :bait_full_id, :organism]),
-                 :organism => :bait_organism),
-         on=:object_id)
-baits_merged_df.is_sars = occursin.("SARS_CoV_", baits_merged_df.bait_full_id)
-baits_merged_df.is_cov2 = occursin.("SARS_CoV2_", baits_merged_df.bait_full_id)
-baits_merged_df.is_hcov = occursin.("HCoV_", baits_merged_df.bait_full_id)
 
 # baits that require special counting
 special_baits_df = filter(r -> occursin(r"^SARS_CoV2?_ORF[38][ab]?$", r.bait_full_id), baits_merged_df)
@@ -586,43 +660,8 @@ hcov_iactions_df = filter(r -> coalesce(r.is_hit, false) && occursin("experiment
 length(unique(hcov_iactions_df.dest_object_id))
 
 # special cases of non-merged baits
-special_baits_df.bait_id = replace.(replace.(special_baits_df.bait_full_id, Ref(r"[ab]$" => "")),
-                                    Ref(r"SARS_CoV2?_" => ""))
-special_bait_contrasts_df = innerjoin(rename!(semijoin(filter(r -> r.contrast_type == "comparison" &&
-                        r.std_type == "replicate" &&
-                        occursin(r"^SARS_.+_vs_SARS.+_corrected", r.contrast),
-                                            object_contrasts_df),
-                                     special_baits_df, on=[:bait_id]), :object_id=>:old_object_id),
-                                     objects_baitmerge_map_df, on=:old_object_id)
-special_bait_contrasts_df.bait_full_id_rhs = replace.(replace.(special_bait_contrasts_df.contrast, Ref(r".+_vs_" => "")),
-                                                      Ref("_corrected" => ""))
-countmap(special_bait_contrasts_df.change)
-
-special_bait_iactions_lhs_df = innerjoin(iactions_baitmerge_df, filter(r -> r.bait_organism == "SARS-CoV-2", special_baits_df),
-                                     on=:src_object_id => :object_id)
-rename!(special_bait_iactions_lhs_df, :is_hit => :is_hit_lhs)
-special_bait_iactions_rhs_df = innerjoin(iactions_baitmerge_df, filter(r -> r.bait_organism != "SARS-CoV-2", special_baits_df),
-                                        on=:src_object_id => :object_id)
-rename!(special_bait_iactions_rhs_df, :bait_full_id => :bait_full_id_rhs, :is_hit => :is_hit_rhs)
-
-special_bait_contrasts_merged_df = combine(groupby(
-    leftjoin(leftjoin(special_bait_contrasts_df,
-                      select(special_bait_iactions_lhs_df, [:bait_id, :bait_full_id, :dest_object_id, :is_hit_lhs]),
-            on = [:bait_id, :bait_full_id, :object_id=>:dest_object_id]),
-            select(special_bait_iactions_rhs_df, [:bait_id, :bait_full_id_rhs, :dest_object_id, :is_hit_rhs]),
-            on = [:bait_id, :bait_full_id_rhs, :object_id=>:dest_object_id]),
-    [:bait_id, :object_id])) do df
-    DataFrame(change_comparison = ifelse(any(==("."), df.change[coalesce.(df.is_hit_lhs, false) .| coalesce.(df.is_hit_rhs, false)]),
-                                         ".",
-                                         ifelse(any(==("+"), df.change[coalesce.(df.is_hit_lhs, false)]), "+", "-")),
-              n_iactions = nrow(df),
-              contrasts = join(sort(df.contrast), " "),
-              is_hit = any(x -> coalesce(x, false), df.is_hit_lhs) || any(x -> coalesce(x, false), df.is_hit_rhs))
-end
-filter!(r -> r.is_hit, special_bait_contrasts_merged_df)
-countmap(special_bait_contrasts_merged_df.change_comparison)
-countmap(special_bait_contrasts_merged_df.n_iactions)
-countmap(special_bait_contrasts_merged_df.contrasts)
+countmap(hombait_contrasts_merged_df.n_iactions)
+countmap(hombait_contrasts_merged_df.contrasts)
 
 countmap(vcat(antijoin(sars_iactions_df, special_baits_df, on=:bait_full_id).change_comparison,
               special_bait_contrasts_merged_df.change_comparison))
