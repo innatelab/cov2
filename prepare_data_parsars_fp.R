@@ -5,8 +5,8 @@
 
 project_id <- 'cov2'
 message('Project ID=', project_id)
-data_version <- "20200829"
-fit_version <- "20200829"
+data_version <- "20200830"
+fit_version <- "20200830"
 msfolder <- 'snaut_parsars_fp_20200829'
 message('Dataset version is ', data_version)
 
@@ -39,7 +39,7 @@ data_info <- list(project_id = project_id,
 
 message('Loading MS instrument calibration data from ', data_info$mscalib_protgroup_filename, '...')
 mscalib_protgroup <- fromJSON(file = file.path(data_path, data_info$mscalib_protgroup_filename))$instr_calib
-mscalib_pepmod <- fromJSON(file = file.path(data_path, data_info$mscalib_pepmod_filename))$mscalib
+mscalib_pepmodstate <- fromJSON(file = file.path(data_path, data_info$mscalib_pepmod_filename))$mscalib
 mscalib <- mscalib_protgroup
 
 source(file.path(project_scripts_path, 'prepare_data_common.R'))
@@ -425,7 +425,7 @@ global_pepmodstate_labu_shift <- 0.95*median(log(dplyr::filter(msdata$msruns, TR
 pepmodstate_labu_min <- inner_join(msdata$pepmodstate_intensities, total_msrun_shifts.df) %>%
   mutate(intensity_norm = intensity * exp(-total_msrun_shift)) %>%
   .$intensity_norm %>% log() %>%
-  quantile(0.001, na.rm=TRUE) - global_pepmodstate_labu_shift - 5
+  quantile(0.001, na.rm=TRUE) - global_pepmodstate_labu_shift - 2
 
 ############################
 # batch effects
@@ -451,7 +451,7 @@ save(data_info, msdata,
      conditionXeffect.mtx, conditionXeffect.df,
      conditionXmetacondition.mtx, conditionXmetacondition.df,
      contrastXmetacondition.mtx, contrastXmetacondition.df, contrastXcondition.df,
-     mscalib_protgroup, mscalib_pepmod,
+     mscalib_protgroup, mscalib_pepmodstate,
      global_protgroup_labu_shift, global_pepmodstate_labu_shift,
      pepmodstate_labu_min,
      total_msrun_shifts.df, #msruns_hnorm, 

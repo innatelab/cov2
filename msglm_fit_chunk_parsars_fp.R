@@ -160,8 +160,9 @@ gc()
 
 msglm.stan_data <- stan.prepare_data(mscalib, model_data,
                                      global_labu_shift = global_labu_shift,
-                                     obj_labu_min_scale = 3,
-                                     iact_repl_shift_df = 2)
+                                     obj_labu_min_scale = 1,
+                                     iact_repl_shift_df = 2,
+                                     suo_fdr=0.001, reliable_obs_fdr = 0.05, specific_iaction_fdr = 1)
 
 message('Running STAN in NUTS mode...')
 options(mc.cores=mcmc_nchains)
