@@ -158,7 +158,7 @@ dims_info <- msglm.prepare_dims_info(model_data, object_cols=c('object_id', mode
 msdata <- NULL
 gc()
 
-msglm.stan_data <- stan.prepare_data(instr_calib, model_data,
+msglm.stan_data <- stan.prepare_data(mscalib, model_data,
                                      global_labu_shift = global_labu_shift,
                                      obj_labu_min_scale = 3,
                                      iact_repl_shift_df = 2)

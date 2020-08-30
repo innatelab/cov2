@@ -23,4 +23,4 @@ modelobj_suffix <- dplyr::case_when(modelobj == "protgroup" ~ "_pg",
 
 global_labu_shift <- get(str_c("global_", quantobj, "_labu_shift"))
 obj_labu_min <- get(str_c(quantobj, "_labu_min"))
-instr_calib <- get(str_c("instr_calib_", quantobj))
+mscalib <- get(str_c("mscalib_", quantobj))

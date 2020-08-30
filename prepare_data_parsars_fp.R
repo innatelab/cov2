@@ -39,7 +39,7 @@ data_info <- list(project_id = project_id,
 
 message('Loading MS instrument calibration data from ', data_info$mscalib_protgroup_filename, '...')
 mscalib_protgroup <- fromJSON(file = file.path(data_path, data_info$mscalib_protgroup_filename))$instr_calib
-mscalib_pepmod <- fromJSON(file = file.path(data_path, data_info$mscalib_pepmod_filename))$instr_calib
+mscalib_pepmod <- fromJSON(file = file.path(data_path, data_info$mscalib_pepmod_filename))$mscalib
 mscalib <- mscalib_protgroup
 
 source(file.path(project_scripts_path, 'prepare_data_common.R'))
@@ -395,7 +395,7 @@ pheatmap(contrastXmetacondition.mtx, cluster_rows=FALSE, cluster_cols=FALSE,
 
 options(mc.cores=8)
 
-#msruns_hnorm <- multilevel_normalize_experiments(instr_calib_protgroup, msdata$msruns,
+#msruns_hnorm <- multilevel_normalize_experiments(mscalib_protgroup, msdata$msruns,
 #                                                 msdata4norm.df,
 #                                                 quant_col = "intensity", obj_col = "protgroup_id", mschan_col = "msrun",
 #                                                 mcmc.iter = 2000L,
@@ -422,6 +422,11 @@ global_pepmodstate_labu_shift <- 0.95*median(log(dplyr::filter(msdata$msruns, TR
                                              dplyr::select(msrun) %>% dplyr::distinct() %>%
                                              dplyr::inner_join(msdata$pepmodstate_intensities) %>% .$intensity), na.rm=TRUE)
 
+pepmodstate_labu_min <- inner_join(msdata$pepmodstate_intensities, total_msrun_shifts.df) %>%
+  mutate(intensity_norm = intensity * exp(-total_msrun_shift)) %>%
+  .$intensity_norm %>% log() %>%
+  quantile(0.001, na.rm=TRUE) - global_pepmodstate_labu_shift - 5
+
 ############################
 # batch effects
 # no batch effects so far
@@ -446,8 +451,9 @@ save(data_info, msdata,
      conditionXeffect.mtx, conditionXeffect.df,
      conditionXmetacondition.mtx, conditionXmetacondition.df,
      contrastXmetacondition.mtx, contrastXmetacondition.df, contrastXcondition.df,
-     instr_calib_protgroup, instr_calib_pepmod,
+     mscalib_protgroup, mscalib_pepmod,
      global_protgroup_labu_shift, global_pepmodstate_labu_shift,
+     pepmodstate_labu_min,
      total_msrun_shifts.df, #msruns_hnorm, 
      batch_effects.df, msrunXbatchEffect.mtx,
      subbatch_effects.df, msrunXsubbatchEffect.mtx,
