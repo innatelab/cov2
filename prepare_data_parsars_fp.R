@@ -684,3 +684,32 @@ p <- ggplot(shown_msdata.df,
 p
 ggsave(p, filename = file.path(analysis_path, "plots", msfolder, paste0(project_id, "_", msfolder, "_SARS_CoV2_proteins_simple_", data_version, ".pdf")),
        width = 3, height = 3, device = cairo_pdf)
+
+shared_cov_peptides.df <- filter(msdata_full$proteins, is_viral) %>%
+  dplyr::select(protein_ac, protein_name, gene_name, taxon_id) %>%
+  dplyr::inner_join(msdata_full$peptide2protein) %>%
+  dplyr::group_by(peptide_id) %>%
+  dplyr::filter(any(str_detect(protein_name, "_CVHSA")) & any(str_detect(protein_name, "_SARS2"))) %>%
+  dplyr::ungroup()
+
+shared_cov_msdata.df <- dplyr::select(shared_cov_peptides.df, gene_name, peptide_id) %>%
+  dplyr::distinct() %>%
+  dplyr::inner_join(dplyr::select(msdata_full$pepmods, peptide_id, pepmod_id)) %>%
+  dplyr::inner_join(msdata_full$pepmodstate_intensities) %>%
+  dplyr::inner_join(dplyr::select(msdata_full$msruns, msrun, treatment, timepoint, timepoint_num, replicate))
+
+shared_cov_msdata_wide.df <- pivot_wider(shared_cov_msdata.df, c(gene_name, pepmodstate_id, peptide_id, timepoint, timepoint_num, replicate),
+                                         names_from = treatment, values_from = c(intensity_norm, qvalue)) %>%
+  dplyr::mutate(log2_ratio.CoV2_vs_SARS = log2(intensity_norm_SARS_CoV2) - log2(intensity_norm_SARS_CoV))
+
+p <- ggplot(dplyr::filter(shared_cov_msdata_wide.df, abs(log2_ratio.CoV2_vs_SARS) <= 5),
+            aes(x = timepoint_num, y = log2_ratio.CoV2_vs_SARS)) +
+  geom_smooth(alpha=0.5, fill="gray", color="firebrick") +
+  geom_point(position = position_jitter(width=1, height=0), size=0.75, alpha=0.5) +
+  scale_x_continuous(breaks = unique(msdata_full$msruns$timepoint_num)) +
+  facet_wrap(~ gene_name, ncol = 3, scales = "free_y") +
+  theme_bw_ast()
+p
+ggsave(p, filename = file.path(analysis_path, "plots", str_c(msfolder, "_", data_version),
+                               paste0(project_id, "_", msfolder, "_shared_viral_peptides_ratio_", data_version, ".pdf")),
+       width = 8, height = 10, device = cairo_pdf)
