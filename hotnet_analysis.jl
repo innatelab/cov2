@@ -7,7 +7,7 @@ proj_info = (id = "cov2",
              oeproteome_folder = "spectronaut_oeproteome_20200527",
              oeproteome_data_ver = "20200527",
              oeproteome_fit_ver = "20200608",
-             hotnet_ver = "20200609")
+             hotnet_ver = "20200901")
 using Pkg
 Pkg.activate(joinpath(base_scripts_path, "adhoc", proj_info.id))
 
@@ -23,36 +23,19 @@ const plots_path = joinpath(analysis_path, "plots")
 
 includet(joinpath(misc_scripts_path, "frame_utils.jl"))
 includet(joinpath(misc_scripts_path, "delimdata_utils.jl"))
+includet(joinpath(misc_scripts_path, "graphml_writer.jl"))
+includet(joinpath(misc_scripts_path, "forceatlas3_layout.jl"))
+includet(joinpath(misc_scripts_path, "hotnet_utils.jl"))
 
 using Revise, DataFrames, CSV, RData, SimpleWeightedGraphs, LightGraphs,
       Statistics, StatsBase, LinearAlgebra
 using HierarchicalHotNet
 HHN = HierarchicalHotNet
 
-reactomefi_df = CSV.read(joinpath(party3rd_data_path, "FIsInGene_020720_with_annotations.txt"),
-                         header=true, delim='\t')
-rename!(x -> Symbol(lowercase(string(x))), reactomefi_df)
-reactomefi_genes = sort!(unique!(vcat(reactomefi_df.gene1, reactomefi_df.gene2)))
-reactomefi_gene2index = Dict(gene => i for (i, gene) in enumerate(reactomefi_genes))
-reactomefi_df.gene1 = levels!(categorical(reactomefi_df.gene1), reactomefi_genes)
-reactomefi_df.gene2 = FrameUtils.matchcategorical(reactomefi_df.gene2, reactomefi_df.gene1)
-reactomefi_df.direction = categorical(reactomefi_df.direction)
+reactomefi_diedges_df = HotnetUtils.import_reactomefi(joinpath(party3rd_data_path, "FIsInGene_020720_with_annotations.txt"), verbose=true)
+reactomefi_genes = levels(reactomefi_diedges_df.gene1)
+reactomefi_gene2index = Dict(gene => ix for (ix, gene) in enumerate(reactomefi_genes))
 
-reactomefi_directions_df = CSV.read(joinpath(party3rd_data_path, "reactome_fi_directions.txt"),
-                                    header=true, delim='\t')
-reactomefi_directions_df.direction = FrameUtils.matchcategorical(reactomefi_directions_df.direction, reactomefi_df.direction)
-reactomefi_directions_df[!, :src_to_dest] .= reactomefi_directions_df.src_to_dest .== 1
-reactomefi_directions_df[!, :dest_to_src] .= reactomefi_directions_df.dest_to_src .== 1
-categorical!(reactomefi_directions_df, :source)
-reactomefi_directions_df.target = FrameUtils.matchcategorical(reactomefi_directions_df.target, reactomefi_directions_df.source)
-reactomefi_df = leftjoin(reactomefi_df, reactomefi_directions_df, on=:direction)
-reactomefi_diedges_fwd_df = select(reactomefi_df, [:gene1, :gene2, :score, :src_to_dest, :direction, :target])
-rename!(reactomefi_diedges_fwd_df, :src_to_dest => :is_valid, :target => :diedge_type)
-reactomefi_diedges_fwd_df[!, :is_reverse] .= false
-reactomefi_diedges_rev_df = select(reactomefi_df, [:gene1, :gene2, :score, :dest_to_src, :direction, :source])
-rename!(reactomefi_diedges_rev_df, :dest_to_src => :is_valid, :gene1 => :gene2, :gene2 => :gene1, :source => :diedge_type)
-reactomefi_diedges_rev_df[!, :is_reverse] .= true
-reactomefi_diedges_df = vcat(reactomefi_diedges_fwd_df, reactomefi_diedges_rev_df)
 # reverse-direction graph
 reactomefi_digraph_revfull, reactomefi_digraph_revfull_vertices =
     HHN.import_digraph(reactomefi_diedges_df, src_col=:gene2, dest_col=:gene1, weight_col=:score)
