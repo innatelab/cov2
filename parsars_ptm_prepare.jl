@@ -1,6 +1,6 @@
 proj_info = (id = "cov2",
              data_ver = "20200907",
-             msfolder = "snaut_parsars_phos_20200907",
+             msfolder = "snaut_parsars_ptm_20200907",
              ptm_locprob_min = 0.75,
              )
 using Pkg
@@ -23,11 +23,11 @@ Revise.includet(joinpath(misc_scripts_path, "phosphositeplus_reader.jl"));
 
 # read direct Spectronaut output
 pmsreports = Dict(name => begin
-    report_df, colgroups = SpectronautUtils.read_report(joinpath(data_path, filename),
+    report_df, colgroups = SpectronautUtils.read_report(joinpath(data_path, proj_info.msfolder, filename),
             import_data=[:protgroup, :peptide, :pepmodstate, :quantity, :metrics], delim=',')
     (data = report_df, colgroups = colgroups)
-end for (name, filename) in [(:phospho, "snaut_parsars_phos_20200907/COVID_phospho_EG level.csv"),
-                             (:ubi, "snaut_parsars_ubi_20200907/Ubi_COVID_EG_level_Report.csv")])
+end for (name, filename) in [(:phospho, "phospho/COVID_phospho_EG level.csv"),
+                             (:ubi, "ubi/Ubi_COVID_EG_level_Report.csv")])
 
 # fix contaminant names (strip "CON__<SRC>:")
 for report in values(pmsreports), col in [:protgroup_sn_id, :majority_protein_acs, :majority_protein_acs_alt, :peptide_protein_acs]
@@ -53,7 +53,6 @@ rawfiles_df = vcat([begin
 end for (dsname, report) in pmsreports]...)
 msruns_df = sort!(innerjoin(rawfiles_df, samples_df, on=:msrun_ix),
                   [:dataset, :treatment, :timepoint, :replicate])
-CSV.write(joinpath(output_path, "rawfiles_info.txt"), msruns_df, delim='\t')
 
 msfasta_path = joinpath(data_path, proj_info.msfolder, "fasta used")
 proteins_df = let
@@ -127,13 +126,13 @@ protein2protgroup_df = DelimDataUtils.expand_delim_column(protgroups_df, list_co
 psitepseqs_df = Fasta.read_phosphositeplus(joinpath(party3rd_data_path, "PhosphoSitePlus", "Phosphosite_PTM_seq_noheader.fasta"))
 psitepseqs_df.is_ref_isoform = .!occursin.(Ref(r"-\d+$"), psitepseqs_df.protein_ac)
 
-pepmatches_df = PTMExtractor.peptide_matches(peptide2protgroups_df)
+peptide2protein_df = PTMExtractor.peptide_matches(peptide2protgroups_df)
 
 ptm2pms_df = innerjoin(unique!(PTMExtractor.extract_ptms(pepmodstates_df, objid_col=:pepmodstate_id)),
                        select(pepmodstates_df, [:pepmodstate_id, :peptide_id], copycols=false), on=:pepmodstate_id) |> unique!
 select!(ptm2pms_df, Not(:peptide_seq))
 sort!(ptm2pms_df, [:pepmodstate_id, :ptm_offset])
-ptm2pms2protein_df = innerjoin(ptm2pms_df, pepmatches_df, on=:peptide_id)
+ptm2pms2protein_df = innerjoin(ptm2pms_df, peptide2protein_df, on=:peptide_id)
 ptm2pms2protein_df.ptm_pos = ptm2pms2protein_df.peptide_pos .+ ptm2pms2protein_df.ptm_offset
 ptm2protein_df = leftjoin(unique!(select(ptm2pms2protein_df, [:ptm_type, :ptm_AAs, :ptm_AA_seq, :ptm_pos, :protein_ac])),
                           select(proteins_df, [:protein_ac, :genename, :organism, :is_viral, :is_contaminant], copycols=false),
@@ -189,6 +188,8 @@ pms_intensities_df = vcat([begin
     df[!, :dataset] .= dsname
     df
 end for (dsname, report) in pmsreports]...)
+rename!(pms_intensities_df, :EG_normfactor => :normfactor, :EG_intensity => :intensity_norm, :EG_qvalue => :qvalue)
+pms_intensities_df.intensity = pms_intensities_df.intensity_norm ./ pms_intensities_df.normfactor
 
 ptm_locprobs_df = PTMExtractor.extract_ptm_locprobs(pms_intensities_df, pepmodseq_col=:pepmod_seq, msrun_col=[:dataset, :rawfile_ix])
 ptm_locprobs_df.ptm_locprob_match = ptm_locprobs_df.ptm_locprob .>= proj_info.ptm_locprob_min
@@ -197,10 +198,10 @@ countmap(collect(zip(ptm_locprobs_df.dataset, ptm_locprobs_df.ptm_locprob_match)
 ptm_locprobs_df
 
 # strip rows/cols that are no longer required
-filter!(r -> !ismissing(r.EG_intensity), select!(pms_intensities_df, Not([:pepmod_seq, :EG_locprob_seq])))
+filter!(r -> !ismissing(r.intensity), select!(pms_intensities_df, Not([:pepmod_seq, :EG_locprob_seq])))
 
 # save the files
-for (fname, df) in ["rawfiles_info.txt" => rawfiles_df,
+for (fname, df) in ["rawfiles_info.txt" => msruns_df,
                     "proteins.txt.gz" => proteins_df,
                     "ptm_locprobs.txt.gz" => ptm_locprobs_df,
                     "pms_intensities.txt.gz" => pms_intensities_df,
@@ -209,7 +210,7 @@ for (fname, df) in ["rawfiles_info.txt" => rawfiles_df,
                     "peptides.txt.gz" => peptides_df,
                     "pepmodstates.txt.gz" => pepmodstates_df,
                     "protein_to_protgroup.txt.gz" => protein2protgroup_df,
-                    "pepmatches.txt.gz" => pepmatches_df,
+                    "peptide_to_protein.txt.gz" => peptide2protein_df,
                     "ptm_to_protein.txt.gz" => ptm2protein_df,
                     "ptm_to_gene.txt.gz" => ptm2gene_df,
                     "ptmns.txt.gz" => ptmns_df,
