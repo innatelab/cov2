@@ -36,9 +36,6 @@ for report in values(pmsreports), col in [:protgroup_sn_id, :majority_protein_ac
     df[mask, col] .= replace.(df[mask, col], Ref(r"CON__(?:[^:;]+):" => ""))
 end
 
-output_path = joinpath(data_path, proj_info.msfolder, "ptm_extractor")
-isdir(output_path) || mkdir(output_path)
-
 samples_df = CSV.read(joinpath(data_path, proj_info.msfolder, "msruns_info.txt"))
 samples_df.treatment = levels!(categorical(samples_df.treatment), ["mock", "SARS_CoV2", "SARS_CoV"])
 
@@ -85,9 +82,6 @@ proteins_df = let
     res
 end
 protein_seqs = Dict(r.protein_ac => r.seq for r in eachrow(proteins_df))
-open(GzipCompressorStream, joinpath(output_path, "proteins.txt.gz"), "w") do io
-    CSV.write(io, proteins_df, delim='\t')
-end
 
 # find all modified_peptide -to- sequence matches
 protgroups_df = vcat([begin
@@ -150,10 +144,11 @@ ptm2gene_df = PTMExtractor.group_aaobjs(ptm2protein_df, proteins_df,
                                         seqid_col=:protein_ac, seqrank_col=:protein_ac_isoform,
                                         obj_prefix=:ptm_, objid_col=[:ptm_type, :ptm_pos, :ptm_AA_seq],
                                         force_refseqs=true, verbose=true)
+ptm2gene_df.flanking_15AAs = PTMExtractor.flanking_sequence.(getindex.(Ref(protein_seqs), ptm2gene_df.protein_ac), ptm2gene_df.ptm_pos, flanklen=15)
+
 filter(r -> coalesce(r.genename, "") == "SYNPO", ptm2gene_df)
 filter(r -> r.ptm_is_reference && coalesce(r.is_viral, false), ptm2gene_df) |> print
 countmap(filter(r -> r.ptm_is_reference, ptm2gene_df).ptm_type)
-ptm2gene_df.flanking_15AAs = PTMExtractor.flanking_sequence.(getindex.(Ref(protein_seqs), ptm2gene_df.protein_ac), ptm2gene_df.ptm_pos, flanklen=15)
 
 ptmn2pms_df = select!(innerjoin(select(ptm2gene_df, [:ptm_id, :ptm_ix, :protein_ac, :ptm_type, :ptm_AA_seq, :ptm_pos]),
                                 ptm2pms2protein_df, on=[:protein_ac, :ptm_type, :ptm_AA_seq, :ptm_pos]),
@@ -201,6 +196,8 @@ ptm_locprobs_df
 filter!(r -> !ismissing(r.intensity), select!(pms_intensities_df, Not([:pepmod_seq, :EG_locprob_seq])))
 
 # save the files
+output_path = joinpath(data_path, proj_info.msfolder, "ptm_extractor")
+isdir(output_path) || mkdir(output_path)
 for (fname, df) in ["rawfiles_info.txt" => msruns_df,
                     "proteins.txt.gz" => proteins_df,
                     "ptm_locprobs.txt.gz" => ptm_locprobs_df,
