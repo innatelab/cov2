@@ -18,7 +18,7 @@ modelobj2protein.df$object_id <- modelobj2protein.df[[modelobj_idcol]]
 
 modelobj_suffix <- dplyr::case_when(modelobj == "protgroup" ~ "_pg",
                              modelobj == "protregroup" ~ "_prg",
-                             modelobj == "ptmgroup" ~ "_ptm",
+                             modelobj == "ptmn" ~ "_ptmn",
                              TRUE ~ NA_character_)
 
 global_labu_shift <- get(str_c("global_", quantobj, "_labu_shift"))
