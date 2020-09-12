@@ -5,8 +5,8 @@
 
 project_id <- 'cov2'
 message('Project ID=', project_id)
-data_version <- "20200907"
-fit_version <- "20200907"
+data_version <- "20200912"
+fit_version <- "20200912"
 msfolder <- 'snaut_parsars_ptm_20200907'
 message('Dataset version is ', data_version)
 
@@ -34,7 +34,8 @@ data_info <- list(project_id = project_id,
                   msfolder = msfolder,
                   mscalib_protgroup_filename = "instr_QX7_intensity_protgroup_calib_cov2_20200430.json",
                   mscalib_pepmod_filename = "mscalib_EXPL2_intensity_pepmodstate_cov2_20200828.json",
-                  quant_type = "intensity", quant_col_prefix = "intensity", qvalue_max=1E-3, locprob_min=0.75,
+                  quant_type = "intensity", quant_col_prefix = "intensity",
+                  qvalue_max=5E-3, locprob_min=0.75,
                   pep_quant_type = "intensity")
 
 message('Loading MS instrument calibration data from ', data_info$mscalib_protgroup_filename, '...')
@@ -89,10 +90,38 @@ msdata_full$msruns <- msdata_full$msruns %>%
 msdata_full$pepmodstate_intensities <- dplyr::inner_join(msdata_full$pepmodstate_intensities,
                                                          dplyr::select(msdata_full$msruns, dataset, msrun, msrun_ix, rawfile_ix)) %>%
   dplyr::select(-rawfile_ix) %>%
-  dplyr::mutate(ident_type = factor("MULTI-MSMS", "MULTI-MSMS"))
+  dplyr::mutate(ident_type = factor(ifelse(coalesce(qvalue, 1) <= data_info$qvalue_max, "MULTI-MSMS", "MULTI-MATCH"),
+                                    c("MULTI-MATCH", "MULTI-MSMS")))
 msdata_full$ptm_locprobs <- dplyr::inner_join(msdata_full$ptm_locprobs,
                                               dplyr::select(msdata_full$msruns, dataset, msrun, msrun_ix, rawfile_ix)) %>%
-  dplyr::select(-rawfile_ix)
+  dplyr::select(-rawfile_ix, -ptm_locprob_match)
+
+# add more properties to ptmns as it's the obect being modeled
+msdata_full$ptmns <- msdata_full$ptmns %>%
+  dplyr::left_join(dplyr::select(dplyr::filter(msdata_full$ptm2gene, ptm_is_reference), ptm_id, ptm_pos, protein_ac, is_viral, is_contaminant)) %>%
+  dplyr::left_join(dplyr::select(msdata_full$proteins, gene_name=genename, protein_ac, protein_code)) %>%
+  dplyr::mutate(ptmn_label_no_ptm_type = str_remove(ptmn_label, "^[^_]+_"))
+
+msdata_full$ptmn_locprobs <- dplyr::inner_join(msdata_full$ptm2gene, msdata_full$ptm_locprobs) %>%
+    dplyr::select(ptm_id, pepmodstate_id, dataset, msrun_ix, msrun, ptm_locprob) %>%
+    dplyr::distinct() %>%
+    dplyr::inner_join(msdata_full$ptmn2pepmodstate)
+
+msdata_full$ptmn_stats <- inner_join(msdata_full$ptmns, msdata_full$ptmn2pepmodstate) %>%
+  dplyr::inner_join(dplyr::select(msdata_full$pepmodstate_intensities, pepmodstate_id, dataset, msrun, intensity, ident_type)) %>%
+  dplyr::inner_join(msdata_full$ptmn_locprobs) %>%
+  dplyr::group_by(ptmn_id, ptmn_label, ptm_id, ptm_type, dataset) %>%
+  dplyr::summarise(n_quanted = sum(!is.na(intensity)),
+                   n_idented = sum(ident_type == "MULTI-MSMS"),
+                   n_msruns = n_distinct(msrun),
+                   n_pepmodstates = n_distinct(pepmodstate_id),
+                   n_localized = sum(coalesce(ptm_locprob, 0) >= data_info$locprob_min),
+                   n_valid_quants = sum(coalesce(ptm_locprob, 0) >= data_info$locprob_min & !is.na(intensity) & coalesce(ident_type, "?") == "MULTI-MSMS"),
+                   ptm_locprob_max = max(ptm_locprob, na.rm=TRUE),
+                   .groups="drop")
+
+msdata_full$msrun_pepmodstate_stats <- msrun_statistics(msdata_full, obj = "pepmodstate") %>%
+  dplyr::mutate(na_ratio = n_missing / n)
 
 all_proteins.df <- dplyr::bind_rows(
     dplyr::mutate(fasta.dfs$CoV, is_viral=TRUE, is_contaminant=FALSE, is_expected_stable=FALSE),
@@ -129,23 +158,21 @@ conditions.df <- dplyr::left_join(conditions.df,
     mutate(after0h = NULL, # not needed for exp_design
            infected = treatment != "mock")
 
-msdata_full$msrun_pepmodstate_stats <- msrun_statistics(msdata_full, obj = "pepmodstate") %>%
-  dplyr::mutate(na_ratio = n_missing / n)
-
 msdata <- msdata_full[c('pepmodstate_intensities', 'pepmods', 'pepmodstates',
                         'msruns', 'msrun_pepmodstate_stats', 'proteins',
                         'peptide2protein', 'ptmns', 'ptm2gene', 'ptmn2pepmodstate')]
 # keep only Phospho & GlyGly
 msdata$ptm2gene <- dplyr::filter(msdata_full$ptm2gene, ptm_type %in% c("Phospho", "GlyGly"))
-msdata$ptmns <- dplyr::filter(dplyr::semi_join(msdata_full$ptmns, msdata$ptm2gene), nptms <= 3)
+msdata$ptmns <- dplyr::semi_join(dplyr::filter(dplyr::semi_join(msdata_full$ptmns, msdata$ptm2gene), nptms <= 3),
+                                 dplyr::filter(msdata_full$ptmn_stats, n_valid_quants > 0))
 msdata$ptm2gene <- dplyr::semi_join(msdata_full$ptm2gene, msdata$ptmns)
 msdata$ptmn2pepmodstate <- dplyr::semi_join(msdata_full$ptmn2pepmodstate, msdata$ptmns)
 msdata$protein2ptmn <- dplyr::inner_join(msdata$ptmns, msdata$ptm2gene)
-msdata$ptm_locprobs <- semi_join(msdata_full$ptm_locprobs, msdata$ptmn2pepmodstate)
+msdata$ptmn_locprobs <- semi_join(msdata_full$ptmn_locprobs, msdata$ptmn2pepmodstate)
 msdata$pepmodstate_intensities <- msdata_full$pepmodstate_intensities %>% filter(coalesce(qvalue, 1.0) <= data_info$qvalue_max) %>%
                                   semi_join(filter(msdata$msruns, is_used)) %>%
                                   semi_join(msdata$pepmodstates) %>%
-                                  semi_join(filter(msdata$ptm_locprobs, ptm_locprob_match))
+                                  semi_join(filter(msdata$ptmn_locprobs, coalesce(ptm_locprob, 0) >= data_info$locprob_min))
 # setup experimental design matrices
 conditionXeffect_orig.mtx <- model.matrix(
   formula(str_c("~ 1 + (", str_c(str_subset(colnames(conditions.df), "^after\\d+h"), collapse =" + "), ") * (infected + treatment)")),
@@ -298,6 +325,18 @@ msruns_hnorm <- multilevel_normalize_experiments(mscalib_pepmodstate,
 #saveRDS(msruns_hnorm, file.path(scratch_path, str_c(project_id, "_", msfolder, "_", fit_version, ".rds")))
 #msruns_hnorm <- readRDS(file.path(scratch_path, str_c(project_id, "_", msfolder, "_", fit_version, ".rds")))
 total_msrun_shifts.df <- msruns_hnorm$mschannel_shifts
+
+# compare normalizations
+norm_plot <- ggplot(inner_join(msdata_full$pepmodstate_intensities, msdata_full$msruns), aes(x=msrun)) +
+    geom_violin(aes(y = -log2(normfactor)), draw_quantiles=c(0.25, 0.75), scale="width", fill="lightgray") +
+    geom_point(data=inner_join(total_msrun_shifts.df, msdata_full$msruns),
+               aes(x = msrun, y=total_msrun_shift/log(2)), size=1.5, color="red") +
+    facet_wrap(~ treatment + dataset, ncol=2, scales = "free") +
+    theme_bw_ast(base_family = "") +
+    theme(axis.text.x = element_text(hjust = 0, angle=-45))
+ggsave(norm_plot, filename = file.path(analysis_path, "plots", str_c(msfolder, "_", fit_version),
+                             paste0(project_id, "_", msfolder, "_normalization_", fit_version, ".pdf")),
+       width = 8, height = 12)
 
 ## apply normalization
 #msdata$protgroup_intensities <- dplyr::left_join(msdata$protgroup_intensities,

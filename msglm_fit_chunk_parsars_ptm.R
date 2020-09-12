@@ -1,6 +1,6 @@
 Sys.setenv(TZ='Etc/GMT+1') # issue#612@rstan
-#job.args <- c("cov2", "ast_cov2_msglm", "snaut_parsars_ptm_20200907", "20200907", "20200907", "0", "31394")
-#filter(mutate(modelobjs_df, rn=row_number()), str_detect(ptmn_label, "^GlyGly_SARS_CoV2_S_K825_M1"))$rn
+#job.args <- c("cov2", "ast_cov2_msglm", "snaut_parsars_ptm_20200907", "20200912", "20200912", "0", "1863")
+#filter(mutate(modelobjs_df, rn=row_number()), str_detect(ptmn_label, "^GlyGly_AP2A2_K6_M2"))$rn
 if (!exists('job.args')) {
   job.args <- commandArgs(trailingOnly = TRUE)
 }
@@ -52,9 +52,12 @@ message(sel_object_ids, " ", modelobj, " ID(s): ",
         paste0(sort(unique(dplyr::pull(modelobjs_df[modelobjs_df[[modelobj_idcol]] %in% sel_object_ids, ], object_label))), collapse=' '))
 sel_ptm_type <- modelobjs_df$ptm_type[[job_chunk]]
 msdata.df <- dplyr::filter(msdata$ptmn2pepmodstate, ptmn_id %in% sel_object_ids) %>%
-  dplyr::inner_join(dplyr::select(msdata_full$pepmodstate_intensities, pepmodstate_id, msrun, intensity)) %>%
-  dplyr::semi_join(dplyr::inner_join(msdata$ptm2gene, msdata$ptm_locprobs)) %>%
+  dplyr::inner_join(dplyr::select(msdata$pepmodstate_intensities, pepmodstate_id, msrun,
+                                  intensity=intensity_norm, qvalue)) %>% # !!! use SN-normalized intensity as the raw intensity
+  dplyr::inner_join(dplyr::select(msdata$ptmn_locprobs, ptmn_id, ptm_locprob, pepmodstate_id, msrun)) %>%
   dplyr::inner_join(dplyr::select(msdata$msruns, msrun, condition, treatment, timepoint)) %>%
+  dplyr::filter((coalesce(qvalue, 1) <= data_info$qvalue_max) &
+                (coalesce(ptm_locprob, 0) >= data_info$locprob_min)) %>% # filter valid PTM localization and identification probabilities
   dplyr::mutate(object_id = ptmn_id)
 message('Preparing MS GLM data...')
 model_data <- list()
@@ -62,12 +65,13 @@ model_data$mschannels <- dplyr::select(msdata$msruns, dataset, condition, msrun,
   dplyr::filter(dataset == case_when(sel_ptm_type == "GlyGly" ~ "ubi",
                                      sel_ptm_type == "Phospho" ~ "phospho",
                                      TRUE ~ "unknown")) %>%
-  dplyr::inner_join(dplyr::select(total_msrun_shifts.df, msrun, total_msrun_shift)) %>%
+  #dplyr::inner_join(dplyr::select(total_msrun_shifts.df, msrun, total_msrun_shift)) %>%
   dplyr::arrange(condition, replicate, msrun) %>% dplyr::distinct() %>%
   dplyr::mutate(mschannel_ix = row_number(),
                 msrun_ix = as.integer(factor(msrun, levels=unique(msrun))),
-                msproto_ix = 1L)
-experiment_shift_col <- 'total_msrun_shift'
+                msproto_ix = 1L,
+                zero_msrun_shift = 0L)
+experiment_shift_col <- 'zero_msrun_shift' # !!! no normalization shifts since normalized data is used
 model_data$mschannels$model_mschannel_shift <- model_data$mschannels[[experiment_shift_col]]
 model_data$conditions <- conditions.df %>%
   mutate(condition_ix = row_number())
@@ -102,7 +106,7 @@ model_data$subobjects <- msdata.df %>%
     # FIXME cluster per object
     dplyr::inner_join(cluster_msprofiles(msdata.df, msdata$msrun_pepmodstate_stats, obj_col='pepmodstate_id', msrun_col='msrun')) %>%
     dplyr::arrange(glm_object_ix, profile_cluster, desc(n_quant), desc(intensity_med)) %>%
-    dplyr::group_by(glm_object_ix, profile_cluster) %>%
+    dplyr::group_by(ptmn_id, glm_object_ix, profile_cluster) %>%
     dplyr::mutate(subobject_group_ix = row_number() %/% 20, # put objects within cluster into groups of 20
                   subobject_local_ix = row_number() %% 20) %>%
     dplyr::ungroup() %>%
@@ -140,11 +144,11 @@ msglm.stan_data <- stan.prepare_data(mscalib, model_data,
                                      global_labu_shift = global_labu_shift,
                                      obj_labu_min_scale = 1,
                                      iact_repl_shift_df = 2,
-                                     suo_fdr=0.001, reliable_obs_fdr = 0.05, specific_iaction_fdr = 1)
+                                     suo_fdr=0.001, reliable_obs_fdr = 0.01, specific_iaction_fdr = 1)
 
 message('Running STAN in NUTS mode...')
 options(mc.cores=mcmc_nchains)
-msglm.stan_fit <- stan.sampling(msglm.stan_data, adapt_delta=0.9, max_treedepth=10L,
+msglm.stan_fit <- stan.sampling(msglm.stan_data, adapt_delta=0.9, max_treedepth=11L,
                                 iter=4000L, chains=mcmc_nchains)
 
 min.iteration <- as.integer(1.25 * msglm.stan_fit@sim$warmup)
