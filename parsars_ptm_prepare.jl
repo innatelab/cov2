@@ -188,11 +188,10 @@ rename!(pms_intensities_df, :EG_normfactor => :normfactor, :EG_intensity => :int
 pms_intensities_df.intensity = pms_intensities_df.intensity_norm ./ pms_intensities_df.normfactor
 
 ptm_locprobs_df = PTMExtractor.extract_ptm_locprobs(pms_intensities_df, pepmodseq_col=:pepmod_seq, msrun_col=[:dataset, :rawfile_ix])
-ptm_locprobs_df.ptm_locprob_match = ptm_locprobs_df.ptm_locprob .>= proj_info.ptm_locprob_min
 ptm_locprobs_df = innerjoin(innerjoin(ptm_locprobs_df, select(pepmodstates_df, [:pepmodstate_id, :peptide_id], copycols=false), on=:pepmodstate_id),
                             peptide2protein_df, on=:peptide_id)
 ptm_locprobs_df.ptm_pos = ptm_locprobs_df.ptm_offset .+ ptm_locprobs_df.peptide_pos
-countmap(collect(zip(ptm_locprobs_df.dataset, ptm_locprobs_df.ptm_locprob_match)))
+countmap(collect(zip(ptm_locprobs_df.dataset, coalesce.(ptm_locprobs_df.ptm_locprob, 0.0) .>= proj_info.locprob_min)))
 ptm_locprobs_df
 
 # strip rows/cols that are no longer required
