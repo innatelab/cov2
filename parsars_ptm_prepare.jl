@@ -1,5 +1,5 @@
 proj_info = (id = "cov2",
-             data_ver = "20200907",
+             data_ver = "20200912b",
              msfolder = "snaut_parsars_ptm_20200907",
              ptm_locprob_min = 0.75,
              )
@@ -122,10 +122,12 @@ psitepseqs_df.is_ref_isoform = .!occursin.(Ref(r"-\d+$"), psitepseqs_df.protein_
 
 peptide2protein_df = PTMExtractor.peptide_matches(peptide2protgroups_df)
 
-ptm2pms_df = innerjoin(unique!(PTMExtractor.extract_ptms(pepmodstates_df, objid_col=:pepmodstate_id)),
-                       select(pepmodstates_df, [:pepmodstate_id, :peptide_id], copycols=false), on=:pepmodstate_id) |> unique!
+ptm2pms_df, pms_ptms_stats_df = PTMExtractor.extract_ptms(pepmodstates_df, objid_col=:pepmodstate_id, selptms=r"Phospho|GlyGly")
+ptm2pms_df = innerjoin(unique!(ptm2pms_df), select(pepmodstates_df, [:pepmodstate_id, :peptide_id], copycols=false),
+                       on=:pepmodstate_id) |> unique!
 select!(ptm2pms_df, Not(:peptide_seq))
 sort!(ptm2pms_df, [:pepmodstate_id, :ptm_offset])
+pepmodstates_df = innerjoin(pepmodstates_df, pms_ptms_stats_df, on=:pepmodstate_id)
 ptm2pms2protein_df = innerjoin(ptm2pms_df, peptide2protein_df, on=:peptide_id)
 ptm2pms2protein_df.ptm_pos = ptm2pms2protein_df.peptide_pos .+ ptm2pms2protein_df.ptm_offset
 ptm2protein_df = leftjoin(unique!(select(ptm2pms2protein_df, [:ptm_type, :ptm_AAs, :ptm_AA_seq, :ptm_pos, :protein_ac])),
@@ -150,15 +152,17 @@ filter(r -> coalesce(r.genename, "") == "SYNPO", ptm2gene_df)
 filter(r -> r.ptm_is_reference && coalesce(r.is_viral, false), ptm2gene_df) |> print
 countmap(filter(r -> r.ptm_is_reference, ptm2gene_df).ptm_type)
 
-ptmn2pms_df = select!(innerjoin(select(ptm2gene_df, [:ptm_id, :ptm_label, :protein_ac, :ptm_type, :ptm_AA_seq, :ptm_pos]),
-                                ptm2pms2protein_df, on=[:protein_ac, :ptm_type, :ptm_AA_seq, :ptm_pos]),
-                      [:ptm_id, :ptm_label, :ptm_type, :nptms, :pepmodstate_id]) |> unique!
-ptmns_df = unique!(select(ptmn2pms_df, [:ptm_id, :ptm_label, :ptm_type, :nptms]))
-sort!(ptmns_df, [:ptm_id, :nptms])
+ptmn2pms_df = innerjoin(select!(innerjoin(
+        select(ptm2gene_df, [:ptm_id, :ptm_label, :protein_ac, :ptm_type, :ptm_AA_seq, :ptm_pos], copycols=false),
+        ptm2pms2protein_df, on=[:protein_ac, :ptm_type, :ptm_AA_seq, :ptm_pos]),
+        [:ptm_id, :ptm_label, :ptm_type, :pepmodstate_id]) |> unique!,
+        select(pepmodstates_df, [:pepmodstate_id, :nselptms], copycols=false), on=:pepmodstate_id)
+ptmns_df = unique!(select(ptmn2pms_df, [:ptm_id, :ptm_label, :ptm_type, :nselptms]))
+sort!(ptmns_df, [:ptm_id, :nselptms])
 ptmns_df.ptmn_id = 1:nrow(ptmns_df)
-ptmns_df.ptmn_label = categorical(ptmns_df.ptm_label .* "_M" .* string.(ptmns_df.nptms))
-ptmn2pms_df = innerjoin(ptmn2pms_df, select(ptmns_df, Not(:ptm_label), copycols=false), on=[:ptm_id, :ptm_type, :nptms])
-select!(ptmn2pms_df, Not([:ptm_type, :nptms]))
+ptmns_df.ptmn_label = categorical(ptmns_df.ptm_label .* "_M" .* string.(ptmns_df.nselptms))
+ptmn2pms_df = innerjoin(ptmn2pms_df, select(ptmns_df, Not(:ptm_label), copycols=false), on=[:ptm_id, :ptm_type, :nselptms])
+select!(ptmn2pms_df, Not([:ptm_type, :nselptms]))
 sort!(ptmn2pms_df, [:ptmn_id, :pepmodstate_id])
 
 print(countmap(collect(values(countmap(ptmn2pms_df.pepmodstate_id)))))
@@ -187,7 +191,7 @@ end for (dsname, report) in pmsreports]...)
 rename!(pms_intensities_df, :EG_normfactor => :normfactor, :EG_intensity => :intensity_norm, :EG_qvalue => :qvalue)
 pms_intensities_df.intensity = pms_intensities_df.intensity_norm ./ pms_intensities_df.normfactor
 
-ptm_locprobs_df = PTMExtractor.extract_ptm_locprobs(pms_intensities_df, pepmodseq_col=:pepmod_seq, msrun_col=[:dataset, :rawfile_ix])
+ptm_locprobs_df = PTMExtractor.extract_ptm_locprobs(pms_intensities_df, modseq_col=:pepmod_seq, msrun_col=[:dataset, :rawfile_ix])
 ptm_locprobs_df = innerjoin(innerjoin(ptm_locprobs_df, select(pepmodstates_df, [:pepmodstate_id, :peptide_id], copycols=false), on=:pepmodstate_id),
                             peptide2protein_df, on=:peptide_id)
 ptm_locprobs_df.ptm_pos = ptm_locprobs_df.ptm_offset .+ ptm_locprobs_df.peptide_pos
