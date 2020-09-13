@@ -40,20 +40,17 @@ msruns_df = unique!(select(quantity_colinfo_df, [:rawfile_ix, :rawfile]))
 rawfilename_matches = match.(Ref(r"(?<date>\d+)_(?<instr>.+)_(?<who>.+)_SA_HeLa_(?<amount>\d+.g)_DIA_proteome_(?<replicate>\d+)(?:_\d+)?.raw$"),
        get.(msruns_df.rawfile))
 msruns_df.is_used = .!isnothing.(rawfilename_matches);
-msruns_df[!, :batch] .= [isnothing(m) ? missing : string(getindex(m, :date)) for m in rawfilename_matches];
-msruns_df[!, :batch] = ifelse.(msruns_df[!, :batch] .== "20200814", "20200813", msruns_df[!, :batch])
-msruns_df[!, :instrument] .= [isnothing(m) ? missing : string(getindex(m, :instr)) for m in rawfilename_matches];
-msruns_df[!, :amount] .= [isnothing(m) ? missing : string(getindex(m, :amount)) for m in rawfilename_matches];
-msruns_df[!, :replicate] .= [isnothing(m) ? missing : parse(Int, getindex(m, :replicate)) for m in rawfilename_matches];
-pepmodstates_df = select(pms_data, vcat(["pepmodstate_id"], last.(report_colinfo[:peptide]), last.(report_colinfo[:pepmodstate])));
+msruns_df.batch = [isnothing(m) ? missing : string(getindex(m, :date)) for m in rawfilename_matches];
+msruns_df.batch = ifelse.(msruns_df.batch .== "20200814", "20200813", msruns_df.batch)
+msruns_df.instrument = [isnothing(m) ? missing : string(getindex(m, :instr)) for m in rawfilename_matches];
+msruns_df.amount = [isnothing(m) ? missing : string(getindex(m, :amount)) for m in rawfilename_matches];
+msruns_df.replicate = [isnothing(m) ? missing : parse(Int, getindex(m, :replicate)) for m in rawfilename_matches];
+pepmodstates_df = select(pms_data, vcat(last.(report_colinfo[:peptide]), last.(report_colinfo[:pepmodstate])));
 pepmodstates_df.is_contaminant = occursin.(Ref(r"(?:^|;)CON__"), pepmodstates_df.peptide_protein_acs);
 pepmodstates_df.use_for_calib = .!pepmodstates_df.is_contaminant;
 pepmodstates_df
 
-pms_intensities_df = FrameUtils.pivot_longer(pms_data, :pepmodstate_id,
-                        measure_vars_regex=r"^(?<value>[^.]+)\.\[(?<var>\d+)\]\s(?<rawfile>.+)?$",
-                        var_col=:rawfile_ix, value_col=:metric)
-pms_intensities_df.rawfile_ix = parse.(Int, string.(pms_intensities_df[!, :rawfile_ix]))
+pms_intensities_df = SpectronautUtils.pivot_longer(pms_data, :pepmodstate_id)
 rename!(pms_intensities_df, :EG_intensity => :intensity_norm)
 pms_intensities_df.intensity = pms_intensities_df.intensity_norm ./ pms_intensities_df.EG_normfactor
 rawfile_normfactors_df = filter!(r -> !ismissing(r.EG_normfactor), select(pms_intensities_df, [:rawfile_ix, :EG_normfactor])) |> unique!
@@ -65,7 +62,7 @@ pms_used_intensities_df = filter(r -> (r.pepmodstate_id ∈ used_pepmodstate_ids
                                       (r.rawfile_ix ∈ used_rawfile_ixs) &&
                                       (coalesce(r.EG_qvalue, 1) <= proj_info.qvalue_max), pms_intensities_df)
 mscalib_data = MSInstrumentCalibration.MSErrorCalibrationData(pms_used_intensities_df, pepmodstates_df, msruns_df,
-        msrun_col=:rawfile_ix, exp_col=:batch, intensity_col=:EG_intensity, object_col=:pepmodstate_id,
+        msrun_col=:rawfile_ix, exp_col=:batch, intensity_col=:intensity, object_col=:pepmodstate_id,
         missed_intensity_factor = 1.0, # assume intensity was missed in replicate because it was really less abundant
         bin_oversize=3, nbins=40, max_objXexp=5000, error_scale=0.8) # assume 80% of variation comes from measurement
 
