@@ -5,8 +5,8 @@
 
 project_id <- 'cov2'
 message('Project ID=', project_id)
-data_version <- "20200912"
-fit_version <- "20200912"
+data_version <- "20200913"
+fit_version <- "20200913"
 msfolder <- 'snaut_parsars_ptm_20200907'
 message('Dataset version is ', data_version)
 
@@ -33,14 +33,17 @@ data_info <- list(project_id = project_id,
                   data_ver = data_version, fit_ver = fit_version,
                   msfolder = msfolder,
                   mscalib_protgroup_filename = "instr_QX7_intensity_protgroup_calib_cov2_20200430.json",
-                  mscalib_pepmod_filename = "mscalib_EXPL2_intensity_pepmodstate_cov2_20200828.json",
+                  mscalib_pepmodstate_filename = "mscalib_EXPL2_intensity_pepmodstate_cov2_20200828.json",
                   quant_type = "intensity", quant_col_prefix = "intensity",
-                  qvalue_max=5E-3, locprob_min=0.75,
+                  qvalue_max=1E-2, qvalue_ident_max=1E-3,
+                  locprob_min=0.0, locprob_ident_min=0.75,
                   pep_quant_type = "intensity")
 
 message('Loading MS instrument calibration data from ', data_info$mscalib_protgroup_filename, '...')
 mscalib_protgroup <- fromJSON(file = file.path(data_path, data_info$mscalib_protgroup_filename))$instr_calib
-mscalib_pepmodstate <- fromJSON(file = file.path(data_path, data_info$mscalib_pepmod_filename))$mscalib
+mscalib_pepmodstate_json <- fromJSON(file = file.path(data_path, data_info$mscalib_pepmodstate_filename))
+mscalib_pepmodstate <- mscalib_pepmodstate_json$mscalib
+#mscalib_pepmodstate$missingSigmoidType <- list(invlogit = 1L, ratio = 2L)[[mscalib_pepmodstate_json$missing_sigmoid]]
 
 source(file.path(project_scripts_path, 'prepare_data_common.R'))
 
@@ -94,7 +97,7 @@ msdata_full$pepmodstate_intensities <- dplyr::inner_join(msdata_full$pepmodstate
                                     c("MULTI-MATCH", "MULTI-MSMS")))
 msdata_full$ptm_locprobs <- dplyr::inner_join(msdata_full$ptm_locprobs,
                                               dplyr::select(msdata_full$msruns, dataset, msrun, msrun_ix, rawfile_ix)) %>%
-  dplyr::select(-rawfile_ix, -ptm_locprob_match)
+  dplyr::select(-rawfile_ix)
 
 # add more properties to ptmns as it's the obect being modeled
 msdata_full$ptmns <- msdata_full$ptmns %>%
@@ -108,15 +111,22 @@ msdata_full$ptmn_locprobs <- dplyr::inner_join(msdata_full$ptm2gene, msdata_full
     dplyr::inner_join(msdata_full$ptmn2pepmodstate)
 
 msdata_full$ptmn_stats <- inner_join(msdata_full$ptmns, msdata_full$ptmn2pepmodstate) %>%
-  dplyr::inner_join(dplyr::select(msdata_full$pepmodstate_intensities, pepmodstate_id, dataset, msrun, intensity, ident_type)) %>%
+  dplyr::inner_join(dplyr::select(msdata_full$pepmodstate_intensities, pepmodstate_id, dataset, msrun, intensity, qvalue)) %>%
   dplyr::inner_join(msdata_full$ptmn_locprobs) %>%
+  dplyr::mutate(is_quanted = !is.na(intensity),
+                is_idented = coalesce(qvalue, 1) <= data_info$qvalue_ident_max,
+                is_localized = coalesce(ptm_locprob, 0) >= data_info$locprob_ident_min,
+                is_valid_quant = is_quanted & coalesce(ptm_locprob, 0) >= data_info$locprob_min &
+                                 coalesce(qvalue, 1) <= data_info$qvalue_max) %>%
   dplyr::group_by(ptmn_id, ptmn_label, ptm_id, ptm_type, dataset) %>%
-  dplyr::summarise(n_quanted = sum(!is.na(intensity)),
-                   n_idented = sum(ident_type == "MULTI-MSMS"),
+  dplyr::summarise(n_quanted = sum(is_quanted),
+                   n_idented = sum(is_idented),
                    n_msruns = n_distinct(msrun),
                    n_pepmodstates = n_distinct(pepmodstate_id),
-                   n_localized = sum(coalesce(ptm_locprob, 0) >= data_info$locprob_min),
-                   n_valid_quants = sum(coalesce(ptm_locprob, 0) >= data_info$locprob_min & !is.na(intensity) & coalesce(ident_type, "?") == "MULTI-MSMS"),
+                   n_localized = sum(is_localized),
+                   n_idented_and_localized = sum(is_localized & is_idented),
+                   n_valid_quants = sum(is_valid_quant),
+                   pms_qvalue_min = min(qvalue, na.rm=TRUE),
                    ptm_locprob_max = max(ptm_locprob, na.rm=TRUE),
                    .groups="drop")
 
@@ -163,8 +173,8 @@ msdata <- msdata_full[c('pepmodstate_intensities', 'pepmods', 'pepmodstates',
                         'peptide2protein', 'ptmns', 'ptm2gene', 'ptmn2pepmodstate')]
 # keep only Phospho & GlyGly
 msdata$ptm2gene <- dplyr::filter(msdata_full$ptm2gene, ptm_type %in% c("Phospho", "GlyGly"))
-msdata$ptmns <- dplyr::semi_join(dplyr::filter(dplyr::semi_join(msdata_full$ptmns, msdata$ptm2gene), nptms <= 3),
-                                 dplyr::filter(msdata_full$ptmn_stats, n_valid_quants > 0))
+msdata$ptmns <- dplyr::semi_join(dplyr::filter(dplyr::semi_join(msdata_full$ptmns, msdata$ptm2gene), nselptms <= 3),
+                                 dplyr::filter(msdata_full$ptmn_stats, n_valid_quants > 0 & n_idented_and_localized > 0))
 msdata$ptm2gene <- dplyr::semi_join(msdata_full$ptm2gene, msdata$ptmns)
 msdata$ptmn2pepmodstate <- dplyr::semi_join(msdata_full$ptmn2pepmodstate, msdata$ptmns)
 msdata$protein2ptmn <- dplyr::inner_join(msdata$ptmns, msdata$ptm2gene)
@@ -219,9 +229,9 @@ effects.df <- left_join(effects.df,
                                   effect_type == "timepoint" ~ str_c(timepoint, "h"),
                                   TRUE ~ NA_character_),
          prior_mean = 0,
-         prior_tau = case_when(effect_type == "strainXtimepoint" ~ 0.25,
-                               effect_type == "infectedXtimepoint" ~ 0.25,
-                               effect_type == "timepoint" ~ 1.0,
+         prior_tau = case_when(effect_type == "strainXtimepoint" ~ 0.1,
+                               effect_type == "infectedXtimepoint" ~ 0.1,
+                               effect_type == "timepoint" ~ 0.25,
                                TRUE ~ NA_real_),
          prior_df2 = case_when(effect_type == "strainXtimepoint" ~ 4.0,
                                effect_type == "infectedXtimepoint" ~ 4.0,

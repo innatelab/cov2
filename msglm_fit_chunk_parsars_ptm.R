@@ -1,6 +1,6 @@
 Sys.setenv(TZ='Etc/GMT+1') # issue#612@rstan
-#job.args <- c("cov2", "ast_cov2_msglm", "snaut_parsars_ptm_20200907", "20200912", "20200912", "0", "1863")
-#filter(mutate(modelobjs_df, rn=row_number()), str_detect(ptmn_label, "^GlyGly_AP2A2_K6_M2"))$rn
+#job.args <- c("cov2", "ast_cov2_msglm", "snaut_parsars_ptm_20200907", "20200913", "20200913", "0", "1081")
+#filter(mutate(modelobjs_df, rn=row_number()), str_detect(ptmn_label, "^Phospho_AKAP10_S187_M1"))$rn
 if (!exists('job.args')) {
   job.args <- commandArgs(trailingOnly = TRUE)
 }
@@ -90,7 +90,7 @@ model_data$interactions <- dplyr::arrange(model_data$interactions, condition_ix,
 
 model_data$objects <- dplyr::transmute(model_data$interactions, glm_object_ix, object_id, is_underdefined=FALSE) %>%
   dplyr::distinct() %>% dplyr::arrange(glm_object_ix) %>%
-  dplyr::inner_join(dplyr::select(modelobjs_df, ptm_id, ptmn_id, ptmn_label, nptms, object_id, object_label)) %>%
+  dplyr::inner_join(dplyr::select(modelobjs_df, ptm_id, ptmn_id, ptmn_label, nselptms, object_id, object_label, ptmn_label_no_ptm_type)) %>%
   dplyr::inner_join(dplyr::select(filter(msdata$ptm2gene, ptm_is_reference), ptm_id, protein_ac, ptm_pos, ptm_AA_seq, ptm_type, contains("is_"))) %>%
   dplyr::inner_join(dplyr::select(msdata$proteins, protein_ac, gene_name=genename, protein_name, contains("is_"))) %>%
   #dplyr::select(-is_fit) %>%
@@ -131,8 +131,8 @@ model_data$msdata <- mutate(model_data$msdata,
 
 model_data <- prepare_effects(model_data, underdefined_iactions=FALSE)
 
-dims_info <- msglm.prepare_dims_info(model_data, object_cols=c('object_id', modelobj_idcol, "object_label",
-                                                               "ptm_type", "ptm_AA_seq", "ptm_pos", "nptms",
+dims_info <- msglm.prepare_dims_info(model_data, object_cols=c('object_id', modelobj_idcol, "object_label", "ptmn_label_no_ptm_type",
+                                                               "ptm_type", "ptm_AA_seq", "ptm_pos", "nselptms",
                                                                "protein_ac", "gene_name", "protein_name",
                                                                "is_viral", "is_contaminant"#, "is_decoy"
                                                                ))
