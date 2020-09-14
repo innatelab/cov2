@@ -1,5 +1,5 @@
 Sys.setenv(TZ='Etc/GMT+1') # issue#612@rstan
-#job.args <- c("cov2", "ast_cov2_msglm", "snaut_parsars_ptm_20200907", "20200913", "20200913", "0", "1081")
+#job.args <- c("cov2", "ast_cov2_msglm", "snaut_parsars_ptm_20200907", "20200914", "20200914", "0", "1081")
 #filter(mutate(modelobjs_df, rn=row_number()), str_detect(ptmn_label, "^Phospho_AKAP10_S187_M1"))$rn
 if (!exists('job.args')) {
   job.args <- commandArgs(trailingOnly = TRUE)
@@ -144,7 +144,8 @@ msglm.stan_data <- stan.prepare_data(mscalib, model_data,
                                      global_labu_shift = global_labu_shift,
                                      obj_labu_min_scale = 1,
                                      iact_repl_shift_df = 2,
-                                     suo_fdr=0.001, reliable_obs_fdr = 0.01, specific_iaction_fdr = 1)
+                                     suo_fdr=0.001, reliable_obs_fdr = 0.01, specific_iaction_fdr = 1,
+                                     empty_observation_sigmoid_scale = data_info$empty_observation_sigmoid_scale)
 
 message('Running STAN in NUTS mode...')
 options(mc.cores=mcmc_nchains)

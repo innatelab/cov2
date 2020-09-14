@@ -5,8 +5,8 @@
 
 project_id <- 'cov2'
 message('Project ID=', project_id)
-data_version <- "20200913"
-fit_version <- "20200913"
+data_version <- "20200914"
+fit_version <- "20200914"
 msfolder <- 'snaut_parsars_ptm_20200907'
 message('Dataset version is ', data_version)
 
@@ -36,7 +36,8 @@ data_info <- list(project_id = project_id,
                   mscalib_pepmodstate_filename = "mscalib_EXPL2_intensity_pepmodstate_cov2_20200828.json",
                   quant_type = "intensity", quant_col_prefix = "intensity",
                   qvalue_max=1E-2, qvalue_ident_max=1E-3,
-                  locprob_min=0.0, locprob_ident_min=0.75,
+                  locprob_min=0.25, locprob_ident_min=0.75,
+                  empty_observation_sigmoid_scale=1/3,
                   pep_quant_type = "intensity")
 
 message('Loading MS instrument calibration data from ', data_info$mscalib_protgroup_filename, '...')
