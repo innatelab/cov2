@@ -171,24 +171,28 @@ for bait_genes_df in groupby(apms_gene_iactions_df, :bait_full_id)
 end
 
 ### select optimal restart probability
-restart_probs = 0.05:0.05:0.95
-reactomefi_walkmtxs = HHN.random_walk_matrix.(Ref(reactomefi_digraph_rev), restart_probs)
+test_restart_probs = 0.05:0.05:0.95
+test_diedge_weight_min = 1.0
+reactomefi_test_walkmtxs = HHN.random_walk_matrix.(Ref(reactomefi_digraph_rev), test_restart_probs,
+                                              inedge_weights=bait2vertex_weights["SARS_CoV2_M"] .+ diedge_weight_min)
 
 # calculate average probability to stay in the original direct neighborhood of a vertex
 # or travel further
-vtx_totprobs = vec.(sum.(reactomefi_walkmtxs, dims=1)) - diag.(reactomefi_walkmtxs)
-vtx_neiprobs = HHN.neighborhood_weights.(reactomefi_walkmtxs, Ref(reactomefi_digraph_rev))
+vtx_totprobs = vec.(sum.(reactomefi_test_walkmtxs, dims=1)) - diag.(reactomefi_test_walkmtxs)
+vtx_neiprobs = HHN.neighborhood_weights.(reactomefi_test_walkmtxs, Ref(reactomefi_digraph_rev))
 vtx_extprobs = vtx_totprobs .- vtx_neiprobs
 
-restartprob_stats_df = vcat(DataFrame(restart_prob = restart_probs,
+restartprob_stats_df = vcat(DataFrame(restart_prob = test_restart_probs,
                                       vertices = "neighbors",
                                       trans_probs = sum.(vtx_neiprobs)),
-                            DataFrame(restart_prob = restart_probs,
+                            DataFrame(restart_prob = test_restart_probs,
                                       vertices = "exterior",
                                       trans_probs = sum.(vtx_extprobs)))
 categorical!(restartprob_stats_df)
 using PlotlyJS
-plot(restartprob_stats_df, x=:restart_prob, y=:trans_probs, color=:vertices, group=:vertices)
+restartXneighb_plot = plot(restartprob_stats_df, x=:restart_prob, y=:trans_probs, color=:vertices, group=:vertices)
+savefig(restartXneighb_plot,
+        joinpath(analysis_path, "networks", "$(proj_info.id)_restart_probability_neighborhood_$(proj_info.hotnet_ver).svg"))
 
 ###
 opt_restart_prob = 0.4 # 0.6
