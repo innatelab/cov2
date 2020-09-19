@@ -1,6 +1,6 @@
 Sys.setenv(TZ='Etc/GMT+1') # issue#612@rstan
-#job.args <- c("cov2", "ast_cov2_msglm", "snaut_parsars_ptm_20200907", "20200914", "20200914", "0", "1081")
-#filter(mutate(modelobjs_df, rn=row_number()), str_detect(ptmn_label, "^Phospho_AKAP10_S187_M1"))$rn
+#job.args <- c("cov2", "ast_parsars_ptm", "snaut_parsars_ptm_20200907", "20200920", "20200920", "0", "39")
+#filter(mutate(modelobjs_df, rn=row_number()), str_detect(ptmn_label, "^GlyGly_SQSTM1_K13_M1"))$rn
 if (!exists('job.args')) {
   job.args <- commandArgs(trailingOnly = TRUE)
 }

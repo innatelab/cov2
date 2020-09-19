@@ -5,8 +5,8 @@
 
 project_id <- 'cov2'
 message('Project ID=', project_id)
-data_version <- "20200914"
-fit_version <- "20200914"
+data_version <- "20200920"
+fit_version <- "20200920"
 msfolder <- 'snaut_parsars_ptm_20200907'
 message('Dataset version is ', data_version)
 
@@ -36,7 +36,7 @@ data_info <- list(project_id = project_id,
                   mscalib_pepmodstate_filename = "mscalib_EXPL2_intensity_pepmodstate_cov2_20200828.json",
                   quant_type = "intensity", quant_col_prefix = "intensity",
                   qvalue_max=1E-2, qvalue_ident_max=1E-3,
-                  locprob_min=0.25, locprob_ident_min=0.75,
+                  locprob_min=0.5, locprob_ident_min=0.75,
                   empty_observation_sigmoid_scale=1/3,
                   pep_quant_type = "intensity")
 
@@ -230,9 +230,9 @@ effects.df <- left_join(effects.df,
                                   effect_type == "timepoint" ~ str_c(timepoint, "h"),
                                   TRUE ~ NA_character_),
          prior_mean = 0,
-         prior_tau = case_when(effect_type == "strainXtimepoint" ~ 0.1,
-                               effect_type == "infectedXtimepoint" ~ 0.1,
-                               effect_type == "timepoint" ~ 0.25,
+         prior_tau = case_when(effect_type == "strainXtimepoint" ~ 0.25,
+                               effect_type == "infectedXtimepoint" ~ 0.25,
+                               effect_type == "timepoint" ~ 0.5,
                                TRUE ~ NA_real_),
          prior_df2 = case_when(effect_type == "strainXtimepoint" ~ 4.0,
                                effect_type == "infectedXtimepoint" ~ 4.0,

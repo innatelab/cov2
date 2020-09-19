@@ -51,7 +51,7 @@ end for (dsname, report) in pmsreports]...)
 msruns_df = sort!(innerjoin(rawfiles_df, samples_df, on=:msrun_ix),
                   [:dataset, :treatment, :timepoint, :replicate])
 
-msfasta_path = joinpath(data_path, proj_info.msfolder, "fasta used")
+msfasta_path = joinpath(data_path, "msfasta")
 proteins_df = let
     human_df = Fasta.read_uniprot(joinpath(msfasta_path, "Human_July2019_with_isoforms_only_swissprot.fasta"))
     human_df[!, :is_contaminant] .= false
