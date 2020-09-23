@@ -1,5 +1,5 @@
 proj_info = (id = "cov2",
-             data_ver = "20200912b",
+             data_ver = "20200920",
              msfolder = "snaut_parsars_ptm_20200907",
              ptm_locprob_min = 0.75,
              )
@@ -116,10 +116,6 @@ end for (dsname, report) in pairs(pmsreports))
 protein2protgroup_df = DelimDataUtils.expand_delim_column(protgroups_df, list_col=:majority_protein_acs,
                                                           elem_col=:protein_ac, key_col=[:dataset, :protgroup_id])
 
-# read reference sequences of PhosphoSitePlus
-psitepseqs_df = Fasta.read_phosphositeplus(joinpath(party3rd_data_path, "PhosphoSitePlus", "Phosphosite_PTM_seq_noheader.fasta"))
-psitepseqs_df.is_ref_isoform = .!occursin.(Ref(r"-\d+$"), psitepseqs_df.protein_ac)
-
 peptide2protein_df = PTMExtractor.peptide_matches(peptide2protgroups_df)
 
 ptm2pms_df, pms_ptms_stats_df = PTMExtractor.extract_ptms(pepmodstates_df, objid_col=:pepmodstate_id, selptms=r"Phospho|GlyGly")
@@ -171,18 +167,6 @@ print(countmap(collect(values(countmap(filter(r -> r.nptms == 1, ptmn2pms_df).pt
 print(filter(p -> p[2] >= 5, pairs(countmap(ptmn2pms_df.ptmn_id))))
 print(innerjoin(filter(r -> r.ptm_id == "Phospho_MARCKS_S170", ptmn2pms_df), pepmodstates_df, on=:pepmodstate_id))
 
-ptm2psitep_df = PTMExtractor.map_aapos(ptm2protein_df, proteins_df, psitepseqs_df,
-                                       destmap_prefix=:psitep_, obj_prefix=:ptm_, objid_col=[:ptm_type, :ptm_pos, :ptm_AA_seq], verbose=true)
-filter!(r -> !ismissing(r.destseq_ix), ptm2psitep_df)
-ptm2psitep_df.genename = [!ismissing(r.destseq_ix) && (coalesce(psitepseqs_df.genename[r.destseq_ix], "-") != "-") ? psitepseqs_df.genename[r.destseq_ix] :
-                          !ismissing(r.srcseq_ix) ? ptm2protein_df.genename[r.srcseq_ix] :
-                          missing
-                          for r in eachrow(ptm2psitep_df)]
-ptm2psitep_df.pos_match = coalesce.(ptm2psitep_df.ptm_pos .== ptm2psitep_df.psitep_ptm_pos, false)
-ptm2psitep_df.AA_match = coalesce.(ptm2psitep_df.ptm_AA_seq .== uppercase.(coalesce.(ptm2psitep_df.psitep_ptm_AA, '?')), false)
-ptm2psitep_df.protein_ac_isoform = [(isnothing(m) ? 1 : parse(Int, m[1])) for m in match.(Ref(r"-(\d+)(?:#.+)?$"), ptm2psitep_df.protein_ac)]
-sort!(ptm2psitep_df, [:genename, :protein_ac_isoform, order(:pos_match, rev=true), order(:AA_match, rev=true)])
-
 pms_intensities_df = vcat([begin
     df = SpectronautUtils.pivot_longer(report.data, [:pepmodstate_id, :pepmod_seq])
     df[!, :dataset] .= dsname
@@ -195,7 +179,7 @@ ptm_locprobs_df = PTMExtractor.extract_ptm_locprobs(pms_intensities_df, modseq_c
 ptm_locprobs_df = innerjoin(innerjoin(ptm_locprobs_df, select(pepmodstates_df, [:pepmodstate_id, :peptide_id], copycols=false), on=:pepmodstate_id),
                             peptide2protein_df, on=:peptide_id)
 ptm_locprobs_df.ptm_pos = ptm_locprobs_df.ptm_offset .+ ptm_locprobs_df.peptide_pos
-countmap(collect(zip(ptm_locprobs_df.dataset, coalesce.(ptm_locprobs_df.ptm_locprob, 0.0) .>= proj_info.locprob_min)))
+countmap(collect(zip(ptm_locprobs_df.dataset, coalesce.(ptm_locprobs_df.ptm_locprob, 0.0) .>= proj_info.ptm_locprob_min)))
 ptm_locprobs_df
 
 # strip rows/cols that are no longer required
@@ -228,7 +212,27 @@ for (fname, df) in ["rawfiles_info.txt" => msruns_df,
     end
 end
 
-psitep_annot_dfs = PhosphoSitePlus.read_annotations(joinpath(party3rd_data_path, "PhosphoSitePlus"), verbose=true)
+# read PhosphoSitePlus annotations and sequences
+psitep_path = joinpath(party3rd_data_path, "PhosphoSitePlus", "20200828")
+psitep_annot_dfs = PhosphoSitePlus.read_annotations(psitep_path, verbose=true)
 psitep_annots_df = PhosphoSitePlus.combine_annotations(psitep_annot_dfs)
 
-@save(joinpath(scratch_path, "phosphositeplus_annotations_20200502.jld2"), psitep_annot_dfs, psitep_annots_df)
+# read reference sequences of PhosphoSitePlus
+psitepseqs_df = Fasta.read_phosphositeplus(joinpath(psitep_path, "Phosphosite_PTM_seq_no_header.fasta"))
+psitepseqs_df.is_ref_isoform = .!occursin.(Ref(r"-\d+$"), psitepseqs_df.protein_ac);
+
+@save(joinpath(scratch_path, "phosphositeplus_annotations_20200828.jld2"), psitep_annot_dfs, psitep_annots_df)
+
+# map PTMs to PhosphoSitePlus sequences
+ptm2psitep_df = PTMExtractor.map_aapos(ptm2protein_df, proteins_df, psitepseqs_df,
+                                       destmap_prefix=:psitep_, obj_prefix=:ptm_, objid_col=[:ptm_type, :ptm_pos, :ptm_AA_seq], verbose=true)
+filter!(r -> !ismissing(r.destseq_ix), ptm2psitep_df)
+ptm2psitep_df.pos_match = coalesce.(ptm2psitep_df.ptm_pos .== ptm2psitep_df.psitep_ptm_pos, false)
+ptm2psitep_df.AA_match = coalesce.(ptm2psitep_df.ptm_AA_seq .== uppercase.(coalesce.(ptm2psitep_df.psitep_ptm_AA, '?')), false)
+ptm2psitep_df.protein_ac_isoform = [(isnothing(m) ? 1 : parse(Int, m[1])) for m in match.(Ref(r"-(\d+)(?:#.+)?$"), ptm2psitep_df.protein_ac)]
+sort!(ptm2psitep_df, [:protein_ac_isoform, :ptm_pos, order(:pos_match, rev=true), order(:AA_match, rev=true)])
+
+ptm_annots_df = innerjoin(select!(filter(r -> r.pos_match && r.AA_match, ptm2psitep_df),
+                                  [:ptm_type, :ptm_pos, :ptm_AA_seq, :protein_ac]),
+                          psitep_annots_df, on=[:protein_ac, :ptm_pos])
+filter(r -> !ismissing(r.kinase_gene_names), ptm_annots_df)
