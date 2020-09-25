@@ -1,5 +1,5 @@
 Sys.setenv(TZ='Etc/GMT+1') # issue#612@rstan
-#job.args <- c("cov2", "ast_cov2_oeproteome", "spectronaut_oeproteome_20200527", "20200527", "20200608", "0", "1235")
+#job.args <- c("cov2", "cov2_oeproteome", "spectronaut_oeproteome_20200923", "20200923", "20200923", "0", "1235")
 if (!exists('job.args')) {
   job.args <- commandArgs(trailingOnly = TRUE)
 }
@@ -9,20 +9,20 @@ message('Project ID=', project_id)
 
 job_name <- as.character(job.args[[2]])
 job_version <- job.args[[5]]
-ms_folder <- job.args[[3]]
+msfolder <- job.args[[3]]
 data_version <- job.args[[4]]
 fit_version <- job_version
 job_id <- as.integer(job.args[[6]])
 job_chunk <- as.integer(job.args[[7]])
 message('Job ', job_name, '(id=', job_id, '_', job_chunk,
-        " data_version=", data_version, " fit_version=", fit_version, ")")
+        " data_version=", data_version, " fit_version=", fit_version, " running on ", Sys.info()["nodename"], ")")
 
 #source("~/R/config.R")
 source("/projects/R/config.R")
 source(file.path(base_scripts_path, 'R/misc/setup_base_paths.R'))
 source(file.path(base_scripts_path, 'R/misc/setup_project_paths.R'))
 
-rdata_filepath <- file.path(scratch_path, paste0(project_id, '_msglm_data_', ms_folder, '_', fit_version, '.RData'))
+rdata_filepath <- file.path(scratch_path, paste0(project_id, '_msglm_data_', msfolder, '_', fit_version, '.RData'))
 message('Loading data from ', rdata_filepath)
 load(rdata_filepath)
 
@@ -42,8 +42,10 @@ require(tidyr)
 require(stringr)
 require(maxquantUtils)
 
-modelobj <- "protgroup"
-quantobj <- "protgroup"
+#modelobj <- "protgroup"
+#quantobj <- "protgroup"
+modelobj <- "protregroup"
+quantobj <- "pepmodstate"
 source(file.path(project_scripts_path, 'setup_modelobj.R'))
 
 sel_object_ids <- modelobjs_df[[modelobj_idcol]][[job_chunk]]
@@ -52,16 +54,16 @@ message(sel_object_ids, " ", modelobj, " ID(s): ",
 if (modelobj == "protregroup") {
 msdata.df <- dplyr::filter(msdata$protregroup2pepmod, protregroup_id %in% sel_object_ids & is_specific) %>%
   dplyr::inner_join(dplyr::select(msdata$pepmodstates, pepmod_id, pepmodstate_id)) %>%
-  dplyr::inner_join(dplyr::select(msdata$pepmodstate_intensities, pepmodstate_id, msrun, intensity)) %>%
-  dplyr::inner_join(dplyr::select(msdata$msruns, msrun, condition) %>% dplyr::distinct()) %>%
+  dplyr::inner_join(dplyr::select(msdata$pepmodstate_intensities, pepmodstate_id, msrun, qvalue, intensity)) %>%
+  dplyr::filter(coalesce(qvalue, 1.0) <= data_info$qvalue_max) %>%
   dplyr::mutate(object_id = protregroup_id)
 } else if (modelobj == "protgroup") {
 msdata.df <- dplyr::filter(msdata$protgroups, protgroup_id %in% sel_object_ids) %>%
   dplyr::inner_join(dplyr::select(msdata$protgroup_intensities, protgroup_id, msrun, intensity)) %>%
-  dplyr::inner_join(dplyr::select(msdata$msruns, msrun, condition) %>% dplyr::distinct()) %>%
   dplyr::mutate(object_id = protgroup_id)
 }
-#msdata.df <- dplyr::select(msdata.df, -one_of("intensity")) %>% dplyr::rename(intensity = intensity_corr.F)
+msdata.df <- msdata.df %>%
+   dplyr::inner_join(dplyr::select(msdata$msruns, msrun, condition))
 
 message('Preparing MS GLM data...')
 model_data <- list()
@@ -108,10 +110,16 @@ model_data$subobjects <- msdata.df %>%
     dplyr::inner_join(dplyr::select(model_data$objects, protregroup_id, glm_object_ix)) %>%
     # FIXME cluster per object
     dplyr::inner_join(cluster_msprofiles(msdata.df, msdata$msrun_pepmodstate_stats, obj_col='pepmodstate_id', msrun_col='msrun')) %>%
-    dplyr::arrange(glm_object_ix, desc(is_specific), desc(nsimilar_profiles), desc(n_quant), desc(intensity_med),
+    dplyr::arrange(glm_object_ix, profile_cluster, desc(is_specific), desc(n_quant), desc(intensity_med),
                    pepmod_id, charge) %>%
+    dplyr::group_by(glm_object_ix, profile_cluster) %>%
+    dplyr::mutate(subobject_group_ix = row_number() %/% 20, # put objects within cluster into groups of 20
+                  subobject_local_ix = row_number() %% 20) %>%
+    dplyr::ungroup() %>%
+    # take the first group of 10 objects from each cluster, then continue with the second group etc
+    dplyr::arrange(glm_object_ix, subobject_group_ix, profile_cluster, subobject_local_ix) %>%
     dplyr::mutate(glm_subobject_ix = row_number()) %>%
-    dplyr::filter(glm_subobject_ix <= 30) # remove less abundant subobjects of rich objects
+    dplyr::filter(glm_subobject_ix <= 20) # remove less abundant subobjects of rich objects
 } else if (modelobj == "protgroup") {
 model_data$objects <- dplyr::mutate(model_data$objects, protgroup_id = object_id) %>%
                       dplyr::inner_join(dplyr::select(modelobjs_df, protgroup_id, protgroup_label, object_label,
@@ -151,30 +159,32 @@ dims_info <- msglm.prepare_dims_info(model_data, object_cols=c('object_id', mode
 msdata <- NULL
 gc()
 
-msglm.stan_data <- stan.prepare_data(instr_calib, model_data,
+msglm.stan_data <- stan.prepare_data(mscalib, model_data,
                                      global_labu_shift = global_labu_shift,
-                                     obj_labu_min = obj_labu_min, obj_labu_min_scale = 1,
-                                     batch_effect_sigma=0.25)
+                                     obj_labu_min_scale = 1,
+                                     iact_repl_shift_df = 2,
+                                     suo_fdr=0.001, reliable_obs_fdr = 0.05, specific_iaction_fdr = 1,
+                                     batch_effect_sigma=0.2,
+                                     empty_observation_sigmoid_scale = data_info$empty_observation_sigmoid_scale)
 
 message('Running STAN in NUTS mode...')
 options(mc.cores=mcmc_nchains)
-msglm.stan_fit <- stan.sampling(msglm.stan_data, adapt_delta=0.9, max_treedepth=12L, iter=4000L, chains=mcmc_nchains)
+msglm.stan_fit <- stan.sampling(msglm.stan_data, adapt_delta=0.9, max_treedepth=11L, iter=4000L, chains=mcmc_nchains)
 
 #require(shinystan)
 #launch_shinystan(shinystan::as.shinystan(msglm.stan_fit))
 
 min.iteration <- as.integer(1.25 * msglm.stan_fit@sim$warmup)
-
 msglm_results <- process.stan_fit(msglm.stan_fit, dims_info,
                                   condition.quantiles_rhs = prepare_contrast_quantiles(contrastXmetacondition.df)$rhs)
 
-res_prefix <- paste0(project_id, "_", ms_folder, "_msglm", modelobj_suffix)
+res_prefix <- paste0(project_id, "_", msfolder, "_msglm", modelobj_suffix)
 if (!dir.exists(file.path(scratch_path, res_prefix))) {
   dir.create(file.path(scratch_path, res_prefix))
 }
 rfit_filepath <- file.path(scratch_path, res_prefix, paste0(res_prefix, '_', fit_version, '_', job_chunk, '.RData'))
 message('Saving STAN results to ', rfit_filepath, '...')
-results_info <- list(project_id = project_id, ms_folder = ms_folder,
+results_info <- list(project_id = project_id, msfolder = msfolder,
                      data_version = data_version, fit_version = fit_version,
                      job_name = job_name, job_chunk = job_chunk, modelobj = modelobj, quantobj = quantobj)
 save(data_info, results_info,
