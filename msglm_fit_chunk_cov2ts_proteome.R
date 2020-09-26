@@ -34,6 +34,7 @@ if (Sys.getenv('SLURM_CPUS_PER_TASK') != '') {
   mcmc_nchains <- 8
 }
 
+require(rlang)
 require(dplyr)
 require(msglm)
 require(rstan)

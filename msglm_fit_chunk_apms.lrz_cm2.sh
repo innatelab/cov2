@@ -5,7 +5,7 @@
 #SBATCH --clusters=cm2
 #SBATCH --partition=cm2_large
 #SBATCH --reservation=special_covid
-#SBATCH --nodes=116
+#SBATCH --nodes=108
 ##SBATCH --ntasks=1
 #SBATCH --mincpus=7
 ##SBATCH --mem-per-cpu=2GB
@@ -22,15 +22,15 @@ module load slurm_setup
 module load charliecloud
 
 PROJECT_ID=cov2
-DATA_VERSION=20200417
-FIT_VERSION=20200417
-MS_FOLDER=mq_apms_20200417
+DATA_VERSION=20200503
+FIT_VERSION=20200503
+MS_FOLDER=mq_apms_20200427
 CHUNK_IDS_FILE=${SCRATCH}/${PROJECT_ID}/${PROJECT_ID}_${MS_FOLDER}_${FIT_VERSION}_pending_chunk_ids
 if [[ -f $CHUNK_IDS_FILE ]]; then
   echo "Reading ${CHUNK_IDS_FILE}..."
   readarray -t CHUNK_IDS < $CHUNK_IDS_FILE
 else
-  CHUNK_IDS=( $(seq 1 5000) )
+  CHUNK_IDS=( $(seq 1 6055) )
 fi
 
 for chunk in ${CHUNK_IDS[@]}

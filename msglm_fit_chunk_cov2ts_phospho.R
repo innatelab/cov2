@@ -174,13 +174,13 @@ res_prefix <- paste0(project_id, "_", ms_folder, "_msglm", modelobj_suffix)
 if (!dir.exists(file.path(scratch_path, res_prefix))) {
   dir.create(file.path(scratch_path, res_prefix))
 }
-rdata_filepath <- file.path(scratch_path, res_prefix, paste0(res_prefix, '_', fit_version, '_', job_chunk, '.RData'))
-message('Saving STAN results to ', rdata_filepath, '...')
+rfit_filepath <- file.path(scratch_path, res_prefix, paste0(res_prefix, '_', fit_version, '_', job_chunk, '.RData'))
+message('Saving STAN results to ', rfit_filepath, '...')
 results_info <- list(project_id = project_id, ms_folder = ms_folder,
                      data_version = data_version, fit_version = fit_version,
                      job_name = job_name, job_chunk = job_chunk, modelobj = modelobj, quantobj = quantobj)
 save(data_info, results_info,
      model_data, msglm.stan_data, msglm_results,
-     dims_info, file = rdata_filepath)
+     dims_info, file = rfit_filepath)
 message('Done.')
 on.exit(unlink(tempdir(), force = TRUE), add=TRUE)
