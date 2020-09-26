@@ -11,8 +11,8 @@ job_info = (project = ARGS[1],
             hotnet_ver = ARGS[3],
             id = parse(Int, ARGS[4]),
             chunk = parse(Int, ARGS[5]),
-            nbaits_perchunk = 5)
-@info "Tree for $(job_info.project) (job '$(job_info.name)' id=$(job_info.id))" *
+            nbaits_perchunk = parse(Int, ARGS[6]))
+@info "Treestats for $(job_info.project) (job '$(job_info.name)' id=$(job_info.id))" *
       " chunk #$(job_info.chunk)"
 
 proj_info = (id = job_info.project,
@@ -42,9 +42,9 @@ bait_ixs = bait_ix:min(bait_ix + job_info.nbaits_perchunk - 1, length(bait_ids))
 reactomefi_mtx = Matrix(LightGraphs.weights(reactomefi_digraph_rev));
 
 treestats_dfs = Vector{DataFrame}()
-for bait_ix in bait_ixs
+for (i, bait_ix) in enumerate(bait_ixs)
     bait_id = bait_ids[bait_ix]
-    @info "Processing bait #$(bait_ix) ($(bait_id))..."
+    @info "Processing bait #$(bait_ix) ($(bait_id), $i of $(length(bait_ixs)))..."
     vertex_weights, vertex_walkweights, _, sink_ixs, _, _, _, tree =
         open(ZstdDecompressorStream, joinpath(scratch_path, "$(proj_info.id)_hotnet_perm_input_$(proj_info.hotnet_ver)",
                                         "bait_$(bait_ix)_perms.jlser.zst"), "r") do io
@@ -53,6 +53,7 @@ for bait_ix in bait_ixs
     # recreate walkmtx since it's too expensive to store it in perm_input
     stepmtx = HHN.stepmatrix(reactomefi_mtx, inedge_weights=vertex_weights .+ randomwalk_params.inedge_weight_min)
     walkmtx = HHN.similarity_matrix(stepmtx, vertex_weights, restart_probability=randomwalk_params.restart_prob)
+    @info "Treecut statistics for bait #$(bait_ix) ($(bait_id), $i of $(length(bait_ixs)))..."
     local treestats_df = HHN.treecut_stats(tree, walkmatrix=walkmtx,
                                     sources=findall(>=(randomwalk_params.source_weight_min), vertex_weights),
                                     sinks=sink_ixs,

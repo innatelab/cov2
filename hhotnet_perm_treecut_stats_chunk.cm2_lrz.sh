@@ -15,16 +15,24 @@
 #SBATCH --mail-type=end
 #SBATCH --mail-user=alexey.stukalov@tum.de
 #SBATCH --export=NONE
-#SBATCH --time=1:00:00
+#SBATCH --time=10:00:00
 
 source /etc/profile.d/modules.sh
 module load slurm_setup
 module load charliecloud
 
 PROJECT_ID=cov2
-HOTNET_VERSION=20200415
+HOTNET_VERSION=20200609
 
-for chunk in {1..2001}
+CHUNK_IDS_FILE=${SCRATCH}/${PROJECT_ID}/${PROJECT_ID}_hotnet_perm_treecut_stats_${HOTNET_VERSION}_pending_chunk_ids
+if [[ -f $CHUNK_IDS_FILE ]]; then
+  echo "Reading ${CHUNK_IDS_FILE}..."
+  readarray -t CHUNK_IDS < $CHUNK_IDS_FILE
+else
+  CHUNK_IDS=( $(seq 1 1101) )
+fi
+
+for chunk in ${CHUNK_IDS[@]}
 do
 srun -c1 -n1 --nodes=1 --ntasks-per-node=3 --mem-per-cpu=18GB --wait=0 \
      --no-kill --distribution=block --exclusive=user \

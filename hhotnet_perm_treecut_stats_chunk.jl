@@ -1,9 +1,11 @@
-# job_info = (project = "cov2",
-#            name = "cov2_permtrees_stats",
-#            hotnet_ver = "20200327",
-#            id = 0,
-#            chunk = 2,
-#            ntrees_perchunk = 2)
+#=
+job_info = (project = "cov2",
+            name = "cov2_permtrees_stats",
+            hotnet_ver = "20200327",
+            id = 0,
+            chunk = 2,
+            ntrees_perchunk = 2)
+=#
 job_info = (project = ARGS[1],
             name = ARGS[2],
             hotnet_ver = ARGS[3],
