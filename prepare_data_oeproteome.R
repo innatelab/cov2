@@ -36,8 +36,8 @@ data_info <- list(project_id = project_id,
                   mscalib_pepmodstate_filename = "mscalib_QX8_intensity_pepmodstate_cov2_20200923.json",
                   quant_type = "intensity", quant_col_prefix = "intensity",
                   pep_quant_type = "intensity",
-                  qvalue_max = 0.001,
-                  empty_observation_sigmoid_scale=1/3)
+                  qvalue_max = 0.005,
+                  empty_observation_sigmoid_scale=1/4)
 
 message('Loading MS instrument calibration data from ', data_info$mscalib_pepmodstate_filename, '...')
 mscalib_protgroup <- fromJSON(file = file.path(data_path, data_info$mscalib_protgroup_filename))$instr_calib
@@ -300,7 +300,7 @@ msdata_full$protregroup2peptide <- bind_rows(
 
 msdata_full$protregroup2pepmod <- inner_join(msdata_full$protregroup2peptide,
                                              msdata_full$pepmods) %>%
-  dplyr::select(-peptide_id) %>% dplyr::distinct()
+  dplyr::select(pepmod_id, protregroup_id, is_specific) %>% dplyr::distinct()
   
 msdata_full$protregroups <- dplyr::inner_join(msdata_full$protregroups,
   dplyr::inner_join(msdata_full$protregroups, msdata_full$protein2protregroup) %>%
@@ -441,7 +441,13 @@ effects.df <- dplyr::mutate(effects.df,
                             effect_label = factor(effect_label, levels=effect_label)) %>%
   dplyr::mutate(prior_tau = case_when(effect_type == "baitXvirus" ~ 0.1,
                                       effect_type == "bait" ~ 0.1,
-                                      TRUE ~ 5.0))
+                                      TRUE ~ 3.0),
+                prior_df = case_when(effect_type == "baitXvirus" ~ 4,
+                                     effect_type == "bait" ~ 4,
+                                     TRUE ~ 1.0),
+                prior_df2 = case_when(effect_type == "baitXvirus" ~ 4,
+                                      effect_type == "bait" ~ 4,
+                                      TRUE ~ 1.0))
 # prior_mean for baitXvirus is calculated as the shift between the homologous baits at the normalization step?
 
 conditionXeffect.df <- conditionXeffect_frame(conditionXeffect.mtx, effects.df)

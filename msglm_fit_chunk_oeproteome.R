@@ -1,5 +1,5 @@
 Sys.setenv(TZ='Etc/GMT+1') # issue#612@rstan
-#job.args <- c("cov2", "cov2_oeproteome", "spectronaut_oeproteome_20200923", "20200923", "20200923", "0", "1235")
+#job.args <- c("cov2", "cov2_oeproteome", "snaut_oefp_20200923", "20200923", "20200923", "0", "1235")
 if (!exists('job.args')) {
   job.args <- commandArgs(trailingOnly = TRUE)
 }
@@ -161,7 +161,7 @@ gc()
 
 msglm.stan_data <- stan.prepare_data(mscalib, model_data,
                                      global_labu_shift = global_labu_shift,
-                                     obj_labu_min_scale = 1,
+                                     obj_labu_min_scale = 2, effect_slab_scale = 0.5,
                                      iact_repl_shift_df = 2,
                                      suo_fdr=0.001, reliable_obs_fdr = 0.05, specific_iaction_fdr = 1,
                                      batch_effect_sigma=0.2,
