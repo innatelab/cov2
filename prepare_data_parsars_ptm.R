@@ -5,8 +5,8 @@
 
 project_id <- 'cov2'
 message('Project ID=', project_id)
-data_version <- "20200920"
-fit_version <- "20200920"
+data_version <- "20200929"
+fit_version <- "20200929"
 msfolder <- 'snaut_parsars_ptm_20200907'
 message('Dataset version is ', data_version)
 
@@ -27,7 +27,7 @@ require(readr)
 require(pheatmap)
 require(tidyr)
 
-msdata_path <- file.path(data_path, msfolder, "ptm_extractor")
+msdata_path <- file.path(data_path, msfolder, str_c("ptm_extractor_", data_version))
 
 data_info <- list(project_id = project_id,
                   data_ver = data_version, fit_ver = fit_version,
@@ -49,8 +49,8 @@ mscalib_pepmodstate <- mscalib_pepmodstate_json$mscalib
 source(file.path(project_scripts_path, 'prepare_data_common.R'))
 
 fasta.dfs <- list(
-  CoV = read_innate_uniprot_fasta(file.path(data_path, "msfasta/SARS_CoV_20200817.fasta")),
-  CoV2 = read_innate_uniprot_fasta(file.path(data_path, "msfasta/SARS_CoV2_20200908.fasta")),
+  CoV = read_innate_uniprot_fasta(file.path(data_path, "msfasta/SARS_CoV_20200928.fasta")),
+  CoV2 = read_innate_uniprot_fasta(file.path(data_path, "msfasta/SARS_CoV2_20200928.fasta")),
   human = read_innate_uniprot_fasta(file.path(data_path, "msfasta/Human_July2019_with_isoforms_only_swissprot.fasta")),
   contaminants = read_contaminants_fasta(file.path(data_path, "msfasta/contaminants_20200405.fasta"))
 )
@@ -181,7 +181,7 @@ msdata$ptmn2pepmodstate <- dplyr::semi_join(msdata_full$ptmn2pepmodstate, msdata
 msdata$protein2ptmn <- dplyr::inner_join(msdata$ptmns, msdata$ptm2gene)
 msdata$ptmn_locprobs <- semi_join(msdata_full$ptmn_locprobs, msdata$ptmn2pepmodstate)
 msdata$pepmodstate_intensities <- msdata_full$pepmodstate_intensities %>% filter(coalesce(qvalue, 1.0) <= data_info$qvalue_max) %>%
-                                  semi_join(filter(msdata$msruns, is_used)) %>%
+                                  semi_join(dplyr::select(filter(msdata$msruns, is_used), msrun)) %>%
                                   semi_join(msdata$pepmodstates) %>%
                                   semi_join(filter(msdata$ptmn_locprobs, coalesce(ptm_locprob, 0) >= data_info$locprob_min))
 # setup experimental design matrices
@@ -199,6 +199,9 @@ conditionXeffect.mtx <- conditionXeffect.mtx[, str_detect(colnames(conditionXeff
                                              (apply(conditionXeffect.mtx, 2, function(x) min(abs(x))) == 0)] # remove intercept
 dimnames(conditionXeffect.mtx) <- list(condition = as.character(conditions.df$condition),
                                        effect = colnames(conditionXeffect.mtx))
+
+plots_path <- file.path(analysis_path, "plots", str_c(msfolder, "_", fit_version))
+if (!dir.exists(plots_path)) dir.create(plots_path)
 
 pheatmap(conditionXeffect.mtx, cluster_rows=FALSE, cluster_cols=FALSE, 
          filename = file.path(analysis_path, "plots", str_c(msfolder, "_", fit_version),
@@ -253,8 +256,7 @@ for (cname in levels(conditions.df$condition)) {
   }
 }
 pheatmap(ifelse(conditionXmetacondition.mtx, 1L, 0L), cluster_rows=FALSE, cluster_cols=FALSE,
-         filename = file.path(analysis_path, "plots", str_c(msfolder, "_", fit_version),
-                              paste0(project_id, "_metaconditions_", msfolder, "_", fit_version, ".pdf")),
+         filename = file.path(plots_path, paste0(project_id, "_metaconditions_", msfolder, "_", fit_version, ".pdf")),
          width = 8, height = 6)
 
 conditionXmetacondition.df <- as_tibble(as.table(conditionXmetacondition.mtx)) %>%
@@ -304,8 +306,7 @@ contrastXcondition.df <- as_tibble(as.table(conditionXmetacondition.mtx)) %>% dp
   dplyr::arrange(contrast, contrast_type, metacondition, condition)
 
 pheatmap(contrastXmetacondition.mtx, cluster_rows=FALSE, cluster_cols=FALSE,
-         filename = file.path(analysis_path, "plots", str_c(msfolder, "_", fit_version),
-                              paste0(project_id, "_exp_design_contrasts_", msfolder, "_", fit_version, ".pdf")),
+         filename = file.path(plots_path, paste0(project_id, "_exp_design_contrasts_", msfolder, "_", fit_version, ".pdf")),
          width = 8, height = 12)
 
 ##########
@@ -345,7 +346,7 @@ norm_plot <- ggplot(inner_join(msdata_full$pepmodstate_intensities, msdata_full$
     facet_wrap(~ treatment + dataset, ncol=2, scales = "free") +
     theme_bw_ast(base_family = "") +
     theme(axis.text.x = element_text(hjust = 0, angle=-45))
-ggsave(norm_plot, filename = file.path(analysis_path, "plots", str_c(msfolder, "_", fit_version),
+ggsave(norm_plot, filename = file.path(plots_path,
                              paste0(project_id, "_", msfolder, "_normalization_", fit_version, ".pdf")),
        width = 8, height = 12)
 

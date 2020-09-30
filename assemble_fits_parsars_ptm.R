@@ -5,8 +5,8 @@
 
 project_id <- 'cov2'
 message('Project ID=', project_id)
-data_version <- "20200913"
-fit_version <- "20200913"
+data_version <- "20200929"
+fit_version <- "20200929"
 msfolder <- 'snaut_parsars_ptm_20200907'
 message("Assembling fit results for project ", project_id,
         " (dataset v", data_version, ", fit v", fit_version, ")")
@@ -189,9 +189,8 @@ object_contrasts.df <- object_contrasts.df %>%
   select(-any_of(c("p_value_threshold", "median_log2_threshold", "median_log2_max"))) %>%
   left_join(object_contrasts_thresholds.df) %>%
   dplyr::mutate(is_signif = p_value <= p_value_threshold & abs(median_log2) >= median_log2_threshold,
-                is_hit_nomschecks = is_signif & !is_contaminant, # & !is_decoy & # FIXME
-                  ((contrast_type == "comparison") | (median_log2 >= 0.0)),
-                is_hit = is_hit_nomschecks & ((nmsruns_quanted_lhs_max>=2) & (nmsruns_quanted_rhs_max>=2)) &
+                is_hit_nomschecks = is_signif & !is_contaminant, # & !is_decoy, # FIXME
+                is_hit = is_hit_nomschecks & ((nmsruns_quanted_lhs_max>=2) | (nmsruns_quanted_rhs_max>=2)) &
                   is_msvalid_object,
                 change = if_else(is_signif, if_else(median_log2 < 0, "-", "+"), "."))
 
@@ -218,6 +217,21 @@ object_contrasts_wide.df <- pivot_wider(object_contrasts.df,
                                         names_from = "contrast", names_sep = ".",
                                         values_from = c("median_log2", "mean_log2", "sd_log2", "p_value", "is_hit", "change"))
 
+fp.env <- new_environment()
+load(file.path(scratch_path, str_c(project_id, "_msglm_fit_", "snaut_parsars_fp_20200829_20200830", ".RData")), envir = fp.env)
+load(file.path(scratch_path, str_c(project_id, "_msdata_full_", "snaut_parsars_fp_20200829_20200830", ".RData")), envir = fp.env)
+
+ptm2protregroup.df <- dplyr::select(msdata_full$ptm2gene, ptm_id, protein_ac) %>%
+  dplyr::left_join(fp.env$msdata_full$protein2protregroup) %>%
+  dplyr::left_join(dplyr::select(fp.env$msdata_full$protregroups, protregroup_id, npepmods_unique)) %>%
+  dplyr::arrange(desc(npepmods_unique)) %>%
+  dplyr::distinct() %>%
+  dplyr::arrange(ptm_id, desc(is_majority), desc(npepmods_unique), protein_ac_rank) %>%
+  dplyr::group_by(ptm_id) %>%
+  dplyr::filter(row_number() == 1L) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(ptm_id, protregroup_id)
+
 rfit_filepath <- file.path(scratch_path, paste0(project_id, '_msglm_fit_', msfolder, '_', fit_version, '.RData'))
 results_info <- list(project_id = project_id, msfolder=msfolder,
                      data_version = data_version, fit_version = fit_version,
@@ -227,6 +241,7 @@ save(results_info, fit_stats, fit_contrasts,
      object_effects.df, object_contrasts.df,
      object_effects_wide.df, object_contrasts_wide.df,
      object_contrasts_thresholds.df,
+     ptm2protregroup.df,
      file = rfit_filepath)
 message('Done.')
 
@@ -235,16 +250,21 @@ ptm_report_cols <- c("ptm_type", "ptmn_label", "object_id", "gene_name",
                      "is_contaminant", "is_viral",
                      "ptm_pos", "ptm_AA", "flanking_15AAs")
 object_contrasts_report.df <- dplyr::left_join(modelobjs_df, dplyr::select(msdata_full$proteins, protein_ac, protein_description = protein_name)) %>%
-  dplyr::left_join(msdata_full$ptm2protein) %>%
+  dplyr::left_join(msdata_full$ptm2gene) %>%
   dplyr::rename(ptm_AA = ptm_AA_seq) %>%
   dplyr::select(any_of(ptm_report_cols)) %>%
   dplyr::left_join(filter(object_contrasts.df, contrast_kind=="treatment_vs_treatment" & treatment_lhs != "infected") %>%
-  dplyr::select(object_id, std_type, contrast, timepoint=timepoint_lhs,
+  dplyr::select(ptmn_id, object_id, std_type, contrast, timepoint=timepoint_lhs,
                 median_log2, mean_log2, sd_log2, any_of(c("prob_nonpos", "prob_nonneg", "p_value")),
                 is_signif, is_hit_nomschecks, is_hit, change) %>%
-  pivot_wider(c(std_type, object_id),
-              names_from = "contrast", values_from = c("is_hit", "change", "median_log2", "p_value", "sd_log2"), names_sep=".")) %>%
-  dplyr::select(any_of(ptm_report_cols), std_type,
+  dplyr::left_join(dplyr::select(msdata_full$ptmns, ptmn_id, ptm_id)) %>%
+  dplyr::left_join(ptm2protregroup.df) %>%
+  dplyr::left_join(dplyr::select(fp.env$object_contrasts.df,
+                                 protregroup_id, std_type, contrast, timepoint=timepoint_lhs,
+                                 fp_median_log2=median_log2, fp_p_value=p_value, fp_change=change))%>%
+  pivot_wider(c(std_type, object_id, protregroup_id),
+              names_from = "contrast", values_from = c("is_hit", "change", "fp_change", "median_log2", "fp_median_log2", "p_value", "fp_p_value", "sd_log2"), names_sep=".")) %>%
+  dplyr::select(any_of(ptm_report_cols), std_type, fp_protregroup_id=protregroup_id,
                 #kinase_gene_names, reg_function, reg_prot_iactions, reg_other_iactions, reg_pubmed_ids,
                 ends_with("SARS_CoV2@6h_vs_mock@6h"), ends_with("SARS_CoV@6h_vs_mock@6h"), ends_with("SARS_CoV2@6h_vs_SARS_CoV@6h"),
                 ends_with("SARS_CoV2@12h_vs_mock@12h"), ends_with("SARS_CoV@12h_vs_mock@12h"), ends_with("SARS_CoV2@12h_vs_SARS_CoV@12h"),

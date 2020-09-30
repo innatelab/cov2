@@ -1,5 +1,5 @@
 proj_info = (id = "cov2",
-             data_ver = "20200920",
+             data_ver = "20200929",
              msfolder = "snaut_parsars_ptm_20200907",
              ptm_locprob_min = 0.75,
              )
@@ -57,12 +57,12 @@ proteins_df = let
     human_df[!, :is_contaminant] .= false
     human_df[!, :is_viral] .= false
 
-    sars_df = Fasta.read_uniprot(joinpath(msfasta_path, "SARS_CoV_20200817.fasta"))
+    sars_df = Fasta.read_uniprot(joinpath(msfasta_path, "SARS_CoV_20200928.fasta"))
     sars_df.genename = "SARS_CoV_" .* sars_df.genename
     sars_df[!, :is_contaminant] .= false
     sars_df[!, :is_viral] .= true
 
-    sars2_df = Fasta.read_uniprot(joinpath(msfasta_path, "SARS_CoV2_20200908.fasta"))
+    sars2_df = Fasta.read_uniprot(joinpath(msfasta_path, "SARS_CoV2_20200928.fasta"))
     sars2_df.genename = "SARS_CoV2_" .* sars2_df.genename
     sars2_df[!, :is_contaminant] .= false
     sars2_df[!, :is_viral] .= true
@@ -116,7 +116,8 @@ end for (dsname, report) in pairs(pmsreports))
 protein2protgroup_df = DelimDataUtils.expand_delim_column(protgroups_df, list_col=:majority_protein_acs,
                                                           elem_col=:protein_ac, key_col=[:dataset, :protgroup_id])
 
-peptide2protein_df = PTMExtractor.peptide_matches(peptide2protgroups_df)
+#peptide2protein_df = PTMExtractor.peptide_matches(peptide2protgroups_df)
+peptide2protein_df = PTMExtractor.match_peptides(peptide2protgroups_df, protein_seqs)
 
 ptm2pms_df, pms_ptms_stats_df = PTMExtractor.extract_ptms(pepmodstates_df, objid_col=:pepmodstate_id, selptms=r"Phospho|GlyGly")
 ptm2pms_df = innerjoin(unique!(ptm2pms_df), select(pepmodstates_df, [:pepmodstate_id, :peptide_id], copycols=false),
@@ -143,6 +144,10 @@ ptm2gene_df = PTMExtractor.group_aaobjs(ptm2protein_df, proteins_df,
                                         obj_prefix=:ptm_, objid_col=[:ptm_type, :ptm_pos, :ptm_AA_seq],
                                         force_refseqs=true, verbose=true)
 ptm2gene_df.flanking_15AAs = PTMExtractor.flanking_sequence.(getindex.(Ref(protein_seqs), ptm2gene_df.protein_ac), ptm2gene_df.ptm_pos, flanklen=15)
+ptm2protein_df2 = leftjoin(ptm2protein_df, unique!(select(ptm2gene_df, [:ptm_id, :genename, :is_viral, :is_contaminant, :ptm_pos, :ptm_AA_seq])),
+                           on=[:genename, :is_viral, :is_contaminant, :ptm_pos, :ptm_AA_seq])
+@assert nrow(ptm2protein_df)==nrow(ptm2protein_df2)
+ptm2protein_df = ptm2protein_df2
 
 filter(r -> coalesce(r.genename, "") == "SYNPO", ptm2gene_df)
 filter(r -> r.ptm_is_reference && coalesce(r.is_viral, false), ptm2gene_df) |> print
@@ -186,7 +191,7 @@ ptm_locprobs_df
 filter!(r -> !ismissing(r.intensity), select!(pms_intensities_df, Not([:pepmod_seq, :EG_locprob_seq])))
 
 # save the files
-output_path = joinpath(data_path, proj_info.msfolder, "ptm_extractor")
+output_path = joinpath(data_path, proj_info.msfolder, "ptm_extractor_$(proj_info.data_ver)")
 isdir(output_path) || mkdir(output_path)
 for (fname, df) in ["rawfiles_info.txt" => msruns_df,
                     "proteins.txt.gz" => proteins_df,
