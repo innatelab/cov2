@@ -243,20 +243,42 @@ ptm_annots_df = innerjoin(select!(filter(r -> r.pos_match && r.AA_match, ptm2psi
 filter(r -> !ismissing(r.kinase_gene_names), ptm_annots_df)
 
 # map viral PTMs to each other
-using BioAlignments
+using DataFrames, BioAlignments
 
-viral_ptm2protein_df = innerjoin(filter(r -> r.is_viral && (r.ptm_type in ["Phospho", "GlyGly"]), ptm2protein_df),
-                                 select(proteins_df, [:protein_ac, :protein_code]), on=:protein_ac)
-viral_ptm2ptm_df = PTMExtractor.map_aapos(viral_ptm2protein_df,
+viral_ptm2protein_all_df = PTMExtractor.ptmsites(filter(r -> r.is_viral, proteins_df), ["Phospho" => "STY", "GlyGly" => "K"])
+FrameUtils.matchcategoricals!(viral_ptm2protein_all_df, ptm2protein_df, cols=[:ptm_type, :ptm_AAs])
+
+viral_ptm2protein_all_df = leftjoin(viral_ptm2protein_all_df,
+        setindex!(select(filter(r -> r.is_viral, ptm2protein_df), names(viral_ptm2protein_all_df)), true, :, :is_observed),
+        on=names(viral_ptm2protein_all_df))
+viral_ptm2protein_all_df.is_observed = .!ismissing.(viral_ptm2protein_all_df.is_observed)
+viral_ptm2protein_all_df = innerjoin(viral_ptm2protein_all_df, select(proteins_df, [:protein_ac, :protein_code, :genename, :organism]), on=:protein_ac)
+
+viral_ptm2ptm_df = PTMExtractor.map_aapos(viral_ptm2protein_all_df,
                                        filter(r -> r.is_viral, proteins_df), filter(r -> r.is_viral, proteins_df),
-                                       destmap_prefix=:alt_, obj_prefix=:ptm_, objid_col=[:ptm_type, :ptm_pos, :ptm_AA_seq], verbose=true,
+                                       destmap_prefix=:hom_, obj_prefix=:ptm_, objid_col=[:ptm_type, :ptm_pos, :ptm_AA_seq], verbose=true,
                                        scoremodel=AffineGapScoreModel(BLOSUM80, match=5, mismatch=-4, gap_open=-5, gap_extend=-3),
-                                       seqgroup_col=[:is_viral], srcseqid_col=[:protein_ac, :protein_code, :organism], destseqid_col=[:protein_ac, :protein_code, :organism])
-filter!(r -> !ismissing(r.alt_ptm_pos) &&
+                                       seqgroup_col=[:is_viral],
+                                       srcseqid_col=[:protein_ac, :protein_code, :organism],
+                                       destseqid_col=[:protein_ac, :protein_code, :organism])
+viral_ptm2ptm_df = vcat(viral_ptm2ptm_df,
+     rename!(copy(viral_ptm2ptm_df, copycols=false),
+            :ptm_pos => :hom_ptm_pos, :ptm_AA_seq => :hom_ptm_AA,
+            :protein_ac => :hom_protein_ac, :protein_code => :hom_protein_code,
+            :organism => :hom_organism, :srcseq_ix => :destseq_ix,
+            :hom_ptm_pos => :ptm_pos, :hom_ptm_AA => :ptm_AA_seq,
+            :hom_protein_ac => :protein_ac, :hom_protein_code => :protein_code,
+            :hom_organism => :organism, :destseq_ix => :srcseq_ix,)) |> unique!
+viral_ptm2ptm_df = leftjoin(viral_ptm2ptm_df, select(viral_ptm2protein_all_df, [:protein_ac, :ptm_pos, :is_observed]), on=[:protein_ac, :ptm_pos])
+viral_ptm2ptm_df = leftjoin(viral_ptm2ptm_df, rename!(select(viral_ptm2protein_all_df, [:protein_ac, :ptm_pos, :is_observed]),
+                                                      :protein_ac => :hom_protein_ac, :ptm_pos => :hom_ptm_pos, :is_observed => :hom_is_observed),
+                            on=[:hom_protein_ac, :hom_ptm_pos])
+filter!(r -> !ismissing(r.hom_ptm_pos) &&
              (r.ptm_type in ["Phospho", "GlyGly"]) &&
-             (r.organism != r.alt_organism) &&
-             coalesce(r.agn_match_ratio, 0.0) >= 0.5, viral_ptm2ptm_df)
-viral_ptm2ptm_df = leftjoin(viral_ptm2protein_df, viral_ptm2ptm_df, on=[:is_viral, :ptm_type, :ptm_pos, :ptm_AA_seq, :protein_ac, :protein_code, :organism])
+             (r.organism != r.hom_organism) &&
+             (coalesce(r.is_observed, false) || coalesce(r.hom_is_observed, false)) &&
+             coalesce(r.agn_match_ratio, 0.0) >= 0.5
+             , viral_ptm2ptm_df)
 select!(viral_ptm2ptm_df, Not([:is_viral, :srcseq_ix, :destseq_ix]))
-select(viral_ptm2ptm_df, Not([:organism, :alt_organism]))
-CSV.write(joinpath(output_path, "viral_ptm2ptm.txt"), viral_ptm2ptm_df, delim='\t')
+select(viral_ptm2ptm_df, Not([:organism, :hom_organism]))
+CSV.write(joinpath(output_path, "viral_ptm2ptm_20200929.txt"), viral_ptm2ptm_df, delim='\t')

@@ -3,6 +3,7 @@ source(file.path(misc_scripts_path, 'ggplot_ext.R'))
 require(Cairo)
 require(ggrastr)
 require(ggrepel)
+require(ggnewscale)
 
 object_contrasts_trunc.df <- tibble(
     contrast_kind = c("treatment_vs_treatment"),
@@ -251,4 +252,102 @@ ggplot(data=sel_obj_iactions.df, aes(x = timepoint_num, color=treatment, fill=tr
        width=8, height=6, device = cairo_pdf)
 }
     tibble()
+})
+
+viral_ptm2ptm.df <- read_tsv(file.path(data_path, msfolder, str_c("ptm_extractor_", data_version),
+                                       str_c("viral_ptm2ptm_", data_version, ".txt"))) %>%
+    left_join(dplyr::select(msdata_full$proteins, protein_ac, is_viral, is_contaminant, genename)) %>%
+    left_join(dplyr::rename_all(dplyr::select(msdata_full$proteins, protein_ac, is_viral, is_contaminant, genename), ~ str_c("hom_", .))) %>%
+    mutate(protein_ac_pair = if_else(protein_ac < hom_protein_ac,
+                                str_c(protein_ac, "-", hom_protein_ac),
+                                str_c(hom_protein_ac, "-", protein_ac)),
+           genename_short = str_remove(genename, "SARS_CoV\\d?_"),
+           hom_genename_short = str_remove(hom_genename, "SARS_CoV\\d?_"),
+           genename_pair = if_else(is.na(hom_genename_short) | (genename_short == hom_genename_short),
+                                   genename_short,
+                                   if_else(genename_short < hom_genename_short,
+                                           str_c(genename_short, "_", hom_genename_short),
+                                           str_c(hom_genename_short, "_", genename_short))),
+           ptm_correct = (ptm_type == "GlyGly" & ptm_AA_seq %in% "K") |
+               (ptm_type == "Phospho" & ptm_AA_seq %in% c("S","T","Y")),
+           hom_ptm_correct = (ptm_type == "GlyGly" & hom_ptm_AA %in% "K") |
+               (ptm_type == "Phospho" & hom_ptm_AA %in% c("S","T","Y")))
+
+ptm_qvalue_max <- 1E-3
+
+viral_ptmn_aligned.df <- select(viral_ptm2ptm.df, -agn_match_ratio) %>% distinct() %>%
+    dplyr::left_join(distinct(select(msdata_full$ptm2gene, ptm_id, protein_ac, is_viral, is_contaminant, ptm_pos, ptm_AA_seq))) %>%
+    dplyr::left_join(distinct(select(msdata_full$ptm2gene, hom_ptm_id=ptm_id, hom_protein_ac=protein_ac, hom_ptm_pos=ptm_pos, hom_ptm_AA=ptm_AA_seq))) %>%
+    dplyr::left_join(select(msdata_full$ptmns, ptmn_id, ptm_id)) %>%
+    #dplyr::left_join(select(msdata_full$ptmns, hom_ptmn_id=ptmn_id, hom_ptm_id=ptm_id)) %>%
+    dplyr::left_join(dplyr::select(msdata_full$ptmn_stats, ptmn_id, pms_qvalue_min)) %>%
+    dplyr::left_join(dplyr::select(msdata_full$ptmn_stats, hom_ptm_id=ptm_id, hom_pms_qvalue_min=pms_qvalue_min) %>%
+                     dplyr::group_by(hom_ptm_id) %>% dplyr::summarise(hom_pms_qvalue_min=min(hom_pms_qvalue_min, na.rm=TRUE), .groups="drop")) %>%
+    dplyr::filter(pmin(coalesce(pms_qvalue_min, 1), coalesce(hom_pms_qvalue_min, 1)) <= ptm_qvalue_max) %>%
+    dplyr::mutate(ptm_status = case_when(is_observed ~ "observed",
+                                         ptm_correct ~ "potential",
+                                         TRUE ~ "N/A"),
+                  organism_short = case_when(organism == "Severe acute respiratory syndrome coronavirus 2 OX=2697049" ~ "SARS_CoV2",
+                            organism == "Human SARS coronavirus OX=694009" ~ "SARS_CoV",
+                            TRUE ~ organism))
+View(filter(viral_ptm2ptm.df, genename_short == "ORF9b" & ptm_pos == 81))
+
+viral_ptmn_stats.df <- dplyr::full_join(viral_ptmn_aligned.df, msdata_full$msruns, by=character()) %>%
+    dplyr::left_join(dplyr::select(msdata_full$ptmns, ptmn_id, ptm_id)) %>%
+    dplyr::left_join(msdata_full$ptmn2pepmodstate) %>%
+    dplyr::left_join(msdata_full$pepmodstate_intensities) %>%
+    dplyr::group_by(ptmn_id, treatment) %>%
+    dplyr::summarise(ptm_treatment_qvalue_min = min(qvalue, na.rm=TRUE),
+                     .groups="drop")
+
+viral_ptmn_intensity.df <- dplyr::full_join(viral_ptmn_aligned.df, conditions.df, by=character()) %>%
+    dplyr::left_join(viral_ptmn_stats.df) %>%
+    dplyr::left_join(dplyr::select(filter(fit_stats$iactions, var == "iaction_labu"), ptmn_id, nselptms, condition, median_log2)) %>%
+    dplyr::mutate(ptm_id = if_else(is.na(ptm_id), -hom_ptm_id, ptm_id)) %>% # assign some ptm_id for unobserved ptm
+    dplyr::filter(treatment == organism_short) %>%
+    # show only the highest ptmn_id per ptm_id
+    dplyr::group_by(ptm_id, condition) %>% dplyr::filter(row_number(-coalesce(100 + median_log2, 0)) == 1L) %>% dplyr::ungroup() %>%
+    dplyr::mutate(timepoint_label = factor(str_c(timepoint, "h p.i."), levels=str_c(sort(unique(conditions.df$timepoint)), "h p.i.")),
+                  shown_ptm_pos = if_else(is.na(agn_ptm_pos), ptm_pos, agn_ptm_pos),
+                  shown_median_log2 = coalesce(global_labu_shift/log(2) + median_log2, 1),
+                  shown_median_log2 = if_else(organism_short == "SARS_CoV2", shown_median_log2, -shown_median_log2),
+                  ptm_label = str_c(ptm_AA_seq, ptm_pos, if_else(coalesce(nselptms, 1) > 1, str_c(" (M", nselptms,")"), "")),
+                  ptm_status = case_when(ptm_status == "observed" & ptm_treatment_qvalue_min > ptm_qvalue_max ~ "observed (high q-value)",
+                                         TRUE ~ ptm_status))
+
+View(filter(viral_ptmn_intensity.df, genename_short == "S" & ptm_pos == 478))
+
+ptm_palette <- c("Phospho" = "royalblue", "GlyGly" = "black", "N/")
+ptm_status_palette <- c("observed"=19L, "observed (high q-value)"=10L, "potential" = 21L, "N/A" = 4L)
+
+group_by(viral_ptmn_intensity.df, genename_pair, agn_len) %>%
+group_walk(~{
+    sel_iactions.df <- .x
+    viral_gene <- .y$genename_pair[[1]]
+    genenames_df <- semi_join(viral_ptm2ptm.df, .y) %>% dplyr::select(genename, hom_genename) %>% dplyr::distinct()
+    genenames <- c(genenames_df$genename, genenames_df$hom_genename)
+    genenames <- sort(unique(genenames[!is.na(genenames)]), decreasing = TRUE)
+    message("Plotting PTMs of ", viral_gene)
+    p <- ggplot(sel_iactions.df, aes(x = agn_ptm_pos, y = shown_median_log2, color = organism_short)) +
+        geom_hline(yintercept = 0, color = "black", size = 1.5) +
+        geom_segment(aes(xend = agn_ptm_pos, y = 0, yend = shown_median_log2)) +
+        geom_point(aes(shape=ptm_status), fill="white") +
+        scale_color_manual("Virus", values = treatment_palette) +
+        new_scale_color() +
+        geom_text_repel(data=filter(sel_iactions.df, treatment == "SARS_CoV2" & ptm_status != "N/A"),
+                        aes(label = ptm_label, color=ptm_type), min.segment.length=0.2, segment.alpha=0.5, segment.size=0.25, nudge_y = 1) +
+        geom_text_repel(data=filter(sel_iactions.df, treatment == "SARS_CoV" & ptm_status != "N/A"),
+                        aes(label = ptm_label, color=ptm_type), min.segment.length=0.2, segment.alpha=0.5, segment.size=0.25, nudge_y = -1) +
+        scale_color_manual("PTM Type", values = ptm_palette) +
+        scale_shape_manual("PTM Status", values = ptm_status_palette) +
+        scale_x_continuous("Aligned Position", limits=c(0L, .y$agn_len[[1]])) +
+        facet_grid(timepoint_label ~ .) +
+        theme_bw_ast(base_family = "") +
+        ggtitle(str_c("PTMs on ", str_c(genenames, collapse="/"), " proteins"))
+    plot_path <- file.path(analysis_path, "plots", str_c(msfolder, '_', fit_version), "viral_ptm")
+    if (!dir.exists(plot_path)) dir.create(plot_path, recursive = TRUE)
+    ggsave(p, file = file.path(plot_path, str_c(project_id, "_", msfolder, '_', fit_version, "_viral_",
+                                                viral_gene, #"_qvalue_1E-3", 
+                                                ".pdf")),
+           width=14, height=16, device = cairo_pdf)
 })
