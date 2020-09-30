@@ -200,7 +200,12 @@ group_by(object_id) %>% do({
         dplyr::inner_join(conditions.df) %>%
         dplyr::mutate_at(vars(mean, ends_with("%")),
                          list(~exp(. + global_labu_shift)))
+    sel_intensity_range.df <- dplyr::group_by(sel_obj_iactions.df, object_id) %>% dplyr::summarise(
+                                               intensity_min = 0.5*quantile(`25%`, 0.05, na.rm=TRUE),
+                                               intensity_max = 1.5*quantile(`75%`, 0.95, na.rm=TRUE),
+                                               .groups="drop")
     sel_obj_msdata.df <- sel_obj.df %>%
+        dplyr::inner_join(sel_intensity_range.df) %>%
         dplyr::inner_join(msdata_full$ptmn2pepmodstate) %>%
         dplyr::left_join(dplyr::select(dplyr::filter(fit_stats$subobjects, var == "suo_shift"),
                                        ptmn_id, pepmodstate_id, glm_subobject_ix, suo_shift = `50%`)) %>%
@@ -210,7 +215,12 @@ group_by(object_id) %>% do({
         dplyr::mutate(intensity_norm_orig = intensity_norm,
                       intensity_norm_orig_scaled = intensity_norm_orig*exp(-suo_shift),
                       intensity_norm = intensity*exp(-total_msrun_shift),
-                      intensity_norm_scaled = intensity_norm*exp(-suo_shift)) %>%
+                      intensity_norm_scaled = intensity_norm*exp(-suo_shift),
+                      intensity_norm_orig_scaled_trunc = pmin(pmax(intensity_norm_orig_scaled,
+                                                                   intensity_min), intensity_max),
+                      intensity_norm_scaled_trunc = pmin(pmax(intensity_norm_scaled,
+                                                                   intensity_min), intensity_max),
+        ) %>%
         dplyr::inner_join(msdata_full$msruns) %>%
         dplyr::mutate(locprob_valid = coalesce(ptm_locprob, 0) >= data_info$locprob_min,
                       qvalue_valid = coalesce(qvalue, 1) <= data_info$qvalue_max,
@@ -228,10 +238,10 @@ ggplot(data=sel_obj_iactions.df, aes(x = timepoint_num, color=treatment, fill=tr
                  alpha=0.5, stat = "identity", size=0.5) +
     geom_path(aes(x = timepoint_num, y = `50%`), alpha=0.5, size=1, stat="identity") +
     geom_point(data=sel_obj_msdata.df,
-               aes(y = intensity_norm_scaled, shape=ms_status),
+               aes(y = intensity_norm_scaled_trunc, shape=ms_status),
                position = position_jitter(width = 0.75, height = 0), size=0.5, alpha=0.5, show.legend=FALSE) +
     geom_point(data=sel_obj_msdata.df,
-               aes(y = intensity_norm_orig_scaled, shape=ms_status),
+               aes(y = intensity_norm_orig_scaled_trunc, shape=ms_status),
                position = position_jitter(width = 0.75, height = 0), size=1.5) +
     theme_bw_ast(base_family = "", base_size = 8) +
     scale_x_continuous(breaks=unique(msdata$msruns$timepoint_num)) +
@@ -240,13 +250,12 @@ ggplot(data=sel_obj_iactions.df, aes(x = timepoint_num, color=treatment, fill=tr
     scale_fill_manual(values=treatment_palette) +
     scale_y_log10() +
     ggtitle(str_c(sel_obj.df$object_label, " timecourse"),
-            subtitle=str_c(sel_obj.df$protein_description, " npepmodstates=", sel_obj.df$n_pepmodstates)) +
+            subtitle=str_c(sel_obj.df$protein_description, " (npepmodstates=", sel_obj.df$n_pepmodstates, ")")) +
     facet_wrap( ~ object_label, scales = "free")
     plot_path <- file.path(analysis_path, "plots", str_c(msfolder, '_', fit_version),
                            str_c("timecourse_", sel_ptm_type, "_", sel_std_type,
                                  modelobj_suffix, if_else(sel_obj.df$is_viral[[1]], "/viral", "")))
     if (!dir.exists(plot_path)) dir.create(plot_path, recursive = TRUE)
-    print(plot_path)
     ggsave(p, file = file.path(plot_path, str_c(project_id, "_", msfolder, '_', fit_version, "_",
                                str_replace(sel_obj.df$object_label[[1]], "/", "-"), "_", sel_obj.df$object_id[[1]], ".pdf")),
        width=8, height=6, device = cairo_pdf)
