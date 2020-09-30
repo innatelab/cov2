@@ -263,6 +263,153 @@ ggplot(data=sel_obj_iactions.df, aes(x = timepoint_num, color=treatment, fill=tr
     tibble()
 })
 
+sel_objects.df <- inner_join(msdata_full$proteins, msdata_full$protein2protgroup) %>%
+    dplyr::filter(is_contaminant) %>%
+    dplyr::mutate(contaminant_type = case_when(str_detect(fasta_header, "Bos") ~ "Cow",
+                                               str_detect(fasta_header, "Sus") ~ "Pig",
+                                               TRUE ~ "Other")) %>%
+    dplyr::select(protgroup_id, contaminant_type) %>% dplyr::distinct()
+
+sel_data.df <- dplyr::inner_join(sel_objects.df, msdata_full$peptide2protgroup) %>%
+    dplyr::inner_join(msdata_full$pepmodstates) %>%
+    dplyr::filter(nselptms == 0) %>%
+    dplyr::inner_join(dplyr::select(msdata_full$pepmodstate_intensities, msrun, pepmodstate_id, intensity_norm)) %>%
+    dplyr::inner_join(dplyr::arrange(msdata_full$msruns, dataset, timepoint, treatment, replicate) %>%
+                      dplyr::mutate(sample = str_c(condition, "_", replicate),
+                                    sample = factor(sample, levels=as.character(sample) %>% unique))) %>%
+    dplyr::mutate(intensity_norm_log2 = log2(intensity_norm)) %>%
+    dplyr::group_by(dataset, pepmodstate_id) %>%
+    dplyr::mutate(intensity_mock0_log2_avg = median(intensity_norm_log2[condition == "mock_0h"], na.rm = TRUE)) %>%
+    dplyr::ungroup() %>%
+    dplyr::mutate(intensity_norm_log2_rel = intensity_norm_log2 - intensity_mock0_log2_avg)
+    
+contaminant_palette = c("Other" = "lightgray", "Cow" = "firebrick", "Pig" = "goldenrod")
+contaminants_plot = ggplot(sel_data.df) +
+    geom_boxplot(aes(y = intensity_norm_log2_rel, x = sample, fill=contaminant_type, color=contaminant_type),
+                 alpha=0.5, position=position_dodge()) +
+    scale_y_continuous(limits=c(-2.5, 2.5)) +
+    scale_fill_manual(values = contaminant_palette) +
+    scale_color_manual(values = contaminant_palette) +
+    theme_bw_ast(base_family = "") +
+    facet_grid(dataset ~ .) +
+    theme(axis.text.x = element_text(hjust=0, angle=-45))
+contaminants_plot
+ggsave(contaminants_plot, file = file.path(analysis_path, "plots", str_c(msfolder, '_', fit_version),
+                                           str_c(project_id, "_", msfolder, '_', fit_version, "_contaminants.pdf")),
+       width=16, height=12, device = cairo_pdf)
+
+require(multidplyr)
+
+sel_std_type <- "median"
+sel_objects.df <- dplyr::filter(modelobjs_df, object_id == 26850L)# str_detect(object_label, "Phospho_CON__P12763_S325_M2"))
+sel_objects.df <- modelobjs_df
+
+treatment_palette <- c(mock="gray", SARS_CoV2 = "goldenrod", SARS_CoV = "brown")
+fp_treatment_palette <- c(mock="lightgray", SARS_CoV2 = "yellow", SARS_CoV = "salmon")
+
+plot_cluster <- new_cluster(16)
+cluster_library(plot_cluster, c("dplyr", "ggplot2", "stringr", "Cairo", "readr", "rlang"))
+cluster_copy(plot_cluster, c("total_msrun_shifts.df", "conditions.df", "fit_stats", "msdata_full", "theme_bw_ast",
+                             "sel_std_type", "treatment_palette", "fp_treatment_palette",
+                             "global_labu_shift", "project_id", "data_info",
+                             "analysis_path", "msfolder", "fit_version", "modelobj_suffix", "fp.env", "ptm2protregroup.df"))
+
+dplyr::left_join(sel_objects.df, dplyr::select(msdata_full$ptmn_stats, ptmn_id, n_pepmodstates)) %>%
+dplyr::left_join(dplyr::select(msdata_full$proteins, protein_ac, protein_description=protein_name)) %>%
+group_by(object_id) %>% partition(plot_cluster) %>%
+do({
+    sel_obj.df <- .
+    sel_ptm_type <- sel_obj.df$ptm_type
+    plot_path <- file.path(analysis_path, "plots", str_c(msfolder, '_', fit_version),
+                           str_c("timecourse_", sel_ptm_type, "_", sel_std_type,
+                                 modelobj_suffix, if_else(sel_obj.df$is_viral[[1]], "/viral", "")))
+    message("Plotting ", sel_obj.df$object_label, " time course")
+    sel_var <- if_else(sel_std_type == "median", "iaction_labu", "iaction_labu_replCI")
+    sel_obj_iactions.df <- dplyr::inner_join(dplyr::select(sel_obj.df, object_id),
+                                             dplyr::filter(fit_stats$iactions, var == sel_var)) %>%
+        dplyr::inner_join(conditions.df) %>%
+        dplyr::left_join(dplyr::select(dplyr::filter(fit_stats$subobjects, var == "suo_shift"),
+                                       ptmn_id, pepmodstate_id, glm_subobject_ix, suo_shift = `50%`)) %>%
+        dplyr::inner_join(msdata_full$pepmodstates) %>%
+        dplyr::mutate_at(vars(mean, ends_with("%")),
+                         list(~exp(. + suo_shift + global_labu_shift)))
+    sel_intensity_range.df <- dplyr::group_by(sel_obj_iactions.df, object_id, pepmodstate_seq) %>% dplyr::summarise(
+        intensity_min = 0.25*quantile(`25%`, 0.05, na.rm=TRUE),
+        intensity_max = 1.75*quantile(`75%`, 0.95, na.rm=TRUE),
+        .groups="drop")
+    sel_obj_msdata.df <- sel_obj.df %>%
+        dplyr::inner_join(sel_intensity_range.df) %>%
+        dplyr::inner_join(msdata_full$ptmn2pepmodstate) %>%
+        dplyr::inner_join(msdata_full$pepmodstates) %>%
+        dplyr::inner_join(msdata_full$pepmodstate_intensities) %>%
+        dplyr::inner_join(msdata_full$ptmn_locprobs) %>%
+        dplyr::inner_join(dplyr::select(total_msrun_shifts.df, msrun, total_msrun_shift)) %>%
+        dplyr::mutate(intensity_norm_orig = intensity_norm,
+                      intensity_norm = intensity*exp(-total_msrun_shift),
+                      intensity_norm_orig_trunc = pmin(pmax(intensity_norm_orig, intensity_min), intensity_max),
+                      intensity_norm_trunc = pmin(pmax(intensity_norm, intensity_min), intensity_max),
+        ) %>%
+        dplyr::inner_join(msdata_full$msruns) %>%
+        dplyr::mutate(locprob_valid = coalesce(ptm_locprob, 0) >= data_info$locprob_min,
+                      qvalue_valid = coalesce(qvalue, 1) <= data_info$qvalue_max,
+                      ms_status = case_when(locprob_valid & qvalue_valid ~ "valid",
+                                            !locprob_valid & qvalue_valid ~ "bad PTM loc",
+                                            locprob_valid & !qvalue_valid ~ "bad ident",
+                                            TRUE ~ 'bad ident&loc'))
+    if (nrow(sel_obj_iactions.df) > 0) {
+        p <- ggplot(data=sel_obj_iactions.df, aes(x = timepoint_num, color=treatment, fill=treatment)) +
+            geom_ribbon(aes(x = timepoint_num, ymin = `2.5%`, ymax=`97.5%`),
+                        alpha=0.5, fill=NA, stat = "identity", linetype = "dotted", size=0.5) +
+            geom_ribbon(aes(x = timepoint_num, ymin = `25%`, ymax=`75%`),
+                        alpha=0.5, stat = "identity", size=0.5) +
+            geom_path(aes(x = timepoint_num, y = `50%`), alpha=0.5, size=1, stat="identity") +
+            geom_point(data=sel_obj_msdata.df,
+                       aes(y = intensity_norm_trunc, shape=ms_status),
+                       position = position_jitter(width = 0.75, height = 0, seed=12323), size=0.5, alpha=0.5, show.legend=FALSE) +
+            geom_point(data=sel_obj_msdata.df,
+                       aes(y = intensity_norm_orig_trunc, shape=ms_status),
+                       position = position_jitter(width = 0.75, height = 0, seed=12323), size=1.5) +
+            geom_text(data=sel_obj_msdata.df,
+                      aes(y = intensity_norm_orig_trunc, label=replicate),
+                      position = position_jitter(width = 0.75, height = 0, seed=12323), size=1, color="lightgray", show.legend=FALSE) +
+            theme_bw_ast(base_family = "", base_size = 8) +
+            scale_x_continuous(breaks=unique(msdata_full$msruns$timepoint_num)) +
+            scale_color_manual(values=treatment_palette) +
+            scale_shape_manual(values=c("valid"=19, "bad PTM loc"=8, "bad ident"=1, "bad ident&loc"=4)) +
+            scale_fill_manual(values=treatment_palette) +
+            scale_y_log10("log10(PTM Intensity)") +
+            facet_wrap( ~ object_label + pepmodstate_seq, ncol=1, scales = "free")
+        h <- 2+3*n_distinct(sel_obj_iactions.df$pepmodstate_id)
+        if (exists("fp.env")) {
+            sel_fp_iactions.df <- semi_join(fp.env$fit_stats$iactions, semi_join(ptm2protregroup.df, sel_obj.df)) %>%
+                filter(var == if_else(sel_std_type == "replicate", "iaction_labu","iaction_labu_replCI")) %>%
+                dplyr::inner_join(conditions.df)
+            if (nrow(sel_fp_iactions.df) > 0L) {
+            fp_plot <- ggplot(data=sel_fp_iactions.df, aes(x = timepoint_num, color=treatment, fill=treatment)) +
+                geom_ribbon(aes(x = timepoint_num, ymin = `2.5%`, ymax=`97.5%`),
+                            alpha=0.5, fill=NA, stat = "identity", linetype = "dotted", size=0.5) +
+                geom_ribbon(aes(x = timepoint_num, ymin = `25%`, ymax=`75%`),
+                            alpha=0.5, stat = "identity", size=0.5) +
+                geom_path(aes(x = timepoint_num, y = `50%`), alpha=0.5, size=1, stat="identity") +
+                theme_bw_ast(base_family = "", base_size = 8) +
+                scale_x_continuous(breaks=unique(msdata_full$msruns$timepoint_num)) +
+                scale_color_manual(values=fp_treatment_palette) +
+                scale_fill_manual(values=fp_treatment_palette) +
+                scale_y_log10("log10(Protein Intensity)")
+            p <- ggpubr::ggarrange(p, fp_plot, ncol=1, heights=c(0.6, 0.3))
+            h <- h + 2L
+            }
+        }
+        p <- p + ggtitle(str_c(sel_obj.df$object_label, " timecourse"),
+                         subtitle=str_c(sel_obj.df$protein_description, " (npepmodstates=", sel_obj.df$n_pepmodstates, ")"))
+        if (!dir.exists(plot_path)) dir.create(plot_path, recursive = TRUE)
+        ggsave(p, file = file.path(plot_path, str_c(project_id, "_", msfolder, '_', fit_version, "_",
+                                                    str_replace(sel_obj.df$object_label[[1]], "/", "-"), "_", sel_obj.df$object_id[[1]], "_long.pdf")),
+               width=8, height=h, limitsize=FALSE, device = cairo_pdf)
+    }
+    tibble()
+})
+
 viral_ptm2ptm.df <- read_tsv(file.path(data_path, msfolder, str_c("ptm_extractor_", data_version),
                                        str_c("viral_ptm2ptm_", data_version, ".txt"))) %>%
     left_join(dplyr::select(msdata_full$proteins, protein_ac, is_viral, is_contaminant, genename)) %>%
