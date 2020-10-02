@@ -54,7 +54,7 @@ for (i, bait_ix) in enumerate(bait_ixs)
     stepmtx = HHN.stepmatrix(reactomefi_mtx, inedge_weights=vertex_weights .+ randomwalk_params.inedge_weight_min)
     walkmtx = HHN.similarity_matrix(stepmtx, vertex_weights, restart_probability=randomwalk_params.restart_prob)
     @info "Treecut statistics for bait #$(bait_ix) ($(bait_id), $i of $(length(bait_ixs)))..."
-    local treestats_df = HHN.treecut_stats(tree, walkmatrix=walkmtx,
+    local treestats_df = HHN.treecut_stats(tree, walkmatrix=walkmtx, maxweight=randomwalk_params.flow_weight_max,
                                     sources=findall(>=(randomwalk_params.source_weight_min), vertex_weights),
                                     sinks=sink_ixs,
                                     nflows_ratio=0.999, pools=nothing)

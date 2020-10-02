@@ -5,7 +5,7 @@ proj_info = (id = "cov2",
              oeproteome_folder = "spectronaut_oeproteome_20200527",
              oeproteome_data_ver = "20200527",
              oeproteome_fit_ver = "20200608",
-             hotnet_ver = "20200901")
+             hotnet_ver = "20200917")
 using Pkg
 Pkg.activate(joinpath(base_scripts_path, "adhoc", proj_info.id))
 
@@ -206,7 +206,8 @@ savefig(restartXneighb_plot,
 ###
 randomwalk_params = (restart_prob = 0.4,
                      inedge_weight_min = 1.0,
-                     source_weight_min = 1.5)
+                     source_weight_min = 1.5,
+                     flow_weight_max = 0.005)
 reactomefi_adjmtx = Matrix(LightGraphs.weights(reactomefi_digraph_rev));
 reactomefi_walkmtx = HHN.random_walk_matrix(reactomefi_digraph_rev, randomwalk_params.restart_prob)
 

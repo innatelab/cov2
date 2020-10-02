@@ -83,7 +83,7 @@ for (i, permix) in enumerate(chunk_treeixs)
     trees[i] = HHN.scctree(walkmtx, #seedling=seedling,
                            verbose=false, method=:bisect)
     @info "Treecut statistics for $bait_id-#$permix"
-    local treestats_df = HHN.treecut_stats(trees[i], walkmatrix=walkmtx,
+    local treestats_df = HHN.treecut_stats(trees[i], walkmatrix=walkmtx, maxweight=randomwalk_params.flow_weight_max,
                                     sources=findall(>=(randomwalk_params.source_weight_min), vertex_weights),
                                     sinks=sink_ixs,
                                     nflows_ratio=0.99, pools=nothing)
