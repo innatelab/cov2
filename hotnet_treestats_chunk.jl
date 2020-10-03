@@ -35,21 +35,21 @@ open(ZstdDecompressorStream, joinpath(scratch_path, "$(proj_info.id)_hotnet_perm
 end;
 
 bait_ids = first.(bait2nperms)
-bait_ix = (job_info.chunk-1) * job_info.nbaits_perchunk + 1
-@assert (bait_ix <= length(bait_ids)) "Chunk #$(job_info.chunk): outside of valid< range"
-bait_ixs = bait_ix:min(bait_ix + job_info.nbaits_perchunk - 1, length(bait_ids))
+bait_ix1 = (job_info.chunk-1) * job_info.nbaits_perchunk + 1
+@assert (bait_ix1 <= length(bait_ids)) "Chunk #$(job_info.chunk): outside of valid range"
+bait_ixs = bait_ix1:min(bait_ix1 + job_info.nbaits_perchunk - 1, length(bait_ids))
 
 reactomefi_mtx = Matrix(LightGraphs.weights(reactomefi_digraph_rev));
 
 treestats_dfs = Vector{DataFrame}()
 for (i, bait_ix) in enumerate(bait_ixs)
-    bait_id = bait_ids[bait_ix]
-    @info "Processing bait #$(bait_ix) ($(bait_id), $i of $(length(bait_ixs)))..."
-    vertex_weights, vertex_walkweights, _, sink_ixs, _, _, _, tree =
+    @info "Processing bait #$(bait_ix) ($(bait_ids[bait_ix])), $i of $(length(bait_ixs)))..."
+    bait_id, vertex_weights, vertex_walkweights, _, sink_ixs, _, _, _, tree =
         open(ZstdDecompressorStream, joinpath(scratch_path, "$(proj_info.id)_hotnet_perm_input_$(proj_info.hotnet_ver)",
                                         "bait_$(bait_ix)_perms.jlser.zst"), "r") do io
         deserialize(io)
     end
+    @assert bait_id == bait_ids[bait_ix] "Bait #$(bait_ix) is $(bait_ids[bait_ix]), got data for $(bait_id)"
     # recreate walkmtx since it's too expensive to store it in perm_input
     stepmtx = HHN.stepmatrix(reactomefi_mtx, inedge_weights=vertex_weights .+ randomwalk_params.inedge_weight_min)
     walkmtx = HHN.similarity_matrix(stepmtx, vertex_weights, restart_probability=randomwalk_params.restart_prob)

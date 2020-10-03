@@ -1,6 +1,6 @@
 proj_info = (id = "cov2",
              hotnet_ver = "20200917")
-@info "Assembling HHotNet permuted tree results for $(proj_info.id), ver=$(job_info.hotnet_ver)"
+@info "Assembling HHotNet permuted tree results for $(proj_info.id), ver=$(proj_info.hotnet_ver)"
 
 const misc_scripts_path = joinpath(base_scripts_path, "misc_jl");
 const analysis_path = joinpath(base_analysis_path, proj_info.id)
@@ -19,14 +19,15 @@ open(ZstdDecompressorStream, joinpath(scratch_path, "$(proj_info.id)_hotnet_perm
 end;
 
 for bait_ix in eachindex(bait2nperms)
-bait_id, nperms = bait2nperms[bait_ix]
-@info "Loading permutations (bait_id=$(bait_id), nperms=$(nperms))"
-vertex_weights, vertex_walkweights, perm_vertex_weights, sink_ixs,
+expected_bait_id, nperms = bait2nperms[bait_ix]
+@info "Loading permutations for  bait #$(bait_ix) (bait_id=$(expected_bait_id), nperms=$(nperms))"
+bait_id, vertex_weights, vertex_walkweights, perm_vertex_weights, sink_ixs,
 diedge_ixs, diedge_stepweights, diedge_walkweights, _ =
 open(ZstdDecompressorStream, joinpath(scratch_path, "$(proj_info.id)_hotnet_perm_input_$(proj_info.hotnet_ver)",
                                       "bait_$(bait_ix)_perms.jlser.zst"), "r") do io
     deserialize(io)
 end;
+@assert bait_id == expected_bait_id "Bait #$(bait_ix) is $(expected_bait_id), got data for $(bait_id)"
 
 perm_loaded = falses(nperms)
 perm_vertex_walkweights = similar(perm_vertex_weights)

@@ -51,7 +51,7 @@ bait_prev_lastree = bait_ix > 1 ? nbaittrees[bait_ix-1] : 0
 chunk_treeixs = (chunk_1st_tree - bait_prev_lastree):min(
             chunk_1st_tree - bait_prev_lastree - 1 + job_info.ntrees_perchunk,
             bait2nperms[bait_ix][2])
-@info "Processing $bait_id permuted trees $(chunk_treeixs)"
+@info "Processing bait #$(bait_ix) ($(bait_ids[bait_ix])) permuted trees $(chunk_treeixs)"
 
 reactomefi_mtx = Matrix(LightGraphs.weights(reactomefi_digraph_rev));
 
