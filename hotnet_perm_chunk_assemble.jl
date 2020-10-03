@@ -1,15 +1,6 @@
-#=
-job_info = (project = "cov2",
-            hotnet_ver = "20200901",
-            bait_ix = 3)
-=#
-job_info = (project = ARGS[1],
-            name = ARGS[2],
-            hotnet_ver = ARGS[3],
-            bait_ix = ARGS[4])
-proj_info = (id = job_info.project,
-             hotnet_ver = job_info.hotnet_ver)
-@info "Assembling HHotNet permuted tree results for $(job_info.project) bait #$(job_info.bait_ix), ver=$(job_info.hotnet_ver)"
+proj_info = (id = "cov2",
+             hotnet_ver = "20200917")
+@info "Assembling HHotNet permuted tree results for $(proj_info.id), ver=$(job_info.hotnet_ver)"
 
 const misc_scripts_path = joinpath(base_scripts_path, "misc_jl");
 const analysis_path = joinpath(base_analysis_path, proj_info.id)
@@ -57,13 +48,13 @@ for (root, dirs, files) in Filesystem.walkdir(joinpath(scratch_path, chunk_prefi
     end
     Threads.@threads for file in bait_files
         @info "Processing file $file (for bait #$bait_ix)..."
-        local bait_id
-        chunk_job_info, bait_id, chunk_treeixs, chunk_vertex_walkweights,
+        chunk_job_info, chunk_bait_id, chunk_treeixs, chunk_vertex_walkweights,
         chunk_diedge_stepweights, chunk_diedge_walkweights,
         chunk_trees, chunk_treestats_df =
         open(ZstdDecompressorStream, joinpath(root, file), "r") do io
             deserialize(io)
         end
+        @assert chunk_bait_id == bait_id "Chunk $(file) is for $(chunk_bait_id), not $(bait_id)"
         perm_loaded[chunk_treeixs] .= true
         perm_vertex_walkweights[:, chunk_treeixs] .= chunk_vertex_walkweights
         perm_diedge_stepweights[:, chunk_treeixs] .= chunk_diedge_stepweights
@@ -77,7 +68,7 @@ end
 if any(perm_loaded)
     @info "$(count(perm_loaded)) of $(length(perm_loaded)) perm trees loaded"
 else 
-    @warn "No perm chunk files for bait #$bait_ix found"
+    @warn "No perm chunk files for bait #$bait_ix ($bait_id) found"
     continue
 end
 

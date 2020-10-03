@@ -46,7 +46,6 @@ if isfile(joinpath(scratch_path, chunk_prefix, "$(chunk_prefix)_$(bait_ix)_$(job
     exit()
 end
 
-bait_id = bait_ids[bait_ix]
 bait_prev_lastree = bait_ix > 1 ? nbaittrees[bait_ix-1] : 0
 # indices of chunk trees to process (within bait_id perm_trees vector)
 chunk_treeixs = (chunk_1st_tree - bait_prev_lastree):min(
@@ -56,11 +55,12 @@ chunk_treeixs = (chunk_1st_tree - bait_prev_lastree):min(
 
 reactomefi_mtx = Matrix(LightGraphs.weights(reactomefi_digraph_rev));
 
-_, _, perm_vertex_weights, sink_ixs, diedge_ixs, _, _, _ =
+bait_id, _, _, perm_vertex_weights, sink_ixs, diedge_ixs, _, _, _ =
 open(ZstdDecompressorStream, joinpath(scratch_path, "$(proj_info.id)_hotnet_perm_input_$(proj_info.hotnet_ver)",
                                       "bait_$(bait_ix)_perms.jlser.zst"), "r") do io
     deserialize(io)
 end;
+@assert bait_id == bait_ids[bait_ix] "Bait #$(bait_ix) is $(bait_ids[bait_ix]), got data for $(bait_id)"
 
 vertex_walkweights = Matrix{Float64}(undef, (size(perm_vertex_weights, 1), length(chunk_treeixs)))
 diedge_stepweights = Matrix{Float64}(undef, (length(diedge_ixs), length(chunk_treeixs)))

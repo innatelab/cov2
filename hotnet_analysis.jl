@@ -265,6 +265,7 @@ end
 
 # save per-bait for use on a cluster
 permtrees_input_prefix = "$(proj_info.id)_hotnet_perm_input_$(proj_info.hotnet_ver)"
+sel_bait_ids = sort(bait_ids)
 open(ZstdCompressorStream, joinpath(scratch_path, "$(permtrees_input_prefix).jlser.zst"), "w") do io
     serialize(io, (vertex2gene, reactomefi_genes, reactomefi_digraph_rev,
                    [bait_id => size(bait2perm_vertex_weights[bait_id], 2) for bait_id in sel_bait_ids],
@@ -275,7 +276,7 @@ isdir(joinpath(scratch_path, permtrees_input_prefix)) || mkdir(joinpath(scratch_
 for (bait_ix, bait_id) in enumerate(sel_bait_ids)
     open(ZstdCompressorStream, joinpath(scratch_path, permtrees_input_prefix, "bait_$(bait_ix)_perms.jlser.zst"), "w") do io
         diedge_ixs = findall(!=(0), vec(bait2walkmtx[bait_id]))
-        serialize(io, (bait2vertex_weights[bait_id],
+        serialize(io, (bait_id, bait2vertex_weights[bait_id],
                        bait2vertex_walkweights[bait_id],
                        bait2perm_vertex_weights[bait_id],
                        get(bait2apms_vertices, bait_id, Int[]),
