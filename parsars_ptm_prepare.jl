@@ -247,6 +247,7 @@ using DataFrames, BioAlignments
 
 viral_ptm2protein_all_df = PTMExtractor.ptmsites(filter(r -> r.is_viral, proteins_df), ["Phospho" => "STY", "GlyGly" => "K"])
 FrameUtils.matchcategoricals!(viral_ptm2protein_all_df, ptm2protein_df, cols=[:ptm_type, :ptm_AAs])
+CSV.write(joinpath(output_path, "viral_ptms_all_20200929.txt"), viral_ptm2protein_all_df, delim='\t')
 
 viral_ptm2protein_all_df = leftjoin(viral_ptm2protein_all_df,
         setindex!(select(filter(r -> r.is_viral, ptm2protein_df), names(viral_ptm2protein_all_df)), true, :, :is_observed),
@@ -276,9 +277,10 @@ viral_ptm2ptm_df = leftjoin(viral_ptm2ptm_df, rename!(select(viral_ptm2protein_a
 filter!(r -> !ismissing(r.hom_ptm_pos) &&
              (r.ptm_type in ["Phospho", "GlyGly"]) &&
              (r.organism != r.hom_organism) &&
-             (coalesce(r.is_observed, false) || coalesce(r.hom_is_observed, false)) &&
              coalesce(r.agn_match_ratio, 0.0) >= 0.5
              , viral_ptm2ptm_df)
 select!(viral_ptm2ptm_df, Not([:is_viral, :srcseq_ix, :destseq_ix]))
+CSV.write(joinpath(output_path, "viral_ptm2ptm_20200929_all.txt"), viral_ptm2ptm_df, delim='\t')
 select(viral_ptm2ptm_df, Not([:organism, :hom_organism]))
+filter!(r -> (coalesce(r.is_observed, false) || coalesce(r.hom_is_observed, false)), viral_ptm2ptm_df)
 CSV.write(joinpath(output_path, "viral_ptm2ptm_20200929.txt"), viral_ptm2ptm_df, delim='\t')
