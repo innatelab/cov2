@@ -5,9 +5,13 @@
 
 project_id <- 'cov2'
 message('Project ID=', project_id)
-data_version <- "20200929"
-fit_version <- "20200929"
-msfolder <- 'snaut_parsars_ptm_20200907'
+#data_version <- "20200929"
+#fit_version <- "20200929"
+#msfolder <- 'snaut_parsars_ptm_20200907'
+data_version <- "20201005"
+fit_version <- "20201005"
+msfolder <- 'snaut_parsars_phospho_20201005'
+
 message("Assembling fit results for project ", project_id,
         " (dataset v", data_version, ", fit v", fit_version, ")")
 
@@ -268,7 +272,8 @@ object_contrasts_report.df <- dplyr::left_join(modelobjs_df, dplyr::select(msdat
                 #kinase_gene_names, reg_function, reg_prot_iactions, reg_other_iactions, reg_pubmed_ids,
                 ends_with("SARS_CoV2@6h_vs_mock@6h"), ends_with("SARS_CoV@6h_vs_mock@6h"), ends_with("SARS_CoV2@6h_vs_SARS_CoV@6h"),
                 ends_with("SARS_CoV2@12h_vs_mock@12h"), ends_with("SARS_CoV@12h_vs_mock@12h"), ends_with("SARS_CoV2@12h_vs_SARS_CoV@12h"),
-                ends_with("SARS_CoV2@24h_vs_mock@24h"), ends_with("SARS_CoV@24h_vs_mock@24h"), ends_with("SARS_CoV2@24h_vs_SARS_CoV@24h")) %>%
+                ends_with("SARS_CoV2@24h_vs_mock@24h"), ends_with("SARS_CoV@24h_vs_mock@24h"), ends_with("SARS_CoV2@24h_vs_SARS_CoV@24h"),
+                ends_with("SARS_CoV2@36h_vs_mock@36h"), ends_with("SARS_CoV@36h_vs_mock@36h"), ends_with("SARS_CoV2@36h_vs_SARS_CoV@36h")) %>%
   dplyr::arrange(gene_name, protein_ac, ptm_pos, ptm_type, std_type)
 
 write_tsv(filter(object_contrasts_report.df, std_type == "replicate") %>% dplyr::select(-std_type, -object_id),

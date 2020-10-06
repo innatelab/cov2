@@ -1,6 +1,6 @@
 Sys.setenv(TZ='Etc/GMT+1') # issue#612@rstan
 #job.args <- c("cov2", "ast_parsars_ptm", "snaut_parsars_ptm_20200907", "20200920", "20200920", "0", "39")
-#filter(mutate(modelobjs_df, rn=row_number()), str_detect(ptmn_label, "^GlyGly_SQSTM1_K13_M1"))$rn
+#job.args <- c("cov2", "ast_parsars_ptm", "snaut_parsars_phospho_20201005", "20201005", "20201005", "0", "39")
 if (!exists('job.args')) {
   job.args <- commandArgs(trailingOnly = TRUE)
 }
@@ -14,7 +14,7 @@ msfolder <- job.args[[3]]
 data_version <- job.args[[4]]
 fit_version <- job_version
 job_id <- as.integer(job.args[[6]])
-job_chunk <- as.integer(job.args[[7]])#job_chunk <- 5505L
+job_chunk <- as.integer(job.args[[7]])#job_chunk <- filter(mutate(modelobjs_df, rn=row_number()), str_detect(ptmn_label, "^Phospho_SARS_CoV_M_S212_M1"))$rn
 message('Job ', job_name, '(id=', job_id, '_', job_chunk,
         " data_version=", data_version, " fit_version=", fit_version, " running on ", Sys.info()["nodename"], ")")
 
