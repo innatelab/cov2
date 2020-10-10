@@ -65,13 +65,13 @@ model_data$mschannels <- dplyr::select(msdata$msruns, dataset, condition, msrun,
   dplyr::filter(dataset == case_when(sel_ptm_type == "GlyGly" ~ "ubi",
                                      sel_ptm_type == "Phospho" ~ "phospho",
                                      TRUE ~ "unknown")) %>%
-  #dplyr::inner_join(dplyr::select(total_msrun_shifts.df, msrun, total_msrun_shift)) %>%
+  dplyr::inner_join(dplyr::select(total_msrun_shifts.df, msrun, total_msrun_shift)) %>%
   dplyr::arrange(condition, replicate, msrun) %>% dplyr::distinct() %>%
   dplyr::mutate(mschannel_ix = row_number(),
                 msrun_ix = as.integer(factor(msrun, levels=unique(msrun))),
                 msproto_ix = 1L,
                 zero_msrun_shift = 0L)
-experiment_shift_col <- 'zero_msrun_shift' # !!! no normalization shifts since normalized data is used
+experiment_shift_col <- 'total_msrun_shift'
 model_data$mschannels$model_mschannel_shift <- model_data$mschannels[[experiment_shift_col]]
 model_data$conditions <- conditions.df %>%
   mutate(condition_ix = row_number())
