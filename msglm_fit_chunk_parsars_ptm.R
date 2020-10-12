@@ -1,6 +1,6 @@
 Sys.setenv(TZ='Etc/GMT+1') # issue#612@rstan
 #job.args <- c("cov2", "ast_parsars_ptm", "snaut_parsars_ptm_20200907", "20200920", "20200920", "0", "39")
-#job.args <- c("cov2", "ast_parsars_ptm", "snaut_parsars_phospho_20201005", "20201005", "20201005", "0", "39")
+#job.args <- c("cov2", "ast_parsars_ptm", "snaut_parsars_phospho_20201005", "20201010", "20201010", "0", "39")
 if (!exists('job.args')) {
   job.args <- commandArgs(trailingOnly = TRUE)
 }
@@ -14,7 +14,7 @@ msfolder <- job.args[[3]]
 data_version <- job.args[[4]]
 fit_version <- job_version
 job_id <- as.integer(job.args[[6]])
-job_chunk <- as.integer(job.args[[7]])#job_chunk <- filter(mutate(modelobjs_df, rn=row_number()), str_detect(ptmn_label, "^Phospho_SARS_CoV_M_S212_M1"))$rn
+job_chunk <- as.integer(job.args[[7]])#job_chunk <- filter(mutate(modelobjs_df, chunk=row_number()), str_detect(ptmn_label, "^Phospho_C1orf198_S289_M1"))$chunk
 message('Job ', job_name, '(id=', job_id, '_', job_chunk,
         " data_version=", data_version, " fit_version=", fit_version, " running on ", Sys.info()["nodename"], ")")
 
@@ -65,13 +65,13 @@ model_data$mschannels <- dplyr::select(msdata$msruns, dataset, condition, msrun,
   dplyr::filter(dataset == case_when(sel_ptm_type == "GlyGly" ~ "ubi",
                                      sel_ptm_type == "Phospho" ~ "phospho",
                                      TRUE ~ "unknown")) %>%
-  #dplyr::inner_join(dplyr::select(total_msrun_shifts.df, msrun, total_msrun_shift)) %>%
+  dplyr::inner_join(dplyr::select(total_msrun_shifts.df, msrun, total_msrun_shift)) %>%
   dplyr::arrange(condition, replicate, msrun) %>% dplyr::distinct() %>%
   dplyr::mutate(mschannel_ix = row_number(),
                 msrun_ix = as.integer(factor(msrun, levels=unique(msrun))),
                 msproto_ix = 1L,
                 zero_msrun_shift = 0L)
-experiment_shift_col <- 'zero_msrun_shift' # !!! no normalization shifts since normalized data is used
+experiment_shift_col <- 'total_msrun_shift' # !!! no normalization shifts since normalized data is used
 model_data$mschannels$model_mschannel_shift <- model_data$mschannels[[experiment_shift_col]]
 model_data$conditions <- conditions.df %>%
   mutate(condition_ix = row_number())
@@ -118,7 +118,8 @@ model_data$subobjects <- msdata.df %>%
 # entries for an interaction in all replicate experiments
 model_data$observations <- dplyr::inner_join(model_data$interactions, model_data$mschannels) %>%
   dplyr::arrange(glm_object_ix, glm_iaction_ix, mschannel_ix) %>%
-  dplyr::mutate(glm_observation_ix = seq_len(n()))
+  dplyr::mutate(glm_observation_ix = seq_len(n()),
+                observation_id = paste(msrun, object_id))
 
 model_data$msdata <- dplyr::inner_join(model_data$observations, model_data$subobjects) %>%
   dplyr::left_join(msdata.df) %>%
@@ -129,6 +130,8 @@ model_data$msdata <- mutate(model_data$msdata,
                 qdata_ix = if_else(!is.na(intensity), cumsum(!is.na(intensity)), NA_integer_),
                 mdata_ix = if_else(is.na(intensity), cumsum(is.na(intensity)), NA_integer_))
 
+msrunXeffect_orig.mtx <- msrunXeffect.mtx
+msrunXeffect.mtx <- msrunXeffect_orig.mtx[model_data$mschannels$msrun,]
 model_data <- prepare_effects(model_data, underdefined_iactions=FALSE)
 
 dims_info <- msglm.prepare_dims_info(model_data, object_cols=c('object_id', modelobj_idcol, "object_label", "ptmn_label_no_ptm_type",
