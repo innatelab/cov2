@@ -1,6 +1,6 @@
 Sys.setenv(TZ='Etc/GMT+1') # issue#612@rstan
 #job.args <- c("cov2", "ast_parsars_ptm", "snaut_parsars_ptm_20200907", "20200920", "20200920", "0", "39")
-#job.args <- c("cov2", "ast_parsars_ptm", "snaut_parsars_phospho_20201005", "20201010", "20201010", "0", "39")
+#job.args <- c("cov2", "ast_parsars_ptm", "snaut_parsars_phospho_20201005", "20201012", "20201012", "0", "39")
 if (!exists('job.args')) {
   job.args <- commandArgs(trailingOnly = TRUE)
 }
@@ -53,10 +53,10 @@ message(sel_object_ids, " ", modelobj, " ID(s): ",
 sel_ptm_type <- modelobjs_df$ptm_type[[job_chunk]]
 msdata.df <- dplyr::filter(msdata$ptmn2pepmodstate, ptmn_id %in% sel_object_ids) %>%
   dplyr::inner_join(dplyr::select(msdata$pepmodstate_intensities, pepmodstate_id, msrun,
-                                  intensity=intensity_norm, qvalue)) %>% # !!! use SN-normalized intensity as the raw intensity
+                                  intensity=intensity_norm, psm_qvalue)) %>% # !!! use SN-normalized intensity as the raw intensity
   dplyr::inner_join(dplyr::select(msdata$ptmn_locprobs, ptmn_id, ptm_locprob, pepmodstate_id, msrun)) %>%
   dplyr::inner_join(dplyr::select(msdata$msruns, msrun, condition, treatment, timepoint)) %>%
-  dplyr::filter((coalesce(qvalue, 1) <= data_info$qvalue_max) &
+  dplyr::filter((coalesce(psm_qvalue, 1) <= data_info$qvalue_max) &
                 (coalesce(ptm_locprob, 0) >= data_info$locprob_min)) %>% # filter valid PTM localization and identification probabilities
   dplyr::mutate(object_id = ptmn_id)
 message('Preparing MS GLM data...')
@@ -71,7 +71,7 @@ model_data$mschannels <- dplyr::select(msdata$msruns, dataset, condition, msrun,
                 msrun_ix = as.integer(factor(msrun, levels=unique(msrun))),
                 msproto_ix = 1L,
                 zero_msrun_shift = 0L)
-experiment_shift_col <- 'total_msrun_shift' # !!! no normalization shifts since normalized data is used
+experiment_shift_col <- 'total_msrun_shift'
 model_data$mschannels$model_mschannel_shift <- model_data$mschannels[[experiment_shift_col]]
 model_data$conditions <- conditions.df %>%
   mutate(condition_ix = row_number())
