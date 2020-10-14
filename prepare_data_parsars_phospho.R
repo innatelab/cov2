@@ -5,8 +5,10 @@
 
 project_id <- 'cov2'
 message('Project ID=', project_id)
-data_version <- "20201010"
-fit_version <- "20201010"
+data_version <- "20201012"
+fit_version <- "20201012"
+#data_version <- "20201005"
+#fit_version <- "20201005"
 msfolder <- 'snaut_parsars_phospho_20201005'
 message('Dataset version is ', data_version)
 
@@ -37,11 +39,12 @@ data_info <- list(project_id = project_id,
                   quant_type = "intensity", quant_col_prefix = "intensity",
                   qvalue_max=1E-2, qvalue_ident_max=1E-3,
                   locprob_min=0.5, locprob_ident_min=0.75,
+                  effect_damp_factor = 0.95, # how much the scale is applied to the effects that were activated X hours before
                   empty_observation_sigmoid_scale=1/3,
                   pep_quant_type = "intensity")
 
 message('Loading MS instrument calibration data from ', data_info$mscalib_protgroup_filename, '...')
-mscalib_protgroup <- fromJSON(file = file.path(data_path, data_info$mscalib_protgroup_filename))$instr_calib
+mscalib_protgroup <- fromJSON(file = file.path(data_path, data_info$mscalib_protgroup_filename))$mscalib
 mscalib_pepmodstate_json <- fromJSON(file = file.path(data_path, data_info$mscalib_pepmodstate_filename))
 mscalib_pepmodstate <- mscalib_pepmodstate_json$mscalib
 
@@ -59,7 +62,7 @@ bad_msruns <- c()
 msdata_full <- lapply(list(
   msruns = "rawfiles_info.txt",
   proteins = "proteins.txt.gz",
-  ptm_locprobs = "ptm_locprobs.txt.gz",
+  ptmn_locprobs = "ptmn_locprobs.txt.gz",
   pepmodstate_intensities = "pms_intensities.txt.gz",
   protgroups = "protgroups.txt.gz",
   peptide2protgroup = "peptide_to_protgroup.txt.gz",
@@ -93,31 +96,26 @@ msdata_full$msruns <- msdata_full$msruns %>%
 msdata_full$pepmodstate_intensities <- dplyr::inner_join(msdata_full$pepmodstate_intensities,
                                                          dplyr::select(msdata_full$msruns, dataset, msrun, msrun_ix, rawfile_ix)) %>%
   dplyr::select(-rawfile_ix) %>%
-  dplyr::mutate(ident_type = factor(ifelse(coalesce(qvalue, 1) <= data_info$qvalue_max, "MULTI-MSMS", "MULTI-MATCH"),
+  dplyr::mutate(ident_type = factor(ifelse(coalesce(psm_qvalue, 1) <= data_info$qvalue_max, "MULTI-MSMS", "MULTI-MATCH"),
                                     c("MULTI-MATCH", "MULTI-MSMS")))
-msdata_full$ptm_locprobs <- dplyr::inner_join(msdata_full$ptm_locprobs,
+msdata_full$ptmn_locprobs <- dplyr::inner_join(msdata_full$ptmn_locprobs,
                                               dplyr::select(msdata_full$msruns, dataset, msrun, msrun_ix, rawfile_ix)) %>%
   dplyr::select(-rawfile_ix)
 
-# add more properties to ptmns as it's the obect being modeled
+# add more properties to ptmns as it's the object being modeled
 msdata_full$ptmns <- msdata_full$ptmns %>%
   dplyr::left_join(dplyr::select(dplyr::filter(msdata_full$ptm2gene, ptm_is_reference), ptm_id, ptm_pos, protein_ac, is_viral, is_contaminant)) %>%
   dplyr::left_join(dplyr::select(msdata_full$proteins, gene_name=genename, protein_ac, protein_code)) %>%
   dplyr::mutate(ptmn_label_no_ptm_type = str_remove(ptmn_label, "^[^_]+_"))
 
-msdata_full$ptmn_locprobs <- dplyr::inner_join(msdata_full$ptm2gene, msdata_full$ptm_locprobs) %>%
-    dplyr::select(ptm_id, pepmodstate_id, dataset, msrun_ix, msrun, ptm_locprob) %>%
-    dplyr::distinct() %>%
-    dplyr::inner_join(msdata_full$ptmn2pepmodstate)
-
-msdata_full$ptmn_stats <- inner_join(msdata_full$ptmns, msdata_full$ptmn2pepmodstate) %>%
-  dplyr::inner_join(dplyr::select(msdata_full$pepmodstate_intensities, pepmodstate_id, dataset, msrun, intensity, qvalue)) %>%
-  dplyr::inner_join(msdata_full$ptmn_locprobs) %>%
+msdata_full$ptmn_stats <- inner_join(msdata_full$ptmns, dplyr::select(msdata_full$ptmn2pepmodstate, ptmn_id, pepmodstate_id)) %>%
+  dplyr::inner_join(dplyr::select(msdata_full$pepmodstate_intensities, evidence_id, pepmodstate_id, dataset, msrun, intensity, ident_type, psm_qvalue)) %>%
+  dplyr::inner_join(dplyr::select(msdata_full$ptmn_locprobs, ptmn_id, evidence_id, ptm_locprob)) %>%
   dplyr::mutate(is_quanted = !is.na(intensity),
-                is_idented = coalesce(qvalue, 1) <= data_info$qvalue_ident_max,
+                is_idented = coalesce(psm_qvalue, 1) <= data_info$qvalue_ident_max,
                 is_localized = coalesce(ptm_locprob, 0) >= data_info$locprob_ident_min,
                 is_valid_quant = is_quanted & coalesce(ptm_locprob, 0) >= data_info$locprob_min &
-                                 coalesce(qvalue, 1) <= data_info$qvalue_max) %>%
+                                 coalesce(psm_qvalue, 1) <= data_info$qvalue_max) %>%
   dplyr::group_by(ptmn_id, ptmn_label, ptm_id, ptm_type, dataset) %>%
   dplyr::summarise(n_quanted = sum(is_quanted),
                    n_idented = sum(is_idented),
@@ -126,7 +124,7 @@ msdata_full$ptmn_stats <- inner_join(msdata_full$ptmns, msdata_full$ptmn2pepmods
                    n_localized = sum(is_localized),
                    n_idented_and_localized = sum(is_localized & is_idented),
                    n_valid_quants = sum(is_valid_quant),
-                   pms_qvalue_min = min(qvalue, na.rm=TRUE),
+                   ptm_qvalue_min = min(psm_qvalue, na.rm=TRUE),
                    ptm_locprob_max = max(ptm_locprob, na.rm=TRUE),
                    .groups="drop")
 
@@ -172,6 +170,7 @@ msdata <- msdata_full[c('pepmodstate_intensities', 'pepmods', 'pepmodstates',
                         'msruns', 'msrun_pepmodstate_stats', 'proteins',
                         'peptide2protein', 'ptmns', 'ptm2gene', 'ptmn2pepmodstate')]
 # keep only Phospho & GlyGly
+msdata$msruns <- dplyr::filter(msdata_full$msruns, is_used)
 msdata$ptm2gene <- dplyr::filter(msdata_full$ptm2gene, ptm_type %in% c("Phospho", "GlyGly"))
 msdata$ptmns <- dplyr::semi_join(dplyr::filter(dplyr::semi_join(msdata_full$ptmns, msdata$ptm2gene), nselptms <= 3),
                                  dplyr::filter(msdata_full$ptmn_stats, n_valid_quants > 0 & n_idented_and_localized > 0))
@@ -181,8 +180,7 @@ msdata$protein2ptmn <- dplyr::inner_join(msdata$ptmns, msdata$ptm2gene)
 msdata$ptmn_locprobs <- semi_join(msdata_full$ptmn_locprobs, msdata$ptmn2pepmodstate)
 msdata$pepmodstate_intensities <- msdata_full$pepmodstate_intensities %>% filter(coalesce(qvalue, 1.0) <= data_info$qvalue_max) %>%
                                   semi_join(dplyr::select(filter(msdata$msruns, is_used), msrun)) %>%
-                                  semi_join(msdata$pepmodstates) %>%
-                                  semi_join(filter(msdata$ptmn_locprobs, coalesce(ptm_locprob, 0) >= data_info$locprob_min))
+                                  semi_join(msdata$ptmn2pepmodstate)
 # setup experimental design matrices
 conditionXeffect_orig.mtx <- model.matrix(
   formula(str_c("~ 1 + (", str_c(str_subset(colnames(conditions.df), "^after\\d+h"), collapse =" + "), ") * (infected + treatment)")),
@@ -311,7 +309,7 @@ pheatmap(contrastXmetacondition.mtx, cluster_rows=FALSE, cluster_cols=FALSE,
 ##########
 ## normalization
 msdata4norm.df <- msdata_full$pepmodstate_intensities %>% ungroup() %>%
-  dplyr::filter(!is.na(intensity_norm) & qvalue <= 1E-4) %>% 
+  dplyr::filter(!is.na(intensity_norm) & psm_qvalue <= 1E-4) %>% 
   dplyr::select(pepmodstate_id) %>% dplyr::distinct() %>%
   dplyr::inner_join(dplyr::filter(msdata_full$pepmodstates, !coalesce(is_decoy, FALSE) & str_detect(pepmodstate_seq, "Phospho|GlyGly")) %>% # select phospho or ubi pepmods
                     dplyr::select(pepmodstate_id, pepmodstate_seq, peptide_id)) %>%
@@ -319,14 +317,14 @@ msdata4norm.df <- msdata_full$pepmodstate_intensities %>% ungroup() %>%
                    dplyr::inner_join(msdata_full$peptide2protein)) %>%
   # select some representative pepmodstates from each intensity range to avoid bias by the most abundant species
   dplyr::inner_join(msdata_full$pepmodstate_intensities) %>%
-  dplyr::group_by(pepmodstate_id) %>%
+  dplyr::group_by(dataset, pepmodstate_id) %>%
   dplyr::summarise(intensity_med = median(intensity),
                    normshift_abs_max = max(abs(log2(normfactor)), na.rm=TRUE),
                    .groups="drop") %>%
   dplyr::filter(normshift_abs_max <= 2) %>%
   dplyr::mutate(intensity_med_log2 = log2(intensity_med),
                 intensity_bin = as.integer(cut(intensity_med_log2, 50))) %>%
-  dplyr::group_by(intensity_bin) %>%
+  dplyr::group_by(dataset, intensity_bin) %>%
   dplyr::slice_sample(n = 200) %>%
   dplyr::inner_join(msdata_full$pepmodstate_intensities)
 
@@ -346,8 +344,8 @@ msruns_hnorm <- multilevel_normalize_experiments(mscalib_pepmodstate,
                                                                     condition = list(cond_col="dataset_condition", max_objs=500L, missing_exp.ratio=0.2),
                                                                     timepoint = list(cond_col="dataset_timepoint", condgroup_col="dataset", max_objs=500L, missing_exp.ratio=0.3)
                                                  ))
-#saveRDS(msruns_hnorm, file.path(scratch_path, str_c(project_id, "_", msfolder, "_", fit_version, ".rds")))
-#msruns_hnorm <- readRDS(file.path(scratch_path, str_c(project_id, "_", msfolder, "_20200907.rds")))
+#saveRDS(msruns_hnorm, file.path(scratch_path, str_c(project_id, "_", msfolder, "_", fit_version, "_raw.rds")))
+#msruns_hnorm <- readRDS(file.path(scratch_path, str_c(project_id, "_", msfolder, "_", fit_version, "_raw.rds")))
 total_msrun_shifts.df <- msruns_hnorm$mschannel_shifts
 
 # compare normalizations
@@ -400,18 +398,19 @@ pepmodstate_intensities.df <- msdata_full$pepmodstate_intensities %>%
   dplyr::mutate(intensity_norm = intensity_norm*exp(-total_msrun_shift),
                 intensity_norm_log2 = log2(intensity_norm)) %>%
   inner_join(msdata_full$msruns) %>%
-  dplyr::group_by(pepmodstate_id) %>%
+  dplyr::group_by(dataset, pepmodstate_id) %>%
   dplyr::mutate(intensity_median = median(intensity_norm, na.rm=TRUE),
                 intensity_mock0h = median(intensity_norm[condition == "mock_0h"], na.rm=TRUE),
                 .groups="drop") %>%
-  dplyr::group_by(pepmodstate_id, timepoint) %>%
+  dplyr::group_by(dataset, pepmodstate_id, timepoint) %>%
   dplyr::mutate(intensity_mock = median(intensity_norm[treatment == "mock"], na.rm=TRUE),
                 intensity_infected = median(intensity_norm[treatment != "mock"], na.rm=TRUE),
                 .groups="drop") %>%
-  dplyr::group_by(pepmodstate_id, condition) %>%
+  dplyr::group_by(dataset, pepmodstate_id, condition) %>%
   dplyr::mutate(intensity_cond = median(intensity_norm, na.rm=TRUE),
                 .groups="drop") %>%
-  dplyr::mutate(intensity_cond_log2 = log2(intensity_cond),
+  dplyr::mutate(infected = treatment != "mock",
+                intensity_cond_log2 = log2(intensity_cond),
                 intensity_infected_log2 = log2(intensity_infected),
                 intensity_mock_log2 = log2(intensity_mock),
                 intensity_mock0h_log2 = log2(intensity_mock0h),
@@ -423,116 +422,110 @@ pepmodstate_intensities.df <- msdata_full$pepmodstate_intensities %>%
                 intensity_vs_mock_log2 = intensity_norm_log2 - intensity_mock_log2,
                 intensity_vs_mock0h_log2 = intensity_norm_log2 - intensity_mock0h_log2)
 
-require(broom)
-
 pepmodstate_intensities4glm.df <- pepmodstate_intensities.df %>%
-  #dplyr::semi_join(dplyr::filter(msdata_full$pepmodstates, nselptms == 1)) %>%
-  #dplyr::filter(between(intensity_vs_mock_log2, -2, 2) &
-  #              between(intensity_infected_vs_mock_log2, -2, 2)) %>%
-  dplyr::filter(treatment != "mock") %>%
-  dplyr::group_by(condition) %>%
+  dplyr::mutate(effect = if_else(infected, intensity_vs_mock_log2, intensity_vs_mock0h_log2)) %>%
+  dplyr::semi_join(dplyr::filter(msdata_full$pepmodstates, nselptms > 0)) %>%
+  #dplyr::filter(!between(intensity_vs_mock_log2, -0.25, 0.25) &
+  #              !between(intensity_infected_vs_mock_log2, -0.25, 0.25)) %>%
+  dplyr::filter(timepoint != 0) %>%
+  dplyr::group_by(dataset, infected, timepoint) %>%
   dplyr::mutate(intensity_infected_vs_mock_bin = as.integer(cut(intensity_infected_vs_mock_log2, 50))) %>%
-  dplyr::group_by(condition, intensity_infected_vs_mock_bin) %>%
-  dplyr::slice_sample(n = 500) %>%
+  dplyr::group_by(dataset, infected, timepoint, intensity_infected_vs_mock_bin) %>%
+  dplyr::slice_sample(n = 2000) %>%
   dplyr::ungroup()
 
-require(brms)
-require(broom.mixed)
-infection_scale.brm <- brm(bf(intensity_vs_mock_log2 ~ 0 + intensity_infected_vs_mock_log2:msrun, quantile=0.5),
-                           data=pepmodstate_intensities4glm.df,
-                           family=asym_laplace(link="identity"),
-                           prior=prior_string("lognormal(0, 0.25)", lb=0.5, ub=2),
-                           chains = 8,
-                           algorithm = "sampling")
-infection_scales.df <- tidy(infection_scale.brm) %>%
-  tidyr::extract(term, c("msrun"), ":msrun(.+)$", remove=FALSE) %>%
-  dplyr::inner_join(msdata_full$msruns) %>%
-  dplyr::mutate(msrun_scale = estimate,
-                msrun_scale_log2 = log2(estimate)) %>%
-  dplyr::group_by(timepoint) %>%
-  dplyr::mutate(msrun_scale_log2_median = median(msrun_scale_log2)) %>%
+pepmodstate_intensities_pairs4glm.df <- dplyr::inner_join(pepmodstate_intensities4glm.df, pepmodstate_intensities4glm.df,
+                                                          by=c("dataset", "infected", "timepoint", "pepmodstate_id")) %>%
+  dplyr::filter(msrun.x != msrun.y & !is.na(effect.x) & !is.na(effect.y)) %>%
+  dplyr::filter(!between(effect.x, -0.25, 0.25) & !between(effect.y, -0.25, 0.25))
+
+require(rstan)
+options(mc.cores=8)
+effect_scales.stanmodel <- stan_model(file.path(project_scripts_path, "ptm_scales_normalize.stan"))
+
+fit_effect_scales <- function(data_df, sigma_t_offset=1E-3, scale_sigma_df=2, data_sigma_df=16) {
+  data_df <- mutate(data_df,
+                    msrun.x = factor(msrun.x),
+                    msrun.y = factor(msrun.y, levels=levels(msrun.x)),
+                    msrun_ix.x = as.integer(msrun.x),
+                    msrun_ix.y = as.integer(msrun.y))
+
+  effect_scales.data <- list(Nmsruns = n_distinct(data_df$msrun.x),
+                             NeffectPairs = nrow(data_df),
+                             effect_x = data_df$effect.x,
+                             effect_y = data_df$effect.y,
+                             msrun_x = data_df$msrun_ix.x,
+                             msrun_y = data_df$msrun_ix.y,
+                             sigma_t_offset = sigma_t_offset,
+                             scale_sigma_df = scale_sigma_df,
+                             data_sigma_df = data_sigma_df)
+  effect_scales.stanfit <- sampling(effect_scales.stanmodel, data = effect_scales.data, chains = 8, iter=2000,
+                                    pars=c("data_sigma", "scale_sigma", "scale_log", "scale_mult"))
+  effect_scales.mon <- monitor(effect_scales.stanfit)
+  mutate(as.data.frame(effect_scales.mon),
+         var_expr = rownames(effect_scales.mon)) %>%
+    tidyr::extract(var_expr, c("var", "msrun_ix"), "^(\\w+)(?:\\[(\\d+)\\])?$", remove=FALSE, convert=TRUE) %>%
+    dplyr::mutate(msrun = levels(data_df$msrun.x)[msrun_ix])
+}
+
+effect_scales_fit.df <- pepmodstate_intensities_pairs4glm.df %>%
+group_by(dataset, infected, timepoint) %>%
+dplyr::group_modify(~{
+  message("Normalizing infection effect scales ", .y$dataset, " dataset,",
+          " infected=", .y$infected,
+          " timepoint=", .y$timepoint,
+          " (", nrow(.x), " effect pair(s))...")
+  fit_effect_scales(.x)
+})
+#saveRDS(effect_scales_fit.df, file.path(scratch_path, str_c(project_id, "_", msfolder, "_", fit_version, "_effect_scales.rds")))
+
+effect_scales.df <- dplyr::transmute(dplyr::filter(effect_scales_fit.df, var=="scale_log"),
+                                     dataset, timepoint, infected, msrun,
+                                     msrun_scale_log2=`50%`/log(2), msrun_scale_log2_sd=sd/log(2), n_eff, Rhat) %>%
+  dplyr::inner_join(dplyr::select(msdata_full$msruns, msrun, condition, treatment)) %>%
+  dplyr::group_by(infected, timepoint) %>%
+  dplyr::mutate(msrun_scale=2^msrun_scale_log2,
+                msrun_scale_log2_median = median(msrun_scale_log2),
+                msrun_scale_avg = mean(msrun_scale)) %>%
   dplyr::ungroup() %>%
-  dplyr::mutate(msrun_scale_norm = pmin(1.33, pmax(0.75, 2^(msrun_scale_log2 - msrun_scale_log2_median))),
-                msrun_short = str_remove(msrun, "phospho_SARS_"),
+  dplyr::mutate(scale_kind = if_else(infected, "infection_scale", "mock_scale"),
+                #msrun_scale_norm = pmin(2, pmax(0.5, 2^(msrun_scale_log2 - msrun_scale_log2_median))),
+                msrun_scale_norm = msrun_scale/msrun_scale_avg,
+                msrun_short = str_remove(msrun, "phospho_(SARS_)?"),
                 msrun_scale_label = sprintf("%.2f", msrun_scale_norm))
 
-infection_scales_plot <- ggplot(infection_scales.df,
-                                aes(x = msrun_short, y = msrun_scale_norm, color=treatment, fill=treatment)) +
+effect_scales_plot <- ggplot(effect_scales.df,
+                             aes(x = msrun_short, y = msrun_scale_norm, color=treatment, fill=treatment)) +
   geom_bar(stat="identity") +
-  geom_text(data = filter(infection_scales.df, msrun_scale_norm >= 1), aes(label = msrun_scale_label), size=3, vjust = -0.3) +
-  geom_text(data = filter(infection_scales.df, msrun_scale_norm < 1), aes(label = msrun_scale_label), size=3, vjust = 1.3) +
+  geom_text(data = filter(effect_scales.df, msrun_scale_norm >= 1), aes(label = msrun_scale_label), size=3, vjust = -0.3) +
+  geom_text(data = filter(effect_scales.df, msrun_scale_norm < 1), aes(label = msrun_scale_label), size=3, vjust = 1.3) +
   scale_fill_manual(values=treatment_palette) + scale_color_manual(values=treatment_palette) +
   scale_y_log10() +
   facet_wrap(~ timepoint, scales="free_x", ncol=2) +
   theme_bw_ast() +
   theme(axis.text.x = element_text(angle = -45, hjust=0))
-ggsave(infection_scales_plot, file = file.path(analysis_path, "plots", str_c(msfolder, '_', fit_version),
-                                               str_c(project_id, "_", msfolder, '_', fit_version, "_infection_scales.pdf")),
-       width=8, height=8, device = cairo_pdf)
-
-pepmodstate_intensities4mock_glm.df <- pepmodstate_intensities.df %>%
-  #dplyr::semi_join(dplyr::filter(msdata_full$pepmodstates, nselptms == 1)) %>%
-  #dplyr::filter(between(intensity_vs_mock0h_log2, -2, 2) &
-  #                between(intensity_cond_vs_mock0h_log2, -2, 2)) %>%
-  dplyr::filter(treatment == "mock") %>%
-  dplyr::group_by(condition) %>%
-  dplyr::mutate(intensity_infected_vs_mock_bin = as.integer(cut(intensity_cond_vs_mock0h_log2, 50))) %>%
-  dplyr::group_by(condition, intensity_infected_vs_mock_bin) %>%
-  dplyr::slice_sample(n = 500) %>%
-  dplyr::ungroup()
-
-mock_scale.brm <- brm(bf(intensity_vs_mock0h_log2 ~ 0 + intensity_cond_vs_mock0h_log2:msrun, quantile=0.5),
-                      data=pepmodstate_intensities4mock_glm.df,
-                      family=asym_laplace(link="identity"),
-                      prior=prior_string("lognormal(0, 0.25)", lb=0.5, ub=2),
-                      chains = 8,
-                      algorithm = "sampling")
-mock_scales.df <- tidy(mock_scale.brm) %>%
-  tidyr::extract(term, c("msrun"), ":msrun(.+)$", remove=FALSE) %>%
-  dplyr::inner_join(msdata_full$msruns) %>%
-  dplyr::mutate(msrun_scale = estimate,
-                msrun_scale_log2 = log2(estimate)) %>%
-  dplyr::group_by(timepoint) %>%
-  dplyr::mutate(msrun_scale_log2_median = median(msrun_scale_log2)) %>%
-  dplyr::ungroup() %>%
-  dplyr::mutate(msrun_scale_norm = 2^(msrun_scale_log2 - msrun_scale_log2_median),
-                msrun_short = str_remove(msrun, "phospho_"),
-                msrun_scale_label = sprintf("%.2f", msrun_scale_norm))
-
-mock_scales_plot <- ggplot(mock_scales.df %>% dplyr::filter(condition != "mock_0h"),
-                           aes(x = msrun_short, y = msrun_scale_norm, color=treatment, fill=treatment)) +
-  geom_bar(stat="identity") +
-  geom_text(data = filter(mock_scales.df, condition != "mock_0h" & msrun_scale_norm >= 1), aes(label = msrun_scale_label), size=3, vjust = -0.3) +
-  geom_text(data = filter(mock_scales.df, condition != "mock_0h" & msrun_scale_norm < 1), aes(label = msrun_scale_label), size=3, vjust = 1.3) +
-  scale_fill_manual(values=treatment_palette) + scale_color_manual(values=treatment_palette) +
-  scale_y_log10() +
-  facet_wrap(~ timepoint, scales="free_x", ncol=2) +
-  theme_bw_ast() +
-  theme(axis.text.x = element_text(angle = -45, hjust=0))
-mock_scales_plot
-ggsave(mock_scales_plot, file = file.path(analysis_path, "plots", str_c(msfolder, '_', fit_version),
-                                          str_c(project_id, "_", msfolder, '_', fit_version, "_mock_scales.pdf")),
-       width=8, height=8, device = cairo_pdf)
-
-# how much the scale is applied to the effects that were activated X hours before
-damp_factor <- 0.95
+effect_scales_plot
+ggsave(effect_scales_plot, file = file.path(plots_path,
+                                            str_c(project_id, "_", msfolder, '_', fit_version, "_effect_scales.pdf")),
+       width=10, height=8, device = cairo_pdf)
 
 msrunXeffect.df <- inner_join(conditionXeffect.df, msdata$msruns) %>%
   dplyr::inner_join(dplyr::transmute(effects.df, effect, effect_timepoint = parse_number(as.character(timepoint)), infected, strain)) %>%
-  dplyr::left_join(bind_rows(dplyr::transmute(mock_scales.df, msrun, msrun_scale=msrun_scale_norm, scale_kind="mock_scale"),
-                             dplyr::transmute(infection_scales.df, msrun, msrun_scale=msrun_scale_norm, scale_kind="infection_scale"))) %>%
+  dplyr::left_join(dplyr::select(effect_scales.df, msrun, msrun_scale=msrun_scale_norm, scale_kind)) %>%
   dplyr::mutate(delta_time = timepoint_num - effect_timepoint,
-                scale_scale = damp_factor^delta_time,
+                scale_scale = data_info$effect_damp_factor^delta_time,
                 scaled_mult = mult * case_when(((!is.na(infected) | !is.na(strain)) & scale_kind == "infection_scale") |
                                                (is.na(infected) & is.na(strain) & scale_kind == "mock_scale") ~ 1 - (1 - msrun_scale) * scale_scale,
                                                TRUE ~ 1.0))
-msrunXeffect_wide.df <- pivot_wider(bind_rows(msrunXeffect.df, tibble(msrun = setdiff(msdata_full$msruns$msrun, msrunXeffect.df$msrun),
-                                                                      effect="tmp_intercept", scaled_mult = 0)),
-                                    msrun, values_from = scaled_mult, names_from = effect, values_fill = 0) %>%
-  dplyr::select(-tmp_intercept)
+msrunXeffect_wide.df <- bind_rows(msrunXeffect.df,
+                                  tibble(msrun = setdiff(msdata_full$msruns$msrun, msrunXeffect.df$msrun),
+                                         effect="tmp_intercept", scaled_mult = 0)) %>%
+  dplyr::mutate(msrun = factor(msrun, levels=levels(msdata_full$msruns$msrun))) %>%
+  pivot_wider(msrun, values_from = scaled_mult, names_from = effect, values_fill = 0) %>%
+  dplyr::select(-tmp_intercept) %>%
+  dplyr::arrange(msrun)
 msrunXeffect.mtx <- as.matrix(dplyr::select(msrunXeffect_wide.df, -msrun))
 rownames(msrunXeffect.mtx) <- msrunXeffect_wide.df$msrun
-msrunXeffect.mtx <- msrunXeffect.mtx[msdata_full$msruns$msrun, ]
 
 pheatmap(msrunXeffect.mtx, cluster_rows=FALSE, cluster_cols=FALSE, display_numbers = TRUE, number_format = "%.3f",
          filename = file.path(plots_path, paste0(project_id, "_msrun_exp_design_", msfolder, "_", fit_version, ".pdf")),
@@ -544,7 +537,7 @@ save(data_info, msdata,
      conditions.df, effects.df, contrasts.df,
      conditionXeffect.mtx, conditionXeffect.df,
      msrunXeffect.mtx, msrunXeffect.df,
-     infection_scales.df, mock_scales.df, damp_factor,
+     effect_scales_fit.df, effect_scales.df,
      conditionXmetacondition.mtx, conditionXmetacondition.df,
      contrastXmetacondition.mtx, contrastXmetacondition.df, contrastXcondition.df,
      mscalib_pepmodstate,
@@ -634,7 +627,7 @@ pheatmap(viral_intensities.mtx, cluster_cols=FALSE, cluster_rows=FALSE,
 
 msdata_full$pepmodstate_intensities_all <- tidyr::expand(msdata_full$pepmodstate_intensities,
                                                          pepmodstate_id, msrun) %>%
-  left_join(dplyr::select(msdata_full$pepmodstate_intensities, pepmodstate_id, msrun, intensity, intensity_norm, qvalue)) %>%
+  left_join(dplyr::select(msdata_full$pepmodstate_intensities, pepmodstate_id, msrun, intensity, intensity_norm, psm_qvalue)) %>%
   impute_intensities(msdata_full$msrun_stats) %>%
   #dplyr::mutate(total_msrun_shift=0) %>%
   dplyr::left_join(dplyr::select(total_msrun_shifts.df, msrun, total_msrun_shift)) %>%
@@ -651,7 +644,7 @@ pepmodstate_intensities4pca.df <- msdata_full$pepmodstate_intensities_all %>%
   dplyr::semi_join(dplyr::select(dplyr::filter(msdata_full$msruns, is_used), msrun)) %>%
   dplyr::arrange(msrun, protgroup_id, pepmodstate_id)
 
-pepmodstate_intensities.mtx <- matrix(log2(if_else(pepmodstate_intensities4pca.df$qvalue <= 1E+4,
+pepmodstate_intensities.mtx <- matrix(log2(if_else(pepmodstate_intensities4pca.df$psm_qvalue <= 1E+4,
                                                    pepmodstate_intensities4pca.df$intensity_norm,
                                                    NA_real_)),
                                       nrow = n_distinct(pepmodstate_intensities4pca.df$pepmodstate_id),
@@ -795,7 +788,7 @@ shared_cov_msdata.df <- dplyr::select(shared_cov_peptides.df, gene_name, peptide
   dplyr::inner_join(dplyr::select(msdata_full$msruns, msrun, treatment, timepoint, timepoint_num, replicate))
 
 shared_cov_msdata_wide.df <- pivot_wider(shared_cov_msdata.df, c(gene_name, pepmodstate_id, peptide_id, timepoint, timepoint_num, replicate),
-                                         names_from = treatment, values_from = c(intensity_norm, qvalue)) %>%
+                                         names_from = treatment, values_from = c(intensity_norm, psm_qvalue)) %>%
   dplyr::mutate(log2_ratio.CoV2_vs_SARS = log2(intensity_norm_SARS_CoV2) - log2(intensity_norm_SARS_CoV))
 
 p <- ggplot(dplyr::filter(shared_cov_msdata_wide.df, abs(log2_ratio.CoV2_vs_SARS) <= 5),
