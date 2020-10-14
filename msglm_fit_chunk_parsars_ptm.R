@@ -130,8 +130,6 @@ model_data$msdata <- mutate(model_data$msdata,
                 qdata_ix = if_else(!is.na(intensity), cumsum(!is.na(intensity)), NA_integer_),
                 mdata_ix = if_else(is.na(intensity), cumsum(is.na(intensity)), NA_integer_))
 
-msrunXeffect_orig.mtx <- msrunXeffect.mtx
-msrunXeffect.mtx <- msrunXeffect_orig.mtx[model_data$mschannels$msrun,]
 model_data <- prepare_effects(model_data, underdefined_iactions=FALSE)
 
 dims_info <- msglm.prepare_dims_info(model_data, object_cols=c('object_id', modelobj_idcol, "object_label", "ptmn_label_no_ptm_type",
