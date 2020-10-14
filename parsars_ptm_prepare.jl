@@ -1,5 +1,5 @@
 proj_info = (id = "cov2",
-             data_ver = "20200929",
+             data_ver = "20201012",
              msfolder = "snaut_parsars_ptm_20200907",
              ptm_locprob_min = 0.75,
              )
@@ -16,14 +16,14 @@ const plots_path = joinpath(analysis_path, "plots")
 
 Revise.includet(joinpath(misc_scripts_path, "delimdata_utils.jl"));
 Revise.includet(joinpath(misc_scripts_path, "frame_utils.jl"));
-Revise.includet(joinpath(misc_scripts_path, "spectronaut_utils.jl"));
+Revise.includet(joinpath(misc_scripts_path, "ms_import.jl"));
 Revise.includet(joinpath(misc_scripts_path, "fasta_reader.jl"));
 Revise.includet(joinpath(misc_scripts_path, "ptm_extractor.jl"));
 Revise.includet(joinpath(misc_scripts_path, "phosphositeplus_reader.jl"));
 
 # read direct Spectronaut output
 pmsreports = Dict(name => begin
-    report_df, colgroups = SpectronautUtils.read_report(joinpath(data_path, proj_info.msfolder, filename),
+    report_df, colgroups = MSImport.Spectronaut.read_report(joinpath(data_path, proj_info.msfolder, filename),
             import_data=[:protgroup, :peptide, :pepmodstate, :quantity, :metrics], delim=',')
     (data = report_df, colgroups = colgroups)
 end for (name, filename) in [(:phospho, "phospho/COVID_phospho_EG level.csv"),
@@ -40,7 +40,7 @@ samples_df = CSV.read(joinpath(data_path, proj_info.msfolder, "msruns_info.txt")
 samples_df.treatment = levels!(categorical(samples_df.treatment), ["mock", "SARS_CoV2", "SARS_CoV"])
 
 rawfiles_df = vcat([begin
-    df = select!(SpectronautUtils.metrics_colinfo(last.(report.colgroups[:quantity])), [:rawfile_ix, :rawfile]) |> unique!
+    df = select!(MSImport.Spectronaut.metrics_colinfo(last.(report.colgroups[:quantity])), [:rawfile_ix, :rawfile]) |> unique!
     df[!, :dataset] .= dsname
     df.msrun_ix = [begin
             m = match(r"_(\d+)(?:_\d+)?\.raw$", fname)
@@ -99,8 +99,9 @@ peptide2protgroups_df.peptide_id = FrameUtils.indexunique(peptide2protgroups_df.
 peptides_df = sort!(unique(select(peptide2protgroups_df, [:peptide_id, :peptide_seq], copycols=false)), :peptide_id)
 # global pepmods
 pepmodstates_df = vcat([begin
-    df = innerjoin(unique(report.data[!, [last.(report.colgroups[:pepmodstate]); ["peptide_seq"]]]),
-                   peptides_df, on=:peptide_seq)
+    pms_prop_df = select(report.data, [last.(report.colgroups[:pepmodstate]); ["peptide_seq"]])
+    pms_prop_df.is_decoy = coalesce.(pms_prop_df.is_decoy, false)
+    df = innerjoin(unique(pms_prop_df), peptides_df, on=:peptide_seq)
     select!(df, Not([:peptide_seq, :pepmodstate_id]))
 end for (dsname, report) in pairs(pmsreports)]...) |> unique!
 pepmodstates_df.pepmodstate_id = FrameUtils.indexunique(pepmodstates_df.pepmodstate_seq)
@@ -119,11 +120,11 @@ protein2protgroup_df = DelimDataUtils.expand_delim_column(protgroups_df, list_co
 #peptide2protein_df = PTMExtractor.peptide_matches(peptide2protgroups_df)
 peptide2protein_df = PTMExtractor.match_peptides(peptide2protgroups_df, protein_seqs)
 
-ptm2pms_df, pms_ptms_stats_df = PTMExtractor.extract_ptms(pepmodstates_df, objid_col=:pepmodstate_id, selptms=r"Phospho|GlyGly")
+ptm2pms_df, pms_ptms_stats_df = PTMExtractor.extract_ptms(pepmodstates_df, format=:spectronaut, objid_col=:pepmodstate_id, selptms=r"Phospho|GlyGly")
+filter!(r -> !in(r.ptm_AAs, ["Protein N-term", "Protein C-term"]), ptm2pms_df)
 ptm2pms_df = innerjoin(unique!(ptm2pms_df), select(pepmodstates_df, [:pepmodstate_id, :peptide_id], copycols=false),
                        on=:pepmodstate_id) |> unique!
-select!(ptm2pms_df, Not(:peptide_seq))
-sort!(ptm2pms_df, [:pepmodstate_id, :ptm_offset])
+sort!(select!(ptm2pms_df, Not(:peptide_seq)), [:pepmodstate_id, :ptm_offset])
 pepmodstates_df = innerjoin(pepmodstates_df, pms_ptms_stats_df, on=:pepmodstate_id)
 ptm2pms2protein_df = innerjoin(ptm2pms_df, peptide2protein_df, on=:peptide_id)
 ptm2pms2protein_df.ptm_pos = ptm2pms2protein_df.peptide_pos .+ ptm2pms2protein_df.ptm_offset
@@ -144,12 +145,11 @@ ptm2gene_df = PTMExtractor.group_aaobjs(ptm2protein_df, proteins_df,
                                         obj_prefix=:ptm_, objid_col=[:ptm_type, :ptm_pos, :ptm_AA_seq],
                                         force_refseqs=true, verbose=true)
 ptm2gene_df.flanking_15AAs = PTMExtractor.flanking_sequence.(getindex.(Ref(protein_seqs), ptm2gene_df.protein_ac), ptm2gene_df.ptm_pos, flanklen=15)
-ptm2protein_df2 = leftjoin(ptm2protein_df, unique!(select(ptm2gene_df, [:ptm_id, :genename, :is_viral, :is_contaminant, :ptm_pos, :ptm_AA_seq])),
-                           on=[:genename, :is_viral, :is_contaminant, :ptm_pos, :ptm_AA_seq])
+ptm2protein_df2 = leftjoin(ptm2protein_df, unique!(select(ptm2gene_df, [:ptm_id, :protein_ac, :ptm_pos, :ptm_AA_seq])),
+                           on=[:protein_ac, :ptm_pos, :ptm_AA_seq])
 @assert nrow(ptm2protein_df)==nrow(ptm2protein_df2)
 ptm2protein_df = ptm2protein_df2
 
-filter(r -> coalesce(r.genename, "") == "SYNPO", ptm2gene_df)
 filter(r -> r.ptm_is_reference && coalesce(r.is_viral, false), ptm2gene_df) |> print
 countmap(filter(r -> r.ptm_is_reference, ptm2gene_df).ptm_type)
 
@@ -159,34 +159,40 @@ ptmn2pms_df = innerjoin(select!(innerjoin(
         [:ptm_id, :ptm_label, :ptm_type, :pepmodstate_id]) |> unique!,
         select(pepmodstates_df, [:pepmodstate_id, :nselptms], copycols=false), on=:pepmodstate_id)
 ptmns_df = unique!(select(ptmn2pms_df, [:ptm_id, :ptm_label, :ptm_type, :nselptms]))
-sort!(ptmns_df, [:ptm_id, :nselptms])
+sort!(ptmns_df, [:ptm_type, :ptm_id, :nselptms])
 ptmns_df.ptmn_id = 1:nrow(ptmns_df)
 ptmns_df.ptmn_label = categorical(ptmns_df.ptm_label .* "_M" .* string.(ptmns_df.nselptms))
 ptmn2pms_df = innerjoin(ptmn2pms_df, select(ptmns_df, Not(:ptm_label), copycols=false), on=[:ptm_id, :ptm_type, :nselptms])
 select!(ptmn2pms_df, Not([:ptm_type, :nselptms]))
 sort!(ptmn2pms_df, [:ptmn_id, :pepmodstate_id])
 
+ptmn2pms2protein_df = innerjoin(innerjoin(ptm2pms2protein_df, ptm2protein_df, on=[:protein_ac, :ptm_type, :ptm_pos, :ptm_AAs, :ptm_AA_seq]),
+                                ptmn2pms_df, on=[:pepmodstate_id, :ptm_id])
+ptmn2pms_df = disallowmissing!(unique!(select(ptmn2pms2protein_df, [:ptmn_id, :ptm_id, :pepmodstate_id, :peptide_id, :ptm_offset])))
+
 print(countmap(collect(values(countmap(ptmn2pms_df.pepmodstate_id)))))
-print(countmap(collect(values(countmap(filter(r -> r.nptms == 1, ptmn2pms_df).ptmn_id)))))
+print(countmap(collect(values(countmap(filter(r -> r.nselptms == 1, ptmns_df).ptmn_id)))))
 
 print(filter(p -> p[2] >= 5, pairs(countmap(ptmn2pms_df.ptmn_id))))
 print(innerjoin(filter(r -> r.ptm_id == "Phospho_MARCKS_S170", ptmn2pms_df), pepmodstates_df, on=:pepmodstate_id))
 
 pms_intensities_df = vcat([begin
-    df = SpectronautUtils.pivot_longer(report.data, [:pepmodstate_id, :pepmod_seq])
+    df = MSImport.Spectronaut.pivot_longer(report.data, [:pepmodstate_id, :pepmod_seq])
     df[!, :dataset] .= dsname
     df
 end for (dsname, report) in pmsreports]...)
-rename!(pms_intensities_df, :EG_normfactor => :normfactor, :EG_intensity => :intensity_norm, :EG_qvalue => :qvalue)
+rename!(pms_intensities_df, :EG_normfactor => :normfactor, :EG_intensity => :intensity_norm, :EG_qvalue => :psm_qvalue)
+pms_intensities_df = innerjoin(pms_intensities_df, select(pepmodstates_df, [:pepmodstate_id, :peptide_id], copycols=false), on=:pepmodstate_id)
+pms_intensities_df.evidence_id = 1:nrow(pms_intensities_df)
 pms_intensities_df.intensity = pms_intensities_df.intensity_norm ./ pms_intensities_df.normfactor
 
-ptm_locprobs_df = PTMExtractor.extract_ptm_locprobs(pms_intensities_df, modseq_col=:pepmod_seq, msrun_col=[:dataset, :rawfile_ix])
-ptm_locprobs_df = innerjoin(innerjoin(ptm_locprobs_df, select(pepmodstates_df, [:pepmodstate_id, :peptide_id], copycols=false), on=:pepmodstate_id),
-                            peptide2protein_df, on=:peptide_id)
-ptm_locprobs_df.ptm_pos = ptm_locprobs_df.ptm_offset .+ ptm_locprobs_df.peptide_pos
-countmap(collect(zip(ptm_locprobs_df.dataset, coalesce.(ptm_locprobs_df.ptm_locprob, 0.0) .>= proj_info.ptm_locprob_min)))
-ptm_locprobs_df
-
+ptm2pms_locprobs_df = PTMExtractor.extract_ptm_locprobs(pms_intensities_df, format=:spectronaut, modseq_col=:pepmod_seq, msrun_col=:rawfile_ix)
+ptm2pms_locprobs_df.evidence_id = pms_intensities_df.evidence_id[ptm2pms_locprobs_df.report_ix]
+ptm2pms_locprobs_df.peptide_id = pms_intensities_df.peptide_id[ptm2pms_locprobs_df.report_ix]
+FrameUtils.matchcategoricals!(ptm2pms_locprobs_df, ptmns_df)
+ptmn_locprobs_df = innerjoin(ptm2pms_locprobs_df, ptmn2pms_df,
+                             on=intersect(names(ptm2pms_locprobs_df), names(ptmn2pms_df)))
+unique!(select!(ptmn_locprobs_df, Not([:report_ix, :ptm_offset])))
 # strip rows/cols that are no longer required
 filter!(r -> !ismissing(r.intensity), select!(pms_intensities_df, Not([:pepmod_seq, :EG_locprob_seq])))
 
@@ -195,7 +201,7 @@ output_path = joinpath(data_path, proj_info.msfolder, "ptm_extractor_$(proj_info
 isdir(output_path) || mkdir(output_path)
 for (fname, df) in ["rawfiles_info.txt" => msruns_df,
                     "proteins.txt.gz" => proteins_df,
-                    "ptm_locprobs.txt.gz" => ptm_locprobs_df,
+                    "ptmn_locprobs.txt.gz" => ptmn_locprobs_df,
                     "pms_intensities.txt.gz" => pms_intensities_df,
                     "protgroups.txt.gz" => protgroups_df,
                     "peptide_to_protgroup.txt.gz" => peptide2protgroups_df,
@@ -247,7 +253,7 @@ using DataFrames, BioAlignments
 
 viral_ptm2protein_all_df = PTMExtractor.ptmsites(filter(r -> r.is_viral, proteins_df), ["Phospho" => "STY", "GlyGly" => "K"])
 FrameUtils.matchcategoricals!(viral_ptm2protein_all_df, ptm2protein_df, cols=[:ptm_type, :ptm_AAs])
-CSV.write(joinpath(output_path, "viral_ptms_all_20200929.txt"), viral_ptm2protein_all_df, delim='\t')
+CSV.write(joinpath(output_path, "viral_ptms_all_$(proj_info.data_ver).txt"), viral_ptm2protein_all_df, delim='\t')
 
 viral_ptm2protein_all_df = leftjoin(viral_ptm2protein_all_df,
         setindex!(select(filter(r -> r.is_viral, ptm2protein_df), names(viral_ptm2protein_all_df)), true, :, :is_observed),
@@ -280,7 +286,7 @@ filter!(r -> !ismissing(r.hom_ptm_pos) &&
              coalesce(r.agn_match_ratio, 0.0) >= 0.5
              , viral_ptm2ptm_df)
 select!(viral_ptm2ptm_df, Not([:is_viral, :srcseq_ix, :destseq_ix]))
-CSV.write(joinpath(output_path, "viral_ptm2ptm_20200929_all.txt"), viral_ptm2ptm_df, delim='\t')
+CSV.write(joinpath(output_path, "viral_ptm2ptm_$(proj_info.data_ver)_all.txt"), viral_ptm2ptm_df, delim='\t')
 select(viral_ptm2ptm_df, Not([:organism, :hom_organism]))
 filter!(r -> (coalesce(r.is_observed, false) || coalesce(r.hom_is_observed, false)), viral_ptm2ptm_df)
-CSV.write(joinpath(output_path, "viral_ptm2ptm_20200929.txt"), viral_ptm2ptm_df, delim='\t')
+CSV.write(joinpath(output_path, "viral_ptm2ptm_$(proj_info.data_ver).txt"), viral_ptm2ptm_df, delim='\t')
