@@ -5,11 +5,14 @@
 
 project_id <- 'cov2'
 message('Project ID=', project_id)
-#data_version <- "20200929"
-#fit_version <- "20200929"
+#data_version <- "20201012"
+#fit_version <- "20201012"
 #msfolder <- 'snaut_parsars_ptm_20200907'
-data_version <- "20201005"
-fit_version <- "20201005"
+#data_version <- "20201007"
+#fit_version <- "20201007"
+#msfolder <- 'mq_pho_dda_20201006'
+data_version <- "20201012"
+fit_version <- "20201012"
 msfolder <- 'snaut_parsars_phospho_20201005'
 
 message("Assembling fit results for project ", project_id,
@@ -29,8 +32,8 @@ require(stringr)
 require(maxquantUtils)
 
 message('Loading data...')
-load(file.path(scratch_path, str_c(project_id, '_msglm_data_', msfolder, '_', data_version, '.RData')))
 load(file.path(scratch_path, str_c(project_id, '_msdata_full_', msfolder, '_', data_version, '.RData')))
+load(file.path(scratch_path, str_c(project_id, '_msglm_data_', msfolder, '_', data_version, '.RData')))
 
 modelobj <- "ptmn"
 quantobj <- "pepmodstate"
@@ -54,7 +57,7 @@ fit_files.df[sort(c(id_range_breaks, id_range_breaks+1L)), ]
 
 write_lines(setdiff(1:nrow(modelobjs_df), 
                     fit_files.df$chunk_id),
-            path=file.path(scratch_path, str_c(project_id, "_", msfolder, '_', fit_version, "_pending_chunk_ids")))
+            file=file.path(scratch_path, str_c(project_id, "_", msfolder, '_', fit_version, "_pending_chunk_ids")))
 
 #load(file.path(fit_path, fit_files[1]))
 
@@ -81,12 +84,13 @@ names(fit_contrasts) <- names(fit_reports[[1]]$msglm_results)
 
 rm(fit_reports)
 
-iactions.df <- expand(msdata_full$pepmodstate_intensities, msrun, pepmodstate_id) %>%
+iactions.df <- expand(fit_stats$iactions, ptmn_id, condition) %>%
+  dplyr::inner_join(msdata$msruns) %>%
+  dplyr::inner_join(msdata_full$ptmn2pepmodstate) %>%
   dplyr::left_join(msdata_full$pepmodstate_intensities) %>%
   dplyr::mutate(is_quanted = !is.na(intensity),
-                is_idented = coalesce(qvalue, 1) <= data_info$qvalue_max) %>%
-  dplyr::inner_join(msdata$msruns) %>%
-  dplyr::left_join(filter(msdata$ptmn2pepmodstate, TRUE)) %>%
+                is_idented = coalesce(psm_qvalue, 1) <= data_info$qvalue_max) %>%
+                #is_idented = coalesce(psm_pvalue, 1) <= data_info$pvalue_max) %>%
   dplyr::group_by(condition, ptmn_id) %>%
   dplyr::summarize(nmsruns_quanted = n_distinct(msrun[is_idented]), # count msruns
                    nmsruns_idented = n_distinct(msrun[is_quanted])) %>%
@@ -249,15 +253,12 @@ save(results_info, fit_stats, fit_contrasts,
      file = rfit_filepath)
 message('Done.')
 
-ptm_report_cols <- c("ptm_type", "ptmn_label", "object_id", "gene_name",
+ptm_report_cols <- c("ptm_type", "ptmn_label", "ptm_site", "object_id", "gene_name",
                      "protein_ac", "protein_code", "protein_description",
                      "is_contaminant", "is_viral",
                      "ptm_pos", "ptm_AA", "flanking_15AAs")
-object_contrasts_report.df <- dplyr::left_join(modelobjs_df, dplyr::select(msdata_full$proteins, protein_ac, protein_description = protein_name)) %>%
-  dplyr::left_join(msdata_full$ptm2gene) %>%
-  dplyr::rename(ptm_AA = ptm_AA_seq) %>%
-  dplyr::select(any_of(ptm_report_cols)) %>%
-  dplyr::left_join(filter(object_contrasts.df, contrast_kind=="treatment_vs_treatment" & treatment_lhs != "infected") %>%
+
+pre_object_contrasts_report.df <- filter(object_contrasts.df, contrast_kind=="treatment_vs_treatment" & treatment_lhs != "infected") %>%
   dplyr::select(ptmn_id, object_id, std_type, contrast, timepoint=timepoint_lhs,
                 median_log2, mean_log2, sd_log2, any_of(c("prob_nonpos", "prob_nonneg", "p_value")),
                 is_signif, is_hit_nomschecks, is_hit, change) %>%
@@ -265,9 +266,18 @@ object_contrasts_report.df <- dplyr::left_join(modelobjs_df, dplyr::select(msdat
   dplyr::left_join(ptm2protregroup.df) %>%
   dplyr::left_join(dplyr::select(fp.env$object_contrasts.df,
                                  protregroup_id, std_type, contrast, timepoint=timepoint_lhs,
-                                 fp_median_log2=median_log2, fp_p_value=p_value, fp_change=change))%>%
-  pivot_wider(c(std_type, object_id, protregroup_id),
-              names_from = "contrast", values_from = c("is_hit", "change", "fp_change", "median_log2", "fp_median_log2", "p_value", "fp_p_value", "sd_log2"), names_sep=".")) %>%
+                                 fp_median_log2=median_log2, fp_p_value=p_value, fp_change=change))
+
+objects4report.df <- dplyr::left_join(modelobjs_df, dplyr::select(msdata_full$proteins, protein_ac, protein_description = protein_name)) %>%
+  dplyr::left_join(dplyr::select(dplyr::filter(msdata_full$ptm2gene, ptm_is_reference), ptm_id, ptm_AA = ptm_AA_seq, flanking_15AAs) %>% distinct()) %>%
+  dplyr::mutate(ptm_site = str_c(ptm_AA, ptm_pos)) %>%
+  dplyr::select(any_of(ptm_report_cols))
+
+object_contrasts_report.df <- objects4report.df %>%
+  dplyr::left_join(pivot_wider(pre_object_contrasts_report.df, c(std_type, object_id, protregroup_id),
+                               names_from = "contrast",
+                               values_from = c("is_hit", "change", "fp_change", "median_log2", "fp_median_log2", "p_value", "fp_p_value", "sd_log2"),
+                               names_sep=".")) %>%
   dplyr::select(any_of(ptm_report_cols), std_type, fp_protregroup_id=protregroup_id,
                 #kinase_gene_names, reg_function, reg_prot_iactions, reg_other_iactions, reg_pubmed_ids,
                 ends_with("SARS_CoV2@6h_vs_mock@6h"), ends_with("SARS_CoV@6h_vs_mock@6h"), ends_with("SARS_CoV2@6h_vs_SARS_CoV@6h"),
@@ -280,4 +290,12 @@ write_tsv(filter(object_contrasts_report.df, std_type == "replicate") %>% dplyr:
           file.path(analysis_path, "reports", paste0(project_id, '_', msfolder, '_contrasts_report_', fit_version, '_replicate_wide.txt')))
 write_tsv(filter(object_contrasts_report.df, std_type == "median") %>% dplyr::select(-std_type, -object_id),
           file.path(analysis_path, "reports", paste0(project_id, '_', msfolder, '_contrasts_report_', fit_version, '_median_wide.txt')))
+
+object_contrasts_long_report.df <- objects4report.df %>%
+  dplyr::left_join(pre_object_contrasts_report.df) %>%
+  dplyr::left_join(dplyr::select(contrasts.df, contrast, treatment_lhs, treatment_rhs)) %>%
+  dplyr::arrange(gene_name, protein_ac, ptm_pos, ptm_type, timepoint, treatment_rhs, treatment_lhs, contrast, std_type)
+
+write_tsv(filter(object_contrasts_long_report.df) %>% dplyr::select(-object_id),
+          file.path(analysis_path, "reports", paste0(project_id, '_', msfolder, '_contrasts_report_', fit_version, '_long.txt')))
 
