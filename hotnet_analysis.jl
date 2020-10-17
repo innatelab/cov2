@@ -470,201 +470,91 @@ PlotlyUtils.permstats_plot(
 includet(joinpath(misc_scripts_path, "graphml_writer.jl"))
 print(propertynames(tree_extremes_df))
 
-function vertex2gene_flows!(flows::AbstractVector, vertex_flows::AbstractString)
-    empty!(flows)
-    for m in eachmatch(r"(?:^|\s)(\d+)\((\d+)\)", vertex_flows)
-        push!(flows, (parse(Int, m[2]), reactomefi_genes[vertex2gene[parse(Int, m[1])]]))
-    end
-    sort!(flows)
-    return join(string.(last.(flows), '(', first.(flows), ')'), ' ')
-end
 
-function flowgraphml(bait_id::AbstractString, threshold::Number;
-    component_groups::Bool=true,
-    flow_edges::Bool=false,
-    verbose::Bool=false,
-    layout_cut_threshold::Number=1.5*threshold,
-    kwargs...
-)
+function flowgraphml(bait_id::AbstractString, threshold::Number; kwargs...)
     orig_diedges = DataFrames.rename(reactomefi_diedges_used_df,
-                          :vertex1 => :source, :vertex2 => :target,
-                          :score => :weight, :direction => :interaction_type)
-    orig_diedges.diedge_type .= replace.(string.(orig_diedges.diedge_type), ">" => "&gt;")
-    orig_diedges.interaction_type .= replace.(replace.(string.(orig_diedges.interaction_type), ">" => "&gt;"), "<" => "&lt;")
+                                     :vertex1 => :source, :vertex2 => :target,
+                                     :score => :weight, :direction => :interaction_type)
+    HotnetUtils.fix_reactomefi_iactiontype!(orig_diedges.interaction_type)
+    HotnetUtils.fix_reactomefi_iactiontype!(orig_diedges.diedge_type)
 
-    tree = bait2tree[bait_id]
-    graph_def = HHN.export_flowgraph(tree, threshold,
-                reactomefi_walkmtx * Diagonal(convert(Vector{Float64}, bait2vertex_weights[bait_id])),
-                findall(>(1.5), bait2vertex_weights[bait_id]),
-                get(bait2apms_vertices, bait_id, valtype(bait2apms_vertices)());
-                flow_edges=flow_edges, verbose=verbose,
-                orig_diedges=orig_diedges,
-                vertices_stats=@isdefined(vertex_stats_df) ? filter(r -> r.bait_full_id == bait_id, vertex_stats_df) : nothing,
-                kwargs...)
+    vertices_df = DataFrame(vertex = 1:nv(reactomefi_digraph_rev),
+                            gene = ifelse.(vertex2gene .> 0, vertex2gene, missing),
+                            gene_name = ifelse.(vertex2gene .> 0, getindex.(Ref(reactomefi_genes), vertex2gene), missing))
+    vertices_df = leftjoin(vertices_df, select!(filter(r -> r.bait_id == bait_id, vertex_stats_df),
+                                [:vertex, :oeproteome_median_log2, :oeproteome_p_value,
+                                 :apms_median_log2, :apms_p_value]), on=:vertex)
+    vertices_df.oeproteome_median_log2_signif = ifelse.(coalesce.(vertices_df.oeproteome_p_value, false) .<= 0.01,
+                                                        vertices_df.oeproteome_median_log2, missing)
+    vertices_df.apms_median_log2_signif = ifelse.(coalesce.(vertices_df.apms_p_value, false) .<= 0.01,
+                                                  vertices_df.apms_median_log2, missing)
 
-    vertices_df = graph_def.vertices
-    vertices_df[!, :node] .= string.("v", vertices_df.vertex)
-    vertices_df[!, :component_node] = string.("g", vertices_df.component)
-    vertices_df[!, :vertex_type] .= ifelse.(vertices_df.is_source,
-                                        ifelse.(vertices_df.is_sink, "source/sink", "source"),
-                                        ifelse.(vertices_df.is_sink, "sink", "gene"))
-    vertices_df[!, :flows_to_genes] = missings(String, nrow(vertices_df))
-    vertices_df[!, :flows_from_genes] = missings(String, nrow(vertices_df))
-    vertices_df[!, :loops_through_genes] = missings(String, nrow(vertices_df))
-
-    flows = Vector{Tuple{Int, String}}()
-    for r in eachrow(vertices_df)
-        if !ismissing(r.flows_to)
-            r.flows_to_genes = vertex2gene_flows!(flows, r.flows_to)
-        end
-        if !ismissing(r.flows_from)
-            r.flows_from_genes = vertex2gene_flows!(flows, r.flows_from)
-        end
-        if !ismissing(r.loops_through)
-            r.loops_through_genes = vertex2gene_flows!(flows, r.loops_through)
-        end
-    end
-    if !@isdefined(vertex_stats_df)
-        vertices_info = DataFrame(vertex = 1:nv(reactomefi_digraph_rev),
-                                  gene = ifelse.(vertex2gene .> 0, vertex2gene, missing),
-                                  gene_name = ifelse.(vertex2gene .> 0, getindex.(Ref(reactomefi_genes), vertex2gene), missing))
-        vertices_info = leftjoin(vertices_info, filter(r -> r.bait_full_id == bait_id, oeproteome_gene_effects_df),
-                             on=:gene_name)
-        vertices_df = leftjoin(vertices_df, vertices_info, on=:vertex)
-    end
-    # FA3 layout attributes
-    layout_conncomps = HHN.cut(tree, layout_cut_threshold)
-    layout_conncomp_ixs = fill(0, HHN.nelems(layout_conncomps))
-    @inbounds for (i, comp) in enumerate(layout_conncomps)
-        layout_conncomp_ixs[comp] .= i
-    end
-
-    vertices_df[!, :oeproteome_median_log2_signif] = ifelse.(coalesce.(vertices_df.oeproteome_p_value, false) .<= 0.01,
-                                                             vertices_df.oeproteome_median_log2, missing)
-    vertices_df[!, :apms_median_log2_signif] = ifelse.(coalesce.(vertices_df.apms_p_value, false) .<= 0.01,
-                                                       vertices_df.apms_median_log2, missing)
-
-    vertices_df[!, :layout_size] .= ifelse.(vertices_df.vertex_type .== "gene", 0.3, 0.4)*sqrt(1/nrow(vertices_df))
-    vertices_df[!, :layout_mass] .= 1.0
-    vertices_df[!, :layout_x] .= 0.0
-    vertices_df[!, :layout_y] .= 0.0
-    vertices_df[!, :layout_component] .= layout_conncomp_ixs[vertices_df.vertex]
-
-    if (nrow(vertices_df) > 0) && component_groups
-        allowmissing!(vertices_df)
-        compnodes_df = repeat(vertices_df[1:1, :], nrow(graph_def.components))
-        compnodes_df[!, :] .= missing
-        compnodes_df[!, :node] = string.("g", 1:nrow(compnodes_df))
-        compnodes_df[!, :vertex_type] .= "connected_component"
-        append!(vertices_df, compnodes_df)
-    end
-
-    edges_df = filter(r -> (r.source != r.target) &&
-            (flow_edges || r.has_walk || r.has_original || r.has_original_rev),
-            graph_def.edges)
-    edges_df[!, :source_node] .= string.("v", edges_df.source)
-    edges_df[!, :target_node] .= string.("v", edges_df.target)
-    edges_df[!, :edge_type] .=
-        ifelse.(edges_df.has_original .| edges_df.has_original_rev, "interaction",
-        ifelse.(edges_df.has_walk, "walk", ifelse.(edges_df.has_flow, "flow", missing)))
-    edges_df[!, :layout_weight] .= max.(0.001, coalesce.(edges_df.walkweight, 0.0), coalesce.(edges_df.walkweight_rev, 0.0)) .*
-        ifelse.(edges_df.has_original .| edges_df.has_original_rev, 4.0, 0.5)
-
-    graph = GraphML.import_graph(vertices_df, edges_df,
-                                 node_col=:node, parent_col=component_groups ? :component_node : nothing,
-                                 source_col=:source_node, target_col=:target_node,
-                                 node_attrs=intersect([:gene_name, :protein_description,
-                                                       :vertex_type, :weight, :walkweight,
-                                                       :is_hit, :prob_perm_walkweight_greater,
-                                                       :flows_to_genes, :flows_from_genes, :loops_through_genes,
-                                                       :apms_p_value, :apms_median_log2, :apms_median_signif,
-                                                       :oeproteome_p_value, :oeproteome_median_log2, :oeproteome_median_log2_signif,
-                                                       :layout_component, :layout_size, :layout_mass, :layout_x, :layout_y],
-                                                      propertynames(vertices_df)),
-                                 edge_attrs=[:edge_type, :interaction_type, :target_type, :source_type,
-                                             :walkweight, :walkweight_rev,
-                                             :has_original, :has_original_rev, :has_flow, :has_walk,
-                                             :layout_weight],
-                                 verbose=verbose)
-    return graph
+    return HotnetUtils.flowgraphml(
+            bait2tree[bait_id], threshold;
+            walkmatrix=bait2walkmtx[bait_id], stepmatrix=bait2stepmtx[bait_id],
+            vertices_labels=[v2g > 0 ? reactomefi_genes[v2g] : missing for v2g in vertex2gene],
+            vertices_info=vertices_df,
+            vertices_weights=bait2vertex_weights[bait_id],
+            vertices_stats=@isdefined(vertex_stats_df) ? select!(filter(r -> r.bait_id == bait_id, vertex_stats_df),
+                    Not([:gene_name, :oeproteome_median_log2, :oeproteome_p_value, :apms_median_log2, :apms_p_value])) : nothing,
+            diedges_stats=@isdefined(diedge_stats_df) ?
+                select!(rename!(filter(r -> r.bait_id == bait_id, diedge_stats_df),
+                        :src=>:source, :dest=>:target), Not([:weight, :walkweight]))
+                : nothing,
+            source_threshold=randomwalk_params.source_weight_min,
+            sinks=get(bait2apms_vertices, bait_id, valtype(bait2apms_vertices)()),
+            step_sinks=nothing,
+            orig_diedges=orig_diedges,
+            extra_node_attrs=[:apms_p_value, :apms_median_log2, :apms_median_log2_signif,
+                              :oeproteome_p_value, :oeproteome_median_log2, :oeproteome_median_log2_signif],
+            kwargs...)
 end
 
 Revise.includet(joinpath(misc_scripts_path, "forceatlas3_layout.jl"))
 FA = ForceAtlas3
 
-function layout_flowgraph!(graph::GraphML.Graph)
-    fa_graph = FA.Graph(graph.edge_data,#filter(r -> r.layout_weight >= 0.001, graph.edge_data),
-                        filter(r -> !ismissing(r.vertex), graph.node_data),
-                        src_node_col=:source, dest_node_col=:target, weight_col=:layout_weight,
-                        node_col=:vertex, size_col=:layout_size, mass_col=:layout_mass)
-    fa_node_dislikes = Matrix{Float64}(undef, (length(fa_graph.nodes), length(fa_graph.nodes)))
-    for i in CartesianIndices(fa_node_dislikes)
-        fa_node_dislikes[i] = ifelse(graph.node_data.layout_component[i[1]] == graph.node_data.layout_component[i[2]], 0.0, 1.0)
-    end
-    fa_node_likes = FA.socioaffinity(SimpleGraph(fa_graph), p=(0.5, 0.0), q=0.0)
-    for (i, e) in enumerate(fa_graph.edges)
-        elike = fa_node_likes[e.dest, e.src]
-        if elike > 0
-            fa_graph.edges[i] = FA.Edge(e.src, e.dest, e.weight / elike)
-        end
-    end
+flows_path = joinpath(analysis_path, "networks", "apms_oeproteome_flows_$(proj_info.hotnet_ver)_optcut", "notrace")
+isdir(flows_path) || mkdir(flows_path)
+CSV.write(joinpath(flows_path, "apms_oeproteome_flows_$(proj_info.hotnet_ver)_optcut_thresholds.txt"), bait_optcut_thresholds_df, delim='\t')
 
-    FA.layout!(fa_graph, FA.ForceAtlas3Settings(fa_graph,
-               outboundAttractionDistribution=false,
-               attractionStrength=3.0, attractionEdgeWeightInfluence=0.1, jitterTolerance=0.1,
-               repulsionStrength=1 .* (1.0 .+ fa_node_dislikes),
-               repulsionNodeModel=:Point,
-               gravity=0.1, gravityFalloff=1.0, gravityShape=:Rod,
-               gravityRodCorners=((-4.0, 0.0), (4.0, 0.0)), gravityRodCenterWeight=0.1),
-               nsteps=1000, progressbar=true)
-    FA.layout!(fa_graph, FA.ForceAtlas3Settings(fa_graph,
-               outboundAttractionDistribution=false,
-               attractionStrength=3.0, attractionEdgeWeightInfluence=0.1, jitterTolerance=0.1,
-               repulsionStrength = 1 .+ 1 * fa_node_dislikes,
-               repulsionNodeModel=:Circle,
-               gravity=0.75, gravityFalloff=1.0, gravityShape=:Rod,
-               gravityRodCorners=((-4.0, 0.0), (4.0, 0.0)), gravityRodCenterWeight=0.1),
-               nsteps=5000, progressbar=true)
-
-    graph.node_attrs[end-1].values[eachindex(fa_graph.nodes)] .= FA.extract_layout(fa_graph)[1] .* 40
-    graph.node_attrs[end].values[eachindex(fa_graph.nodes)] .= FA.extract_layout(fa_graph)[2] .* 40
-
-    return graph
-end
-
-sel_bait_ids = collect(keys(bait2tree_optcut))
+sel_bait_ids = collect(keys(bait2optcut_threshold))
 for bait_id in sel_bait_ids
     @info "Flowgraph for $bait_id"
-    optcut_threshold = bait2optcut_threshold[bait_id]
+    optcut_threshold = bait2optcut_threshold[bait_id][1, :threshold]
     optflow_graph = flowgraphml(bait_id, optcut_threshold,
         component_groups=false,
-        layout_cut_threshold = optcut_threshold * 1.1,
+        flowpaths = :flowattr,
+        step_threshold=optcut_threshold, maxsteps=2,
+        layout_cut_threshold = optcut_threshold * 1.25,
         pvalue_mw_max = 0.001, verbose=true)
-    if length(optflow_graph.nodes) > 0
-        layout_flowgraph!(optflow_graph)
-        open(joinpath(analysis_path, "networks", "apms_oeproteome_flows_$(proj_info.hotnet_ver)_optcut",
-                      "$(proj_info.id)_$(bait_id)_flow_$(proj_info.hotnet_ver).graphml"), "w") do io
-            write(io, optflow_graph)
-        end
+    isempty(optflow_graph.nodes) || HotnetUtils.layout_flowgraph!(optflow_graph)
+    open(joinpath(flows_path, "$(proj_info.id)_$(bait_id)_flow_$(proj_info.hotnet_ver)_manual.graphml"), "w") do io
+        write(io, optflow_graph)
     end
 end
 
-using ORCA
 sel_bait_ids = ["SARS_CoV2_ORF7a"]
-for bait_id in sel_bait_ids, metric in [:flow_distance, :maxcomponent_size]
+metrics_plot_path = joinpath(flows_path, "metrics")
+isdir(metrics_plot_path) || mkdir(metrics_plot_path)
+for bait_id in sel_bait_ids, metric in [:flow_avginvlen, :flow_avghopweight, :flow_distance, :maxcomponent_size]
     @info "Plotting $metric stats for $bait_id"
+    real_binstats_df = filter(r -> !r.is_permuted && (r.bait_id == bait_id) && !ismissing(r[metric]), tree_binstats_df)
+    aggstats_df = filter(r -> r.bait_id == bait_id, tree_perm_aggstats_wide_df)
+    isempty(aggstats_df) && continue
+    extremes_df = filter(r -> r.bait_id == bait_id && coalesce(r.quantile, NaN) == (r.delta_type == "max" ? 1.0 - sel_quantile : sel_quantile) &&
+                    r.metric == metric && !ismissing(r.value), tree_extremes_df)
     bait_stats_plot = PlotlyUtils.permstats_plot(
-        filter(r -> !r.is_permuted && (r.bait_full_id == bait_id), tree_binstats_df),
-        filter(r -> r.bait_full_id == bait_id, tree_perm_aggstats_df),
-        filter(r -> r.bait_full_id == bait_id, tree_extremes_df),
-        threshold_range=(0.00, 0.005),
+        real_binstats_df,
+        aggstats_df,
+        extremes_df,
+        threshold_range=(0.00, 0.01),
         yaxis_metric=metric)
-    bait_stats_plot.plot.layout[:width] = 10
-    bait_stats_plot.plot.layout[:height] = 6
+    #bait_stats_plot.plot.layout[:width] = "300px"
+    #bait_stats_plot.plot.layout[:height] = "200px"
+    #bait_stats_plot.plot.layout[:font_size] = "20"
     try
         savefig(bait_stats_plot.plot,
-            joinpath(analysis_path, "networks", "apms_oeproteome_flows_$(proj_info.hotnet_ver)_optcut",
-                     "$(proj_info.id)_$(bait_id)_$(metric)_$(proj_info.hotnet_ver)_4figure.pdf"))
+            joinpath(metrics_plot_path, "$(proj_info.id)_$(bait_id)_$(metric)_$(proj_info.hotnet_ver).svg"))
     catch e
         if e isa InterruptException
             rethrow(e)
