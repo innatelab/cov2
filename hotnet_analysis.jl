@@ -410,16 +410,17 @@ tree_perm_aggstats_wide_df = unstack(filter(r -> !ismissing(r.threshold), tree_p
                                      namewidecols=(valcol, qtl, sep) -> Symbol(valcol, sep, HHN.quantile_suffix(qtl)))
 
 tree_extremes_df = HHN.extreme_treecut_binstats(
-    filter(r -> !r.is_permuted && coalesce(r.threshold, -1.0) >= 1E-4, tree_binstats_df),
+    filter(r -> !r.is_permuted && (1E-4 <= coalesce(r.threshold, -1.0) <= 0.01), tree_binstats_df),
     tree_perm_aggstats_df,
     extra_join_cols = [:bait_id])
 
 include(joinpath(misc_scripts_path, "plots", "plotly_utils.jl"))
 
+sel_quantile = 0.25
 bait2optcut_threshold = Dict(begin
     bait_id = df[1, :bait_id]
     thresh_df = nothing
-    for (metric, deltype) in [(:flow_avgweight, "max"), (:flow_distance, "min"), (:maxcomponent_size, "max")]
+    for (metric, deltype) in [(:flow_avginvlen, "max"), (:flow_avghopweight, "max"), (:flow_avgweight, "max"), (:maxcomponent_size, "max")]
         metric_df = filter(r -> (r.metric == metric) && 
                                 (r.delta_type == deltype) &&
                                 (r.quantile == (deltype == "max" ? 1 - sel_quantile : sel_quantile)), df)
@@ -444,13 +445,12 @@ end for df in groupby(filter(r -> !ismissing(r.quantile), tree_extremes_df), :ba
 #    if (r.type == "max") && !ismissing(r.flow_avgweight_perm_50))
 bait_optcut_thresholds_df = reduce(vcat, values(bait2optcut_threshold))
 bait2tree_optcut = Dict(bait_id =>
-    HHN.cut(bait2tree[bait_id], optcut_threshold, minsize=1)
-    for (bait_id, optcut_threshold) in bait2optcut_threshold)
+    HHN.cut(bait2tree[bait_id], threshold_df[1, :threshold], minsize=1)
+    for (bait_id, threshold_df) in bait2optcut_threshold)
 
 using PlotlyJS, PlotlyBase
 using Printf: @sprintf
 
-sel_quantile = 0.25
 sel_bait_id = "SARS_CoV2_ORF7a"
 sel_metric = :flow_avgweight
 sel_metric = :maxcomponent_size
@@ -464,7 +464,7 @@ PlotlyUtils.permstats_plot(
     filter(r -> r.bait_id == sel_bait_id && r.quantile == (r.delta_type == "max" ? 1.0 - sel_quantile : sel_quantile) &&
                 r.metric == sel_metric && !ismissing(r.value),
            tree_extremes_df),
-    threshold_range=(0.00, 0.5),
+    threshold_range=(0.00, 0.01),
     yaxis_metric=sel_metric)
 
 includet(joinpath(misc_scripts_path, "graphml_writer.jl"))
