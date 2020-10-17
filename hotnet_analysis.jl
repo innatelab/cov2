@@ -287,21 +287,23 @@ for (bait_ix, bait_id) in enumerate(sel_bait_ids)
     end
 end;
 
+using Serialization, CodecZstd
 vertex2gene, gene2vertex,
 reactomefi_genes, reactomefi_digraph_rev,
 bait2apms_vertices, apms_gene_iactions_df,
 bait_ids, bait2vertex_weights,
 randomwalk_params, bait2walkmtx, bait2tree,
-vertex_bins, bait2perm_vertex_weights = open(ZstdDecompressorStream, joinpath(scratch_path, "$(proj_info.id)_hotnet_prepare_$(proj_info.hotnet_ver).jlser.zst"), "r") do io
+vertex_bins, _ = open(ZstdDecompressorStream, joinpath(scratch_path, "$(proj_info.id)_hotnet_prepare_$(proj_info.hotnet_ver).jlser.zst"), "r") do io
     deserialize(io)
 end
 
 using LinearAlgebra, HierarchicalHotNet
 HHN = HierarchicalHotNet
 
-# cluster-based tree statistics, see hhotnet_perm_treecut_stats_chunk.jl
+# collect chunks of network diffusion / tree statistics
 using Base.Filesystem, Serialization, CodecZstd
 
+# collect real data-based statistics (see hotnet_treestats_chunk.jl)
 chunk_prefix = "$(proj_info.id)_hotnet_treestats_$(proj_info.hotnet_ver)"
 tree_stats_dfs = Vector{DataFrame}()
 for (root, dirs, files) in Filesystem.walkdir(joinpath(scratch_path, chunk_prefix))
@@ -323,10 +325,12 @@ end
 tree_stats_df = vcat(tree_stats_dfs...)
 tree_stats_dfs = nothing
 
+# collect assembled permuted data-based statistics (see hotnet_perm_chunk.jl and hotnet_perm_assemble.jl)
 chunk_prefix = "$(proj_info.id)_hotnet_perm_assembled_$(proj_info.hotnet_ver)"
 perm_tree_stats_dfs = Vector{DataFrame}()
 vertex_stats_dfs = similar(perm_tree_stats_dfs)
 diedge_stats_dfs = similar(perm_tree_stats_dfs)
+chunks_update = Threads.SpinLock()
 for (root, dirs, files) in Filesystem.walkdir(joinpath(scratch_path, chunk_prefix))
     if isempty(files)
         @warn "Found no files in $root"
@@ -334,15 +338,18 @@ for (root, dirs, files) in Filesystem.walkdir(joinpath(scratch_path, chunk_prefi
     else
         @info "Found $(length(files)) file(s) in $root, processing..."
     end
-    for file in files
+    Threads.@threads for i in eachindex(files)
+        file = files[i]
         (startswith(file, chunk_prefix) && endswith(file, ".jlser.zst")) || continue
         chunk_tree_stats_df, chunk_vertex_stats_df, chunk_diedge_stats_df =
             open(ZstdDecompressorStream, joinpath(root, file), "r") do io
             deserialize(io)
         end
+        lock(chunks_update)
         push!(perm_tree_stats_dfs, chunk_tree_stats_df)
         push!(vertex_stats_dfs, chunk_vertex_stats_df)
         push!(diedge_stats_dfs, chunk_diedge_stats_df)
+        unlock(chunks_update)
     end
 end
 perm_tree_stats_df = vcat(perm_tree_stats_dfs...)
@@ -359,12 +366,14 @@ vertex_stats_df = leftjoin(vertex_stats_df,
                                :median_log2 => :oeproteome_median_log2,
                                :bait_full_id => :bait_id),
                        on=[:bait_id, :gene_id])
-vertex_stats_df = leftjoin(vertex_stats_df,
-                       rename!(select(apms_gene_iactions_df, [:bait_full_id, :gene_id, :p_value, :median_log2]),
+vertex_stats_df2 = leftjoin(vertex_stats_df,
+                       rename!(select(apms_gene_iactions_df, [:bait_full_id, :gene_name, :p_value, :median_log2]),
                                :p_value => :apms_p_value,
                                :median_log2 => :apms_median_log2,
                                :bait_full_id => :bait_id),
-                       on=[:bait_id, :gene_id])
+                       on=[:bait_id, :gene_name])
+@assert nrow(vertex_stats_df) == nrow(vertex_stats_df2)
+vertex_stats_df = vertex_stats_df2
 vertex_stats_df.is_hit = vertex_stats_df.prob_perm_walkweight_greater .<= 0.05
 vertex_stats_df = leftjoin(vertex_stats_df, gene_info_df, on=:gene_name)
 
@@ -373,7 +382,7 @@ countmap(perm_tree_stats_df.bait_id)
 @save(joinpath(scratch_path, "$(proj_info.id)_hotnet_perm_stats_$(proj_info.hotnet_ver).jld2"),
       vertex_stats_df, diedge_stats_df, tree_stats_df, perm_tree_stats_df)
 
-@load(joinpath(scratch_path, "$(proj_info.id)_hotnet_perm_treecut_stats_$(proj_info.hotnet_ver).jld2"),
+@load(joinpath(scratch_path, "$(proj_info.id)_hotnet_perm_stats_$(proj_info.hotnet_ver).jld2"),
       vertex_stats_df, diedge_stats_df, tree_stats_df, perm_tree_stats_df)
 
 tree_all_stats_df = vcat(tree_stats_df, perm_tree_stats_df)
