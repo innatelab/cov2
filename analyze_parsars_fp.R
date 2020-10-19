@@ -31,7 +31,7 @@ object_contrasts_4show.df <- object_contrasts.df %>%
                                       TRUE ~ orgcode)) %>%
     dplyr::ungroup()
 
-orgcode_palette <- c(HUMAN="black", contaminant="gray", SARS2 = "goldenrod", CVHSA = "brown")
+orgcode_palette <- c(HUMAN="black", contaminant="gray", SARS2 = "#F4982A", CVHSA = "#811A02")
 
 group_by(object_contrasts_4show.df, std_type, contrast) %>% do({
     sel_object_contrast.df <- .
@@ -310,7 +310,7 @@ group_by(sel_pepmod_intens.df, object_id) %>% do({
 })
 
 sel_std_type <- "replicate"
-treatment_palette <- c(mock="gray", SARS_CoV2 = "goldenrod", SARS_CoV = "brown")
+treatment_palette <- c(mock="gray", SARS_CoV2 = "#F4982A", SARS_CoV = "#811A02")
 
 dplyr::filter(modelobjs_df, is_viral) %>% do({
     sel_obj.df <- .

@@ -33,7 +33,7 @@ object_contrasts_4show.df <- object_contrasts.df %>%
                                       TRUE ~ orgcode)) %>%
     dplyr::ungroup()
 
-orgcode_palette <- c(HUMAN="black", contaminant="gray", SARS2 = "goldenrod", CVHSA = "brown")
+orgcode_palette <- c(HUMAN="black", contaminant="gray", SARS2 = "#F4982A", CVHSA = "#811A02")
 
 group_by(object_contrasts_4show.df, ptm_type, std_type, contrast) %>% do({
     sel_object_contrast.df <- .
@@ -218,7 +218,7 @@ sel_objects.df <- dplyr::semi_join(modelobjs_df,
                                     is_hit_nomschecks & contrast_kind == "treatment_vs_treatment"), object_id)
     )))
 
-treatment_palette <- c(mock="gray", SARS_CoV2 = "goldenrod", SARS_CoV = "brown")
+treatment_palette <- c(mock="gray", SARS_CoV2 = "#F4982A", SARS_CoV = "#811A02")
 
 dplyr::left_join(sel_objects.df, dplyr::select(msdata_full$ptmn_stats, ptmn_id, n_pepmodstates)) %>%
 dplyr::left_join(dplyr::select(msdata$proteins, protein_ac, protein_description=protein_name)) %>%
@@ -336,8 +336,8 @@ sel_std_type <- "median"
 sel_objects.df <- dplyr::filter(modelobjs_df, object_id == 26850L)# str_detect(object_label, "Phospho_CON__P12763_S325_M2"))
 sel_objects.df <- modelobjs_df
 
-treatment_palette <- c(mock="gray", SARS_CoV2 = "goldenrod", SARS_CoV = "brown")
-fp_treatment_palette <- c(mock="lightgray", SARS_CoV2 = "yellow", SARS_CoV = "salmon")
+treatment_palette <- c(mock="gray", SARS_CoV2 = "#F4982A", SARS_CoV = "#811A02")
+fp_treatment_palette <- c(mock="lightgray", SARS_CoV2 = "gold", SARS_CoV = "salmon")
 
 plot_cluster <- new_cluster(16)
 cluster_library(plot_cluster, c("dplyr", "ggplot2", "stringr", "Cairo", "readr", "rlang"))
