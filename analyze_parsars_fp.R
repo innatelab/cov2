@@ -13,6 +13,7 @@ object_contrasts_trunc.df <- tibble(
 
 object_contrasts_4show.df <- object_contrasts.df %>%
     dplyr::inner_join(object_contrasts_trunc.df) %>%
+    dplyr::filter(treatment_lhs != "infected") %>%
     dplyr::inner_join(dplyr::select(modelobjs_df, object_id, is_msvalid_object, protein_label)) %>%
     dplyr::mutate(is_signif = (p_value <= p_value_threshold) & (abs(median_log2) >= median_log2_threshold),
                   is_hit_nomschecks = is_signif, is_hit=is_hit_nomschecks & is_msvalid_object & !is_reverse & !is_contaminant,
@@ -73,8 +74,11 @@ group_by(object_contrasts_4show.df, std_type, contrast) %>% do({
         #facet_grid(p_value_range ~ contrast, scales = "free_y") +
         ggtitle(sel_contrast, subtitle=str_c("std_type=", sel_std_type)) +
         theme_bw_ast()
-    ggsave(filename = file.path(analysis_path, 'plots', str_c(msfolder,'_', fit_version),
-                                str_c("volcanos_contrasts_", sel_std_type, modelobj_suffix),
+    plot_path <- file.path(analysis_path, 'plots', str_c(msfolder,'_', fit_version),
+                           str_c("volcanos_contrasts_", sel_std_type, modelobj_suffix))
+    if (!dir.exists(plot_path)) dir.create(plot_path, recursive = TRUE)
+
+    ggsave(filename = file.path(plot_path,
                                 str_c(project_id, '_', fit_version, '_volcano_',
                                       str_replace_all(sel_contrast, ":|@", "_"), '.pdf')),
            plot = p, width=15, height=18, device=cairo_pdf, family="Arial")
@@ -124,28 +128,50 @@ object_iactions_4show.df <- filter(object_contrasts.df, contrast_type=="comparis
                                                   is_hit),
                   truncation_type = point_truncation_type(truncation, is_foreground))
 
+object_iactions_4show_kde.df <- object_iactions_4show.df %>% #filter(bait_id %in% c("NSP2", "ORF8")) %>%
+group_by(contrast, std_type) %>% group_modify(~{
+    kde2d4plot(.x, "contrast_lhs_median_log2_trunc", "contrast_rhs_median_log2_trunc", n = 400)$density_df
+}) %>% ungroup()
+
+show_labels <- FALSE
 object_iactions_4show.df %>% #filter(bait_id %in% c("NSP2", "ORF8")) %>%
 group_by(contrast, std_type) %>% do({
     sel_object_contrast.df <- dplyr::filter(., is_hilite | between(percent_rank(contrast_lhs_median_log2), 0.001, 0.999))
+    sel_std_type <- sel_object_contrast.df$std_type[[1]]
     sel_object_contrast_thresholds.df <- semi_join(object_contrasts_thresholds.df, sel_object_contrast.df)
-    message("Plotting ", sel_object_contrast_thresholds.df$contrast[[1]], " std_type=", sel_object_contrast.df$std_type[[1]],
+    message("Plotting ", sel_object_contrast_thresholds.df$contrast[[1]], " std_type=", sel_std_type,
             " (", sum(sel_object_contrast.df$show_label), " label(s))")
     manylabels <- sum(sel_object_contrast.df$show_label) > 300
+    sel_kde.df <- semi_join(object_iactions_4show_kde.df,
+                            dplyr::select(sel_object_contrast.df, contrast, std_type)[1, ]) %>%
+                  dplyr::filter(bin2d_density > 0.001)
     p <- ggplot(sel_object_contrast.df,
-                aes(x = contrast_lhs_median_log2_trunc, y = contrast_rhs_median_log2_trunc, color=orgcode,
-                    shape=truncation, size=truncation_type)) +
-        geom_point_rast(data=dplyr::filter(sel_object_contrast.df, !is_foreground),
-                        alpha=0.1, size=0.5, color="darkgray", shape=16L) +
+                aes(x = contrast_lhs_median_log2_trunc, y = contrast_rhs_median_log2_trunc)) +
+        #geom_raster(data=sel_kde.df, aes(fill=bin2d_density), color=NA) +
+        stat_contour_filled(data=sel_kde.df, aes(z=bin2d_density, fill=after_stat(level_mid))) +
+        stat_contour(data=sel_kde.df, aes(z=bin2d_density, color=after_stat(level))) +
+        scale_color_gradient(low="gray75", high="black", trans=power_trans(0.25), guide=FALSE) +
+        scale_fill_gradient("density", low="gray95", high="slategray4", trans=power_trans(0.25)) +
+        geom_vline(xintercept=0, size=1, color="dodgerblue4") +
+        geom_hline(yintercept=0, size=1, color="dodgerblue4") +
+        new_scale_color() +
+        #geom_point_rast(data=dplyr::filter(sel_object_contrast.df, !is_foreground),
+        #                alpha=0.1, size=0.5, color="darkgray", shape=16L) +
         geom_abline(slope=1, intercept=sel_object_contrast_thresholds.df$contrast_offset_log2[[1]], color="firebrick", linetype="dashed") +
         geom_abline(slope=1, intercept=sel_object_contrast_thresholds.df$contrast_offset_log2[[1]] - sel_object_contrast_thresholds.df$median_log2_threshold[[1]],
                     color="firebrick", linetype="dotted", size=0.5) +
         geom_abline(slope=1, intercept=sel_object_contrast_thresholds.df$contrast_offset_log2[[1]] + sel_object_contrast_thresholds.df$median_log2_threshold[[1]],
-                    color="firebrick", linetype="dotted", size=0.5) +
+                    color="firebrick", linetype="dotted", size=0.5)
+    if (show_labels) {
+        p <- p +
         geom_text_repel(data=dplyr::filter(sel_object_contrast.df, show_label),
                         aes(label = object_label),
                         size=ifelse(manylabels, 2.5, 3.5),
-                        show.legend = FALSE, segment.color = "gray") +
-        geom_point(data=dplyr::filter(sel_object_contrast.df, is_foreground)) +
+                        show.legend = FALSE, segment.color = "gray")
+    }
+    p <- p +
+        geom_point(data=dplyr::filter(sel_object_contrast.df, is_foreground),
+                   aes(color=orgcode, shape=truncation, size=truncation_type)) +
         scale_color_manual(values=orgcode_palette, na.value="black", guide="none") +
         scale_shape_manual(values=point_truncation_shape_palette, guide="none") +
         scale_size_manual(values=if_else(manylabels, 0.5, 1.0) * point_truncation_size_palette, guide="none", ) +
@@ -153,10 +179,13 @@ group_by(contrast, std_type) %>% do({
         ylab(str_c("log2(fold-change) ", sel_object_contrast.df$contrast_rhs)) +
         coord_fixed() +
         theme_bw_ast()
-    ggsave(filename = file.path(analysis_path, 'plots', str_c(msfolder,'_', fit_version),
-                                str_c("scatter_contrasts_", sel_object_contrast_thresholds.df$std_type[[1]], modelobj_suffix),
-                                str_c(project_id, '_', fit_version, '_scatter_contrasts_',
-                                       str_replace_all(sel_object_contrast_thresholds.df$contrast[[1]], '\\?', 'alt'), '.pdf')),
+    plot_path <- file.path(analysis_path, 'plots', str_c(msfolder,'_', fit_version),
+                           str_c("scatter_contrasts_", sel_std_type, modelobj_suffix))
+    if (!dir.exists(plot_path)) dir.create(plot_path)
+    ggsave(filename = file.path(plot_path,
+                                str_c(project_id, '_', fit_version, '_scatter_contrasts_', sel_std_type, "_",
+                                      str_replace_all(sel_object_contrast_thresholds.df$contrast[[1]], '\\?', 'alt'),
+                                      if_else(show_labels, "", "_nolabels"), '.pdf')),
            plot = p, width=16, height=16, device=cairo_pdf, family="Arial")
     tibble()
 })
