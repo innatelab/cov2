@@ -115,10 +115,12 @@ object_iactions_4show.df <- filter(object_contrasts.df, contrast_type=="comparis
                                        is_signif_rhs = is_signif, is_hit_nomschecks_rhs = is_hit_nomschecks, is_hit_rhs = is_hit)) %>%
     dplyr::left_join(dplyr::transmute(dplyr::filter(fit_stats$iactions, str_detect(var, "iaction_labu(?:_replCI)?")),
                                       std_type = if_else(var=="iaction_labu", "median", "replicate"),
-                                      object_id, condition_lhs=condition, lhs_median_log2=median_log2 + global_pepmodstate_labu_shift/log(2))) %>%
+                                      object_id, condition_lhs=str_replace(condition, "_(\\d+)h", "@\\1h"),
+                                      lhs_median_log2=median_log2 + global_pepmodstate_labu_shift/log(2))) %>%
     dplyr::left_join(dplyr::transmute(dplyr::filter(fit_stats$iactions, str_detect(var, "iaction_labu(?:_replCI)?")),
                                       std_type = if_else(var=="iaction_labu", "median", "replicate"),
-                                      object_id, condition_rhs=condition, rhs_median_log2=median_log2 + global_pepmodstate_labu_shift/log(2))) %>%
+                                      object_id, condition_rhs=str_replace(condition, "_(\\d+)h", "@\\1h"),
+                                      rhs_median_log2=median_log2 + global_pepmodstate_labu_shift/log(2))) %>%
     dplyr::mutate(is_foreground = coalesce(is_hit_nomschecks_lhs, FALSE) | coalesce(is_hit_nomschecks_rhs, FALSE),
                   is_hilite = is_foreground & is_hit_nomschecks,
                   contrast_lhs_median_log2_trunc = if_else(is.na(contrast_median_log2_max), contrast_lhs_median_log2,
@@ -131,6 +133,14 @@ object_iactions_4show.df <- filter(object_contrasts.df, contrast_type=="comparis
                                                   is_hit),
                   truncation_type = point_truncation_type(truncation, is_foreground))
 
+scatter_type <- "contrast"
+object_iactions_4show_kde.df <- object_iactions_4show.df %>% filter(truncation == "none") %>%
+group_by(contrast, ptm_type, std_type) %>% group_modify(~{
+    kde2d4plot(.x, if (scatter_type == "contrast") { "contrast_lhs_median_log2_trunc" } else { "lhs_median_log2" },
+               if (scatter_type == "contrast") { "contrast_rhs_median_log2_trunc" } else { "rhs_median_log2" }, n = 400)$density_df
+}) %>% ungroup()
+
+show_labels <- TRUE
 object_iactions_4show.df %>% #filter(bait_id %in% c("NSP2", "ORF8")) %>%
 group_by(contrast, ptm_type, std_type) %>% do({
     sel_object_contrast.df <- dplyr::filter(., is_hilite | between(percent_rank(contrast_lhs_median_log2), 0.001, 0.999))
@@ -141,21 +151,42 @@ group_by(contrast, ptm_type, std_type) %>% do({
             " ptm_type=", sel_ptm_type, " std_type=", sel_std_type,
             " (", sum(sel_object_contrast.df$show_label), " label(s))")
     manylabels <- sum(sel_object_contrast.df$show_label) > 300
-    p <- ggplot(sel_object_contrast.df,
-                aes(x = contrast_lhs_median_log2_trunc, y = contrast_rhs_median_log2_trunc, color=orgcode,
-                    shape=truncation, size=truncation_type)) +
-        geom_point_rast(data=dplyr::filter(sel_object_contrast.df, !is_foreground),
-                        alpha=0.1, size=0.5, color="darkgray", shape=16L) +
+    sel_kde.df <- semi_join(object_iactions_4show_kde.df,
+                            dplyr::select(sel_object_contrast.df, contrast, std_type, ptm_type)[1, ]) %>%
+                  dplyr::filter(bin2d_density > 0.01)
+    p <- if (scatter_type == "contrast"){
+        ggplot(sel_object_contrast.df,
+               aes(x = contrast_lhs_median_log2_trunc, y = contrast_rhs_median_log2_trunc))
+    } else {
+        ggplot(sel_object_contrast.df,
+               aes(x = lhs_median_log2, y = rhs_median_log2))
+    }
+    p <- p +
+        #geom_raster(data=sel_kde.df, aes(fill=bin2d_density), color=NA) +
+        stat_contour_filled(data=sel_kde.df, aes(z=bin2d_density, fill=after_stat(level_mid)), bins=20) +
+        stat_contour(data=sel_kde.df, aes(z=bin2d_density, color=after_stat(level))) +
+        scale_color_gradient("density", low="gray75", high="black", trans=power_trans(0.25), guide=FALSE) +
+        scale_fill_gradient("density", low="gray95", high="slategray4", trans=power_trans(0.25)) +
+        geom_vline(xintercept=0, size=1, color="dodgerblue4") +
+        geom_hline(yintercept=0, size=1, color="dodgerblue4") +
+        new_scale_color() +
+        #geom_point_rast(data=dplyr::filter(sel_object_contrast.df, !is_foreground),
+        #                alpha=0.2, size=0.5, color="darkgray", shape=16L) +
         geom_abline(slope=1, intercept=sel_object_contrast_thresholds.df$contrast_offset_log2[[1]], color="firebrick", linetype="dashed") +
         geom_abline(slope=1, intercept=sel_object_contrast_thresholds.df$contrast_offset_log2[[1]] - sel_object_contrast_thresholds.df$median_log2_threshold[[1]],
                     color="firebrick", linetype="dotted", size=0.5) +
         geom_abline(slope=1, intercept=sel_object_contrast_thresholds.df$contrast_offset_log2[[1]] + sel_object_contrast_thresholds.df$median_log2_threshold[[1]],
-                    color="firebrick", linetype="dotted", size=0.5) +
+                    color="firebrick", linetype="dotted", size=0.5)
+    if (show_labels) {
+        p <- p +
         geom_text_repel(data=dplyr::filter(sel_object_contrast.df, show_label),
                         aes(label = ptmn_label_no_ptm_type),
                         size=ifelse(manylabels, 2.5, 3.5),
-                        show.legend = FALSE, segment.color = "gray") +
-        geom_point(data=dplyr::filter(sel_object_contrast.df, is_foreground)) +
+                        show.legend = FALSE, segment.color = "gray")
+    }
+    p <- p +
+        geom_point(data=dplyr::filter(sel_object_contrast.df, is_foreground),
+                   aes(color=orgcode, shape=truncation, size=truncation_type)) +
         scale_color_manual(values=orgcode_palette, na.value="black", guide="none") +
         scale_shape_manual(values=point_truncation_shape_palette, guide="none") +
         scale_size_manual(values=if_else(manylabels, 0.5, 1.0) * point_truncation_size_palette, guide="none", ) +
@@ -164,12 +195,13 @@ group_by(contrast, ptm_type, std_type) %>% do({
         coord_fixed() +
         theme_bw_ast()
     plot_path <- file.path(analysis_path, 'plots', str_c(msfolder,'_', fit_version),
-                           str_c("scatter_contrasts_", sel_std_type, modelobj_suffix))
+                           str_c("scatter_", scatter_type, "s_", sel_std_type, modelobj_suffix))
     if (!dir.exists(plot_path)) dir.create(plot_path)
     ggsave(filename = file.path(plot_path,
-                                str_c(project_id, '_', fit_version, '_scatter_contrasts_',
-                                      sel_ptm_type, "_", sel_std_type, "_", 
-                                      str_replace_all(sel_object_contrast_thresholds.df$contrast[[1]], '\\?', 'alt'), '.pdf')),
+                                str_c(project_id, '_', fit_version, "_scatter_", scatter_type, "s_",
+                                      sel_ptm_type, "_", sel_std_type, "_",
+                                      str_replace_all(sel_object_contrast_thresholds.df$contrast[[1]], '\\?', 'alt'),
+                                      if_else(show_labels, "", "_nolabels"), '.pdf')),
            plot = p, width=16, height=16, device=cairo_pdf, family="Arial")
     tibble()
 })
