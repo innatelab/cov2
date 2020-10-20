@@ -400,53 +400,65 @@ tree_binstats_df = combine(groupby(tree_all_stats_df, :bait_id)) do bait_treesta
                           threshold_range=threshold_range)
 end
 
+# annotate tree_stats with threshold_bin indices
+tree_stats_df2 = copy(tree_stats_df, copycols=false)
+tree_stats_df2.threshold_bin = missings(Int, nrow(tree_stats_df2))
+for df in groupby(tree_binstats_df, :bait_id)
+    bait_bins = sort!([unique(collect(skipmissing(df.threshold_binmin))); [maximum(skipmissing(df.threshold_binmax))]])
+    bait_stats_df = view(tree_stats_df2, tree_stats_df2.bait_id .== df.bait_id[1], :)
+    HHN.add_bins!(bait_stats_df, :threshold, bait_bins)
+end
+tree_stats_df = tree_stats_df2
+
 tree_perm_aggstats_df = combine(groupby(filter(r -> r.is_permuted, tree_binstats_df), :bait_id)) do perm_binstats_df
     @info "aggregate_treecut_binstats($(perm_binstats_df.bait_id[1]))"
-    HHN.aggregate_treecut_binstats(perm_binstats_df, by_cols=[:is_permuted, :threshold_bin, :threshold])
+    HHN.aggregate_treecut_binstats(perm_binstats_df, by_cols=[:is_permuted, :threshold_bin])
 end
-tree_perm_aggstats_wide_df = unstack(filter(r -> !ismissing(r.threshold), tree_perm_aggstats_df),
-                                     [:bait_id, :is_permuted, :threshold_bin, :threshold], :quantile,
+tree_perm_aggstats_wide_df = unstack(filter(r -> !ismissing(r.threshold_binmid), tree_perm_aggstats_df),
+                                     [:bait_id, :is_permuted, :threshold_bin, :threshold_binmid], :quantile,
                                      intersect(HHN.treecut_metrics, propertynames(tree_perm_aggstats_df)),
                                      namewidecols=(valcol, qtl, sep) -> Symbol(valcol, sep, HHN.quantile_suffix(qtl)))
 
-tree_extremes_df = HHN.extreme_treecut_binstats(
-    filter(r -> !r.is_permuted && (1E-4 <= coalesce(r.threshold, -1.0) <= 0.01), tree_binstats_df),
+cut_threshold_range = (1E-4, 1E-2)
+tree_extremes_df = HHN.extreme_treecut_stats(
+    filter(r -> !r.is_permuted && (cut_threshold_range[1] <= coalesce(r.threshold, -1.0) <= cut_threshold_range[2]), tree_stats_df2),
     tree_perm_aggstats_df,
     extra_join_cols = [:bait_id])
 
 include(joinpath(misc_scripts_path, "plots", "plotly_utils.jl"))
 
 sel_quantile = 0.25
-bait2optcut_threshold = Dict(begin
+bait2cut_threshold = Dict(begin
     bait_id = df[1, :bait_id]
+    valtype = df[1, :value_type]
     thresh_df = nothing
-    for (metric, deltype) in [(:flow_avginvlen, "max"), (:flow_avghopweight, "max"), (:flow_avgweight, "max"), (:maxcomponent_size, "max")]
-        metric_df = filter(r -> (r.metric == metric) && 
-                                (r.delta_type == deltype) &&
-                                (r.quantile == (deltype == "max" ? 1 - sel_quantile : sel_quantile)), df)
+    for (metric, stat) in [(:flow_avginvlen, "max"), (:flow_avghopweight, "max"), (:flow_avgweight, "max"), (:maxcomponent_size, "max")]
+        metric_df = filter(r -> (r.metric == metric) && (r.value_type == valtype) &&
+                                (r.stat == stat) &&
+                                (r.quantile == (stat == "max" ? 1 - sel_quantile : sel_quantile)), df)
+        (nrow(metric_df) == 0) && continue
         @assert nrow(metric_df) == 1
         delta = metric_df[1, :delta]
         if !ismissing(delta) && 
-           (((deltype == "max") && (delta > 0.0)) ||
-            ((deltype == "min") && (delta < 0.0)))
+           (((stat == "max") && (delta > 0.0)) ||
+            ((stat == "min") && (delta < 0.0)))
             thresh_df = metric_df
             break
         end
     end
     if thresh_df !== nothing
-        @info "$bait_id: using $(thresh_df[1, :metric])=$(thresh_df[1, :value]) (delta=$(thresh_df[1, :delta])) for threshold=$(thresh_df[1, :threshold])"
+        @info "$bait_id $valtype: using $(thresh_df[1, :metric])=$(thresh_df[1, :value]) (delta=$(thresh_df[1, :delta])) for threshold=$(thresh_df[1, :threshold])"
         thresh_df
     else
         @warn "No significant difference between real and permuted results for $bait_id"
-        thresh_df = DataFrame()
     end
-    bait_id => thresh_df
-end for df in groupby(filter(r -> !ismissing(r.quantile), tree_extremes_df), :bait_id))
+    (bait_id, valtype) => thresh_df
+end for df in groupby(filter(r -> !ismissing(r.quantile), tree_extremes_df), [:bait_id, :value_type]))
 #    if (r.type == "max") && !ismissing(r.flow_avgweight_perm_50))
-bait_optcut_thresholds_df = reduce(vcat, values(bait2optcut_threshold))
-bait2tree_optcut = Dict(bait_id =>
-    HHN.cut(bait2tree[bait_id], threshold_df[1, :threshold], minsize=1)
-    for (bait_id, threshold_df) in bait2optcut_threshold)
+bait_cut_thresholds_df = reduce(vcat, df for df in values(bait2cut_threshold) if !isnothing(df))
+bait2treecut = Dict((baitid, valtype) =>
+    !isnothing(threshold_df) ? HHN.cut(bait2tree[baitid], threshold_df[1, :threshold], minsize=1) : nothing
+    for ((baitid, valtype), threshold_df) in bait2cut_threshold)
 
 using PlotlyJS, PlotlyBase
 using Printf: @sprintf
@@ -461,7 +473,7 @@ PlotlyUtils.permstats_plot(
     filter(r -> !r.is_permuted && (r.bait_id == sel_bait_id) && !ismissing(r[sel_metric]),
            tree_binstats_df),
     filter(r -> r.bait_id == sel_bait_id, tree_perm_aggstats_wide_df),
-    filter(r -> r.bait_id == sel_bait_id && r.quantile == (r.delta_type == "max" ? 1.0 - sel_quantile : sel_quantile) &&
+    filter(r -> r.bait_id == sel_bait_id && r.quantile == (r.stat == "max" ? 1.0 - sel_quantile : sel_quantile) &&
                 r.metric == sel_metric && !ismissing(r.value),
            tree_extremes_df),
     threshold_range=(0.00, 0.01),
@@ -481,9 +493,9 @@ function flowgraphml(bait_id::AbstractString, threshold::Number; kwargs...)
     vertices_df = DataFrame(vertex = 1:nv(reactomefi_digraph_rev),
                             gene = ifelse.(vertex2gene .> 0, vertex2gene, missing),
                             gene_name = ifelse.(vertex2gene .> 0, getindex.(Ref(reactomefi_genes), vertex2gene), missing))
-    vertices_df = leftjoin(vertices_df, select!(filter(r -> r.bait_id == bait_id, vertex_stats_df),
+    vertices_df = leftjoin(vertices_df, filter!(r -> r.bait_id == bait_id, select(vertex_stats_df,
                                 [:vertex, :oeproteome_median_log2, :oeproteome_p_value,
-                                 :apms_median_log2, :apms_p_value]), on=:vertex)
+                                 :apms_median_log2, :apms_p_value], copycols=false)), on=:vertex)
     vertices_df.oeproteome_median_log2_signif = ifelse.(coalesce.(vertices_df.oeproteome_p_value, false) .<= 0.01,
                                                         vertices_df.oeproteome_median_log2, missing)
     vertices_df.apms_median_log2_signif = ifelse.(coalesce.(vertices_df.apms_p_value, false) .<= 0.01,
@@ -513,41 +525,50 @@ end
 Revise.includet(joinpath(misc_scripts_path, "forceatlas3_layout.jl"))
 FA = ForceAtlas3
 
-flows_path = joinpath(analysis_path, "networks", "apms_oeproteome_flows_$(proj_info.hotnet_ver)_optcut", "notrace")
+flows_path = joinpath(analysis_path, "networks", "apms_oeproteome_flows_$(proj_info.hotnet_ver)")
 isdir(flows_path) || mkdir(flows_path)
-CSV.write(joinpath(flows_path, "apms_oeproteome_flows_$(proj_info.hotnet_ver)_optcut_thresholds.txt"), bait_optcut_thresholds_df, delim='\t')
+CSV.write(joinpath(flows_path, "apms_oeproteome_flows_$(proj_info.hotnet_ver)_cut_thresholds.txt"), bait_cut_thresholds_df, delim='\t')
 
-sel_bait_ids = collect(keys(bait2optcut_threshold))
-for bait_id in sel_bait_ids
-    @info "Flowgraph for $bait_id"
-    optcut_threshold = bait2optcut_threshold[bait_id][1, :threshold]
-    optflow_graph = flowgraphml(bait_id, optcut_threshold,
+sel_bait_ids = unique(first.(collect(keys(bait2cut_threshold))))
+for bait_id in sel_bait_ids, valtype in unique(last.(collect(keys(bait2cut_threshold))))
+    @info "Flowgraph for $bait_id cut=$valtype"
+    cut_threshold_df = get(bait2cut_threshold, (bait_id, valtype), nothing)
+    if isnothing(cut_threshold_df)
+        @warn "  No threshold found, skipping"
+        continue
+    end
+    cut_threshold = cut_threshold_df.threshold[1]
+    flow_graph = flowgraphml(bait_id, cut_threshold,
         component_groups=false,
         flowpaths = :flowattr,
-        step_threshold=optcut_threshold, maxsteps=2,
-        layout_cut_threshold = optcut_threshold * 1.25,
+        step_threshold=cut_threshold, maxsteps=2,
+        layout_cut_threshold=cut_threshold * 1.25,
         pvalue_mw_max = 0.001, verbose=true)
-    isempty(optflow_graph.nodes) || HotnetUtils.layout_flowgraph!(optflow_graph)
-    open(joinpath(flows_path, "$(proj_info.id)_$(bait_id)_flow_$(proj_info.hotnet_ver)_manual.graphml"), "w") do io
-        write(io, optflow_graph)
+    isempty(flow_graph.nodes) || HotnetUtils.layout_flowgraph!(flow_graph)
+    valtype_flows_path = joinpath(flows_path, valtype)
+    isdir(valtype_flows_path) || mkdir(valtype_flows_path)
+    open(joinpath(valtype_flows_path, "$(proj_info.id)_$(bait_id)_flow_$(proj_info.hotnet_ver)_$(valtype).graphml"), "w") do io
+        write(io, flow_graph)
     end
 end
+
+include(joinpath(misc_scripts_path, "plots", "plotly_utils.jl"))
 
 sel_bait_ids = ["SARS_CoV2_ORF7a"]
 metrics_plot_path = joinpath(flows_path, "metrics")
 isdir(metrics_plot_path) || mkdir(metrics_plot_path)
-for bait_id in sel_bait_ids, metric in [:flow_avginvlen, :flow_avghopweight, :flow_distance, :maxcomponent_size]
+for bait_id in sel_bait_ids, (metric, stat) in [(:flow_avginvlen, "max"), (:flow_avghopweight, "max"), (:flow_avgweight, "max"), (:maxcomponent_size, "max")]
     @info "Plotting $metric stats for $bait_id"
-    real_binstats_df = filter(r -> !r.is_permuted && (r.bait_id == bait_id) && !ismissing(r[metric]), tree_binstats_df)
+    realstats_df = filter(r -> !r.is_permuted && (r.bait_id == bait_id) && !ismissing(r[metric]), tree_stats_df)
     aggstats_df = filter(r -> r.bait_id == bait_id, tree_perm_aggstats_wide_df)
     isempty(aggstats_df) && continue
-    extremes_df = filter(r -> r.bait_id == bait_id && coalesce(r.quantile, NaN) == (r.delta_type == "max" ? 1.0 - sel_quantile : sel_quantile) &&
-                    r.metric == metric && !ismissing(r.value), tree_extremes_df)
+    extremes_df = filter(r -> (r.bait_id == bait_id) && (r.stat == stat) && (coalesce(r.quantile, NaN) == (stat == "max" ? 1.0 - sel_quantile : sel_quantile)) &&
+                    (r.metric == metric) && !ismissing(r.value), tree_extremes_df)
     bait_stats_plot = PlotlyUtils.permstats_plot(
-        real_binstats_df,
+        realstats_df,
         aggstats_df,
         extremes_df,
-        threshold_range=(0.00, 0.01),
+        threshold_range=(max(0.0, cut_threshold_range[1]*0.75), cut_threshold_range[2]*1.25),
         yaxis_metric=metric)
     #bait_stats_plot.plot.layout[:width] = "300px"
     #bait_stats_plot.plot.layout[:height] = "200px"
