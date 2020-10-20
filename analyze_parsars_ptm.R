@@ -4,6 +4,7 @@ require(Cairo)
 require(ggrastr)
 require(ggrepel)
 require(ggnewscale)
+require(ggforce)
 
 object_contrasts_trunc.df <- tibble(
     contrast_kind = c("treatment_vs_treatment"),
@@ -15,7 +16,7 @@ object_contrasts_trunc.df <- tibble(
 object_contrasts_4show.df <- object_contrasts.df %>%
     dplyr::inner_join(object_contrasts_trunc.df) %>%
     dplyr::filter(treatment_lhs != "infected") %>%
-    dplyr::inner_join(dplyr::select(modelobjs_df, object_id, ptmn_label_no_ptm_type, ptm_id, protein_code)) %>%
+    dplyr::inner_join(dplyr::select(dplyr::filter(modelobjs_df, ptmid_is_reference), object_id, ptmn_label_no_ptm_type, ptm_id, protein_code)) %>%
     dplyr::mutate(is_signif = (p_value <= p_value_threshold) & (abs(median_log2) >= median_log2_threshold),
                   is_hit_nomschecks = is_signif, is_hit=is_hit_nomschecks & is_msvalid_object & !is_contaminant, # & !is_decoy # FIXME
                   p_value_compressed = 10^(-mlog10_pvalue_compress(-log10(p_value))),
@@ -34,6 +35,7 @@ object_contrasts_4show.df <- object_contrasts.df %>%
     dplyr::ungroup()
 
 orgcode_palette <- c(HUMAN="black", contaminant="gray", SARS2 = "#F4982A", CVHSA = "#811A02")
+composed_hit_type_palette <- c(shared="black", SARS_CoV2 = "#F4982A", SARS_CoV = "#811A02", none="gray")
 
 group_by(object_contrasts_4show.df, ptm_type, std_type, contrast) %>% do({
     sel_object_contrast.df <- .
@@ -46,7 +48,7 @@ group_by(object_contrasts_4show.df, ptm_type, std_type, contrast) %>% do({
     nlabels <- nrow(dplyr::filter(sel_object_contrast.df, is_signif & show_label))
     
     p <- ggplot(sel_object_contrast.df,
-                aes(x=median_log2_trunc, y=p_value_compressed, shape=truncation, size=truncation_type, color=orgcode)) +
+                aes(x=median_log2_trunc, y=p_value_compressed, shape=truncation, size=truncation_type, color=composed_hit_type)) +
         geom_hline(data=sel_object_contrast_thresholds.df,
                    aes(yintercept = p_value_threshold), linetype=2, color="darkgray") +
         #geom_hline(data=sel_object_contrast_thresholds.df,
@@ -72,7 +74,8 @@ group_by(object_contrasts_4show.df, ptm_type, std_type, contrast) %>% do({
         #scale_alpha_manual(values=c("TRUE"=1.0, "FALSE"=0.5)) +
         scale_shape_manual(values=point_truncation_shape_palette, guide="none") +
         scale_size_manual(values=point_truncation_size_palette, guide="none") +
-        scale_color_manual(values=orgcode_palette, guide="none") +
+        scale_color_manual(values=composed_hit_type_palette, na.value="black") +
+        #scale_color_manual(values=orgcode_palette, guide="none") +
         #facet_grid(p_value_range ~ contrast, scales = "free_y") +
         ggtitle(sel_contrast, subtitle=str_c("ptm_type=", sel_ptm_type, " std_type=", sel_std_type)) +
         theme_bw_ast()
@@ -93,8 +96,10 @@ object_iactions_4show.df <- filter(object_contrasts.df, contrast_type=="comparis
                                    treatment_rhs %in% c("SARS_CoV2", "SARS_CoV")) %>%
     dplyr::select(std_type, contrast_kind, contrast, timepoint_lhs, timepoint_rhs,
                   contrast_median_log2 = median_log2, contrast_p_value = p_value,
-                  is_signif, is_hit_nomschecks, is_hit, object_id, object_label) %>%
-    dplyr::left_join(dplyr::select(modelobjs_df, ptm_type, object_id, protein_ac, protein_code, ptmn_label_no_ptm_type, is_contaminant, is_viral)) %>%
+                  is_signif, is_hit_nomschecks, is_hit, is_hit_composed, composed_hit_type,
+                  object_id, object_label) %>%
+    dplyr::inner_join(dplyr::select(dplyr::filter(modelobjs_df, ptmid_is_reference),
+                                    ptm_type, object_id, protein_ac, protein_code, ptmn_label_no_ptm_type, is_contaminant, is_viral)) %>%
     #dplyr::filter(!is.na(ptm_type)) %>%
     dplyr::mutate(condition_lhs = str_remove(contrast, "_vs_.+"),
                   condition_rhs = str_remove(contrast, ".+_vs_"),
@@ -109,10 +114,12 @@ object_iactions_4show.df <- filter(object_contrasts.df, contrast_type=="comparis
     dplyr::left_join(dplyr::select(object_contrasts_trunc.df, contrast_kind, contrast_median_log2_max = median_log2_max)) %>%
     dplyr::left_join(dplyr::filter(object_contrasts.df, contrast_type=="comparison") %>%
                          dplyr::select(std_type, contrast_lhs = contrast, object_id, contrast_lhs_p_value = p_value, contrast_lhs_median_log2 = median_log2,
-                                       is_signif_lhs = is_signif, is_hit_nomschecks_lhs = is_hit_nomschecks, is_hit_lhs = is_hit)) %>%
+                                       is_signif_lhs = is_signif, is_hit_nomschecks_lhs = is_hit_nomschecks, is_hit_lhs = is_hit,
+                                       is_hit_composed_lhs = is_hit_composed)) %>%
     dplyr::left_join(dplyr::filter(object_contrasts.df, contrast_type=="comparison") %>%
                          dplyr::select(std_type, contrast_rhs = contrast, object_id, contrast_rhs_p_value = p_value, contrast_rhs_median_log2 = median_log2,
-                                       is_signif_rhs = is_signif, is_hit_nomschecks_rhs = is_hit_nomschecks, is_hit_rhs = is_hit)) %>%
+                                       is_signif_rhs = is_signif, is_hit_nomschecks_rhs = is_hit_nomschecks, is_hit_rhs = is_hit,
+                                       is_hit_composed_rhs = is_hit_composed)) %>%
     dplyr::left_join(dplyr::transmute(dplyr::filter(fit_stats$iactions, str_detect(var, "iaction_labu(?:_replCI)?")),
                                       std_type = if_else(var=="iaction_labu", "median", "replicate"),
                                       object_id, condition_lhs=str_replace(condition, "_(\\d+)h", "@\\1h"),
@@ -121,8 +128,9 @@ object_iactions_4show.df <- filter(object_contrasts.df, contrast_type=="comparis
                                       std_type = if_else(var=="iaction_labu", "median", "replicate"),
                                       object_id, condition_rhs=str_replace(condition, "_(\\d+)h", "@\\1h"),
                                       rhs_median_log2=median_log2 + global_pepmodstate_labu_shift/log(2))) %>%
-    dplyr::mutate(is_foreground = coalesce(is_hit_nomschecks_lhs, FALSE) | coalesce(is_hit_nomschecks_rhs, FALSE),
-                  is_hilite = is_foreground & is_hit_nomschecks,
+    dplyr::mutate(is_foreground = coalesce(is_hit_composed_lhs, FALSE) | coalesce(is_hit_composed_rhs, FALSE),
+                  # coalesce(is_hit_nomschecks_lhs, FALSE) | coalesce(is_hit_nomschecks_rhs, FALSE),
+                  is_hilite = is_foreground,# & is_hit_nomschecks,
                   contrast_lhs_median_log2_trunc = if_else(is.na(contrast_median_log2_max), contrast_lhs_median_log2,
                                                            pmax(pmin(contrast_median_log2_max, contrast_lhs_median_log2), -contrast_median_log2_max)),
                   contrast_rhs_median_log2_trunc = if_else(is.na(contrast_median_log2_max), contrast_rhs_median_log2,
@@ -130,7 +138,7 @@ object_iactions_4show.df <- filter(object_contrasts.df, contrast_type=="comparis
                   show_label = is_foreground,# & (is_hit_nomschecks | is_viral),
                   truncation = scatter_truncation(contrast_lhs_median_log2, contrast_lhs_median_log2_trunc,
                                                   contrast_rhs_median_log2, contrast_rhs_median_log2_trunc,
-                                                  is_hit),
+                                                  composed_hit_type != "none"),
                   truncation_type = point_truncation_type(truncation, is_foreground))
 
 scatter_type <- "contrast"
@@ -139,6 +147,8 @@ group_by(contrast, ptm_type, std_type) %>% group_modify(~{
     kde2d4plot(.x, if (scatter_type == "contrast") { "contrast_lhs_median_log2_trunc" } else { "lhs_median_log2" },
                if (scatter_type == "contrast") { "contrast_rhs_median_log2_trunc" } else { "rhs_median_log2" }, n = 400)$density_df
 }) %>% ungroup()
+
+composed_hit_type_palette <- c(shared="black", SARS_CoV2 = "#F4982A", SARS_CoV = "#811A02", none="gray")
 
 show_labels <- TRUE
 object_iactions_4show.df %>% #filter(bait_id %in% c("NSP2", "ORF8")) %>%
@@ -153,7 +163,7 @@ group_by(contrast, ptm_type, std_type) %>% do({
     manylabels <- sum(sel_object_contrast.df$show_label) > 300
     sel_kde.df <- semi_join(object_iactions_4show_kde.df,
                             dplyr::select(sel_object_contrast.df, contrast, std_type, ptm_type)[1, ]) %>%
-                  dplyr::filter(bin2d_density > 0.01)
+                  dplyr::filter(bin2d_density >= 0.01)
     p <- if (scatter_type == "contrast"){
         ggplot(sel_object_contrast.df,
                aes(x = contrast_lhs_median_log2_trunc, y = contrast_rhs_median_log2_trunc))
@@ -172,11 +182,11 @@ group_by(contrast, ptm_type, std_type) %>% do({
         new_scale_color() +
         #geom_point_rast(data=dplyr::filter(sel_object_contrast.df, !is_foreground),
         #                alpha=0.2, size=0.5, color="darkgray", shape=16L) +
-        geom_abline(slope=1, intercept=sel_object_contrast_thresholds.df$contrast_offset_log2[[1]], color="firebrick", linetype="dashed") +
+        geom_abline(slope=1, intercept=sel_object_contrast_thresholds.df$contrast_offset_log2[[1]], color="dodgerblue4", linetype="dashed") +
         geom_abline(slope=1, intercept=sel_object_contrast_thresholds.df$contrast_offset_log2[[1]] - sel_object_contrast_thresholds.df$median_log2_threshold[[1]],
-                    color="firebrick", linetype="dotted", size=0.5) +
+                    color="dodgerblue4", linetype="dotted", size=0.5) +
         geom_abline(slope=1, intercept=sel_object_contrast_thresholds.df$contrast_offset_log2[[1]] + sel_object_contrast_thresholds.df$median_log2_threshold[[1]],
-                    color="firebrick", linetype="dotted", size=0.5)
+                    color="dodgerblue4", linetype="dotted", size=0.5)
     if (show_labels) {
         p <- p +
         geom_text_repel(data=dplyr::filter(sel_object_contrast.df, show_label),
@@ -186,8 +196,9 @@ group_by(contrast, ptm_type, std_type) %>% do({
     }
     p <- p +
         geom_point(data=dplyr::filter(sel_object_contrast.df, is_foreground),
-                   aes(color=orgcode, shape=truncation, size=truncation_type)) +
-        scale_color_manual(values=orgcode_palette, na.value="black", guide="none") +
+                   aes(color=composed_hit_type, shape=truncation, size=truncation_type)) +
+        scale_color_manual(values=composed_hit_type_palette, na.value="black") +
+        #scale_color_manual(values=orgcode_palette, na.value="black", guide="none") +
         scale_shape_manual(values=point_truncation_shape_palette, guide="none") +
         scale_size_manual(values=if_else(manylabels, 0.5, 1.0) * point_truncation_size_palette, guide="none", ) +
         xlab(str_c("log2(fold-change) ", sel_object_contrast.df$contrast_lhs)) +
