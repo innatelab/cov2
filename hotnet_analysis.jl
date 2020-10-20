@@ -584,3 +584,26 @@ for bait_id in sel_bait_ids, (metric, stat) in [(:flow_avginvlen, "max"), (:flow
         end
     end
 end
+
+sel_bait_id = "SARS_CoV2_ORF7a"
+sel_metric_x = :threshold
+sel_metric_y = :flow_avginvlen
+sel_metric_z = :flow_avghopweight
+max_threshold = 0.01
+df = filter(r -> r.bait_id == sel_bait_id && r.threshold <= max_threshold, tree_stats_df)
+metric3d_plot = plot([
+    scatter3d(combine(groupby(sort!(filter(r -> r.bait_id == sel_bait_id && r.threshold <= max_threshold, perm_tree_stats_df), [:tree, :threshold]),
+                              [:tree])) do tree_gdf
+                tree_df = push!(allowmissing(tree_gdf), tree_gdf[1, :])
+                tree_df[nrow(tree_df), :] .= missing
+                tree_df[nrow(tree_df), :tree] = tree_df[1, :tree]
+                return tree_df
+            end, connectgaps=false,
+            x=sel_metric_x, y=sel_metric_y, z=sel_metric_z, mode="lines", line_color="gray", opacity=0.25, line_size=0.5),
+    scatter3d(filter(r -> r.bait_id == sel_bait_id && r.threshold <= max_threshold, tree_stats_df),
+              x=sel_metric_x, y=sel_metric_y, z=sel_metric_z, marker_color="firebrick", marker_size=2.0)],
+    Layout(title=attr(text=sel_bait_id),
+           scene=attr(xaxis=attr(title=attr(text=string(sel_metric_x))),
+                      yaxis=attr(title=attr(text=string(sel_metric_y))),
+                      zaxis=attr(title=attr(text=string(sel_metric_z))))))
+savehtml(metric3d_plot, joinpath(metrics_plot_path, "metrics3d_$(sel_bait_id)_2.html"))
