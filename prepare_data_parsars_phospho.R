@@ -177,8 +177,8 @@ msdata$ptmns <- dplyr::semi_join(dplyr::filter(dplyr::semi_join(msdata_full$ptmn
 msdata$ptm2gene <- dplyr::semi_join(msdata_full$ptm2gene, msdata$ptmns)
 msdata$ptmn2pepmodstate <- dplyr::semi_join(msdata_full$ptmn2pepmodstate, msdata$ptmns)
 msdata$protein2ptmn <- dplyr::inner_join(msdata$ptmns, msdata$ptm2gene)
-msdata$ptmn_locprobs <- semi_join(msdata_full$ptmn_locprobs, msdata$ptmn2pepmodstate)
-msdata$pepmodstate_intensities <- msdata_full$pepmodstate_intensities %>% filter(coalesce(qvalue, 1.0) <= data_info$qvalue_max) %>%
+msdata$ptmn_locprobs <- semi_join(semi_join(msdata_full$ptmn_locprobs, msdata$ptmn2pepmodstate), dplyr::select(msdata$msruns, msrun))
+msdata$pepmodstate_intensities <- msdata_full$pepmodstate_intensities %>% filter(coalesce(psm_qvalue, 1.0) <= data_info$qvalue_max) %>%
                                   semi_join(dplyr::select(filter(msdata$msruns, is_used), msrun)) %>%
                                   semi_join(msdata$ptmn2pepmodstate)
 # setup experimental design matrices
@@ -437,7 +437,7 @@ pepmodstate_intensities4glm.df <- pepmodstate_intensities.df %>%
 pepmodstate_intensities_pairs4glm.df <- dplyr::inner_join(pepmodstate_intensities4glm.df, pepmodstate_intensities4glm.df,
                                                           by=c("dataset", "infected", "timepoint", "pepmodstate_id")) %>%
   dplyr::filter(msrun.x != msrun.y & !is.na(effect.x) & !is.na(effect.y)) %>%
-  dplyr::filter(!between(effect.x, -0.25, 0.25) & !between(effect.y, -0.25, 0.25))
+  dplyr::filter(!between(effect.x, -0.25, 0.25) | !between(effect.y, -0.25, 0.25))
 
 require(rstan)
 options(mc.cores=8)
@@ -491,7 +491,7 @@ effect_scales.df <- dplyr::transmute(dplyr::filter(effect_scales_fit.df, var=="s
   dplyr::mutate(scale_kind = if_else(infected, "infection_scale", "mock_scale"),
                 #msrun_scale_norm = pmin(2, pmax(0.5, 2^(msrun_scale_log2 - msrun_scale_log2_median))),
                 msrun_scale_norm = msrun_scale/msrun_scale_avg,
-                msrun_short = str_remove(msrun, "phospho_(SARS_)?"),
+                msrun_short = str_remove(msrun, "(phospho|ubi)_(SARS_)?"),
                 msrun_scale_label = sprintf("%.2f", msrun_scale_norm))
 
 effect_scales_plot <- ggplot(effect_scales.df,
