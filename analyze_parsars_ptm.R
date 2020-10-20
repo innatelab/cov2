@@ -350,6 +350,10 @@ sel_objects.df <- modelobjs_df
 treatment_palette <- c(mock="gray", SARS_CoV2 = "#F4982A", SARS_CoV = "#811A02")
 fp_treatment_palette <- c(mock="lightgray", SARS_CoV2 = "gold", SARS_CoV = "salmon")
 
+msdata_full$pepmodstates <- dplyr::mutate(msdata_full$pepmodstates,
+                                          pepmodstate_seq = str_c(pepmod_seq, ".", charge))
+
+require(multidplyr)
 plot_cluster <- new_cluster(16)
 cluster_library(plot_cluster, c("dplyr", "ggplot2", "stringr", "Cairo", "readr", "rlang"))
 cluster_copy(plot_cluster, c("total_msrun_shifts.df", "conditions.df", "fit_stats", "msdata_full", "theme_bw_ast",
@@ -373,7 +377,7 @@ do({
         dplyr::inner_join(conditions.df) %>%
         dplyr::left_join(dplyr::select(dplyr::filter(fit_stats$subobjects, var == "suo_shift"),
                                        ptmn_id, pepmodstate_id, glm_subobject_ix, suo_shift = `50%`)) %>%
-        dplyr::inner_join(msdata_full$pepmodstates) %>%
+        dplyr::inner_join(dplyr::select(msdata_full$pepmodstates, pepmodstate_id, pepmodstate_seq)) %>%
         dplyr::mutate_at(vars(mean, ends_with("%")),
                          list(~exp(. + suo_shift + global_labu_shift)))
     sel_intensity_range.df <- dplyr::group_by(sel_obj_iactions.df, object_id, pepmodstate_seq) %>% dplyr::summarise(
@@ -383,18 +387,21 @@ do({
     sel_obj_msdata.df <- sel_obj.df %>%
         dplyr::inner_join(sel_intensity_range.df) %>%
         dplyr::inner_join(msdata_full$ptmn2pepmodstate) %>%
-        dplyr::inner_join(msdata_full$pepmodstates) %>%
+        dplyr::inner_join(dplyr::select(msdata_full$pepmodstates, pepmodstate_id, pepmodstate_seq)) %>%
         dplyr::inner_join(msdata_full$pepmodstate_intensities) %>%
         dplyr::inner_join(msdata_full$ptmn_locprobs) %>%
         dplyr::inner_join(dplyr::select(total_msrun_shifts.df, msrun, total_msrun_shift)) %>%
-        dplyr::mutate(intensity_norm_orig = intensity_norm,
+        dplyr::mutate(#intensity_norm_orig = intensity_norm,
                       intensity_norm = intensity*exp(-total_msrun_shift),
-                      intensity_norm_orig_trunc = pmin(pmax(intensity_norm_orig, intensity_min), intensity_max),
+                      #intensity_norm_orig_trunc = pmin(pmax(intensity_norm_orig, intensity_min), intensity_max),
                       intensity_norm_trunc = pmin(pmax(intensity_norm, intensity_min), intensity_max),
+                      intensity_used = intensity_norm_trunc#,
+                      #intensity_alt = intensity_norm_orig_trunc
         ) %>%
         dplyr::inner_join(msdata_full$msruns) %>%
         dplyr::mutate(locprob_valid = coalesce(ptm_locprob, 0) >= data_info$locprob_min,
-                      qvalue_valid = coalesce(qvalue, 1) <= data_info$qvalue_max,
+                      qvalue_valid = coalesce(psm_qvalue, 1) <= data_info$qvalue_max,
+                      #qvalue_valid = coalesce(psm_pvalue, 1) <= data_info$pvalue_max,
                       ms_status = case_when(locprob_valid & qvalue_valid ~ "valid",
                                             !locprob_valid & qvalue_valid ~ "bad PTM loc",
                                             locprob_valid & !qvalue_valid ~ "bad ident",
@@ -406,14 +413,14 @@ do({
             geom_ribbon(aes(x = timepoint_num, ymin = `25%`, ymax=`75%`),
                         alpha=0.5, stat = "identity", size=0.5) +
             geom_path(aes(x = timepoint_num, y = `50%`), alpha=0.5, size=1, stat="identity") +
+            #geom_point(data=sel_obj_msdata.df,
+            #           aes(y = intensity_alt, shape=ms_status),
+            #           position = position_jitter(width = 0.75, height = 0, seed=12323), size=0.5, alpha=0.5, show.legend=FALSE) +
             geom_point(data=sel_obj_msdata.df,
-                       aes(y = intensity_norm_trunc, shape=ms_status),
-                       position = position_jitter(width = 0.75, height = 0, seed=12323), size=0.5, alpha=0.5, show.legend=FALSE) +
-            geom_point(data=sel_obj_msdata.df,
-                       aes(y = intensity_norm_orig_trunc, shape=ms_status),
+                       aes(y = intensity_used, shape=ms_status),
                        position = position_jitter(width = 0.75, height = 0, seed=12323), size=1.5) +
             geom_text(data=sel_obj_msdata.df,
-                      aes(y = intensity_norm_orig_trunc, label=replicate),
+                      aes(y = intensity_used, label=replicate),
                       position = position_jitter(width = 0.75, height = 0, seed=12323), size=1, color="lightgray", show.legend=FALSE) +
             theme_bw_ast(base_family = "", base_size = 8) +
             scale_x_continuous(breaks=unique(msdata_full$msruns$timepoint_num)) +
@@ -479,8 +486,8 @@ viral_ptmn_aligned.df <- select(viral_ptm2ptm.df, -agn_match_ratio) %>% distinct
     dplyr::left_join(distinct(select(msdata_full$ptm2gene, hom_ptm_id=ptm_id, hom_protein_ac=protein_ac, hom_ptm_pos=ptm_pos, hom_ptm_AA=ptm_AA_seq))) %>%
     dplyr::left_join(select(msdata_full$ptmns, ptmn_id, ptm_id)) %>%
     #dplyr::left_join(select(msdata_full$ptmns, hom_ptmn_id=ptmn_id, hom_ptm_id=ptm_id)) %>%
-    dplyr::left_join(dplyr::select(msdata_full$ptmn_stats, ptmn_id, pms_qvalue_min)) %>%
-    dplyr::left_join(dplyr::select(msdata_full$ptmn_stats, hom_ptm_id=ptm_id, hom_pms_qvalue_min=pms_qvalue_min) %>%
+    dplyr::left_join(dplyr::select(msdata_full$ptmn_stats, ptmn_id, pms_qvalue_min=ptm_qvalue_min)) %>%
+    dplyr::left_join(dplyr::select(msdata_full$ptmn_stats, hom_ptm_id=ptm_id, hom_pms_qvalue_min=ptm_qvalue_min) %>%
                      dplyr::group_by(hom_ptm_id) %>% dplyr::summarise(hom_pms_qvalue_min=min(hom_pms_qvalue_min, na.rm=TRUE), .groups="drop")) %>%
     dplyr::filter(pmin(coalesce(pms_qvalue_min, 1), coalesce(hom_pms_qvalue_min, 1)) <= ptm_qvalue_max) %>%
     dplyr::mutate(ptm_status = case_when(is_observed ~ "observed",
@@ -496,7 +503,7 @@ viral_ptmn_stats.df <- dplyr::full_join(viral_ptmn_aligned.df, msdata_full$msrun
     dplyr::left_join(msdata_full$ptmn2pepmodstate) %>%
     dplyr::left_join(msdata_full$pepmodstate_intensities) %>%
     dplyr::group_by(ptmn_id, treatment) %>%
-    dplyr::summarise(ptm_treatment_qvalue_min = min(qvalue, na.rm=TRUE),
+    dplyr::summarise(ptm_treatment_qvalue_min = min(psm_qvalue, na.rm=TRUE),
                      .groups="drop")
 
 viral_ptmn_intensity.df <- dplyr::full_join(viral_ptmn_aligned.df, conditions.df, by=character()) %>%
