@@ -25,7 +25,7 @@ Revise.includet(joinpath(misc_scripts_path, "phosphositeplus_reader.jl"));
 pmsreports = Dict(name => begin
     @info "Reading $name report $filename..."
     report_df, colgroups = MSImport.Spectronaut.read_report(joinpath(data_path, proj_info.msfolder, filename),
-            import_data=[:protgroup, :peptide, :pepmodstate, :quantity, :metrics], delim=',')
+            import_data=[:protgroup, :peptide, :pepmodstate, :quantity, :metrics], delim='\t')
     (data = report_df, colgroups = colgroups)
 end for (name, filename) in [(:phospho, "20201005_covid_phospho_EG level.xls")])
 
@@ -148,15 +148,16 @@ countmap(filter(r -> r.ptm_is_reference, ptm2gene_df).ptm_type)
 ptmn2pms_df = innerjoin(select!(innerjoin(
         select(ptm2gene_df, [:ptm_id, :ptm_label, :protein_ac, :ptm_type, :ptm_AA_seq, :ptm_pos], copycols=false),
         ptm2pms2protein_df, on=[:protein_ac, :ptm_type, :ptm_AA_seq, :ptm_pos]),
-        [:ptm_id, :ptm_label, :ptm_type, :pepmodstate_id]) |> unique!,
+        [:ptm_id, :ptm_label, :ptm_type, :peptide_id, :pepmodstate_id, :ptm_offset]) |> unique!,
         select(pepmodstates_df, [:pepmodstate_id, :nselptms], copycols=false), on=:pepmodstate_id)
 ptmns_df = unique!(select(ptmn2pms_df, [:ptm_id, :ptm_label, :ptm_type, :nselptms]))
 sort!(ptmns_df, [:ptm_type, :ptm_id, :nselptms])
 ptmns_df.ptmn_id = 1:nrow(ptmns_df)
 ptmns_df.ptmn_label = categorical(ptmns_df.ptm_label .* "_M" .* string.(ptmns_df.nselptms))
 ptmn2pms_df = innerjoin(ptmn2pms_df, select(ptmns_df, Not(:ptm_label), copycols=false), on=[:ptm_id, :ptm_type, :nselptms])
-select!(ptmn2pms_df, Not([:ptm_type, :nselptms]))
 sort!(ptmn2pms_df, [:ptmn_id, :pepmodstate_id])
+
+ptm2ptmgroup_df, ptmn2ptmngroup_df, ptmgroup2ptmngroup_df = PTMExtractor.ptmgroups(ptmn2pms_df, verbose=true)
 
 ptmn2pms2protein_df = innerjoin(innerjoin(ptm2pms2protein_df, ptm2protein_df, on=[:protein_ac, :ptm_type, :ptm_pos, :ptm_AAs, :ptm_AA_seq]),
                                 ptmn2pms_df, on=[:pepmodstate_id, :ptm_id])
@@ -221,7 +222,8 @@ psitep_annots_df = PhosphoSitePlus.combine_annotations(psitep_annot_dfs)
 psitepseqs_df = Fasta.read_phosphositeplus(joinpath(psitep_path, "Phosphosite_PTM_seq_no_header.fasta"))
 psitepseqs_df.is_ref_isoform = .!occursin.(Ref(r"-\d+$"), psitepseqs_df.protein_ac);
 
-@save(joinpath(scratch_path, "phosphositeplus_annotations_20200828.jld2"), psitep_annot_dfs, psitep_annots_df)
+@save(joinpath(scratch_path, "phosphositeplus_annotations_20200828.jld2"), psitep_annot_dfs, psitep_annots_df, psitepseqs_df)
+#@load(joinpath(scratch_path, "phosphositeplus_annotations_20200828.jld2"), psitep_annot_dfs, psitep_annots_df)
 
 # map PTMs to PhosphoSitePlus sequences
 ptm2psitep_df = PTMExtractor.map_aapos(ptm2protein_df, proteins_df, psitepseqs_df,
@@ -236,6 +238,25 @@ ptm_annots_df = innerjoin(select!(filter(r -> r.pos_match && r.AA_match, ptm2psi
                                   [:ptm_type, :ptm_pos, :ptm_AA_seq, :protein_ac]),
                           psitep_annots_df, on=[:protein_ac, :ptm_pos])
 filter(r -> !ismissing(r.kinase_gene_names), ptm_annots_df)
+
+ptms_known_df = unique!(select!(filter(r -> coalesce(r.ptm_is_known, false), ptm_annots_df), [:ptm_type, :ptm_pos, :ptm_AA_seq, :protein_ac, :ptm_is_known]))
+
+protein_ranks=Dict(r.protein_ac => ProtgroupXMatch.rank_uniprot(r) for r in eachrow(rename!(copy(proteins_df, copycols=false), :genename => :gene_name)))
+
+ptmns_df2 = leftjoin(innerjoin(innerjoin(innerjoin(ptmns_df, ptm2ptmgroup_df, on=[:ptm_type, :ptm_id]), ptmn2ptmngroup_df, on=[:ptm_type, :ptmn_id, :nselptms]),
+                      select!(filter(r -> r.ptm_is_reference, ptm2gene_df), [:ptm_id, :protein_ac, :genename, :ptm_pos]), on=:ptm_id),
+                     ptms_known_df, on=[:protein_ac, :ptm_pos, :ptm_type])
+@assert ptmns_df2.ptmn_id == ptmns_df.ptmn_id
+ptmns_df2.protein_rank = get.(Ref(protein_ranks), ptmns_df2.protein_ac, missing)
+ptmns_df2.ptm_is_known = coalesce.(ptmns_df2.ptm_is_known, false)
+ptmns_df2[!, :ptmid_is_reference] .= false
+for ptmgroup_df in groupby(ptmns_df2, :ptmgroup_id)
+    ptmorder = sortperm(ptmgroup_df, [order(:ptm_is_known, rev=true), :protein_rank, :genename, :protein_ac, :ptm_pos])
+    ptmgroup_df.ptmid_is_reference[ptmorder[1]] = true
+end
+open(GzipCompressorStream, joinpath(output_path, "ptmns_grouped.txt.gz"), "w") do io
+    CSV.write(io, ptmns_df2, delim='\t')
+end
 
 # map viral PTMs to each other
 using DataFrames, BioAlignments
