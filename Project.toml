@@ -1,5 +1,4 @@
 [deps]
-Arpack = "7d9fca2a-8960-54d3-9f78-7d1dccf2cb97"
 BioAlignments = "00701ae9-d1dc-5365-b64a-a3a3ebf5695e"
 BioSequences = "7e6ae17a-c86d-528c-b3b9-7f778a29fe59"
 BlackBoxOptim = "a134a8b2-14d6-55f6-9291-3336d3ab0209"
@@ -19,7 +18,6 @@ JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 LightGraphs = "093fc24a-ae57-5d10-9952-331d41423f4d"
 OBOParse = "afb48802-0cf5-5a61-b18d-a3da2e9c5fb6"
 OptEnrichedSetCover = "978bf44e-56f7-5307-a64b-0cd31d0fa923"
-Parsers = "69de0a69-1ddd-5017-9359-2bf0b02dc9f0"
 PlotlyBase = "a03496cd-edff-5a9b-9e67-9cda94a718b5"
 PlotlyJS = "f0f68f2c-4968-5e81-91da-67840de0976a"
 ProgressMeter = "92933f4c-e287-5a05-a399-4b506db050ca"
