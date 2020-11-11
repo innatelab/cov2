@@ -16,7 +16,7 @@ object_contrasts_trunc.df <- tibble(
 object_contrasts_4show.df <- object_contrasts.df %>%
     dplyr::inner_join(object_contrasts_trunc.df) %>%
     dplyr::filter(treatment_lhs != "infected") %>%
-    dplyr::inner_join(dplyr::select(dplyr::filter(modelobjs_df, ptmid_is_reference), object_id, ptmn_label_no_ptm_type, ptm_id, protein_code)) %>%
+    dplyr::inner_join(dplyr::select(dplyr::filter(modelobjs_df, ptmid_is_reference), object_id, ptm_label_no_ptm_type, ptm_id, protein_code)) %>%
     dplyr::mutate(is_signif = (p_value <= p_value_threshold) & (abs(median_log2) >= median_log2_threshold),
                   is_hit_nomschecks = is_signif, is_hit=is_hit_nomschecks & is_msvalid_object & !is_contaminant, # & !is_decoy # FIXME
                   p_value_compressed = 10^(-mlog10_pvalue_compress(-log10(p_value))),
@@ -64,7 +64,7 @@ group_by(object_contrasts_4show.df, ptm_type, std_type, contrast) %>% do({
         geom_point(data=dplyr::filter(sel_object_contrast.df, is_signif & !is_hit), shape=1) +
         geom_point(data=dplyr::filter(sel_object_contrast.df, is_signif & is_hit)) +
         geom_text_repel(data=dplyr::filter(sel_object_contrast.df, is_signif & show_label),
-                        aes(label = ptmn_label_no_ptm_type),
+                        aes(label = ptm_label_no_ptm_type),
                         size=if_else(nlabels > 20, 2.5, 3.5),
                         force=if_else(nlabels > 20, 0.25, 1.0),
                         label.padding=if_else(nlabels > 20, 0.1, 0.25),
@@ -99,7 +99,7 @@ object_iactions_4show.df <- filter(object_contrasts.df, contrast_type=="comparis
                   is_signif, is_hit_nomschecks, is_hit, is_hit_composed, composed_hit_type,
                   object_id, object_label) %>%
     dplyr::inner_join(dplyr::select(dplyr::filter(modelobjs_df, ptmid_is_reference),
-                                    ptm_type, object_id, protein_ac, protein_code, ptmn_label_no_ptm_type, is_contaminant, is_viral)) %>%
+                                    ptm_type, object_id, protein_ac, protein_code, ptm_label_no_ptm_type, is_contaminant, is_viral)) %>%
     #dplyr::filter(!is.na(ptm_type)) %>%
     dplyr::mutate(condition_lhs = str_remove(contrast, "_vs_.+"),
                   condition_rhs = str_remove(contrast, ".+_vs_"),
@@ -190,7 +190,7 @@ group_by(contrast, ptm_type, std_type) %>% do({
     if (show_labels) {
         p <- p +
         geom_text_repel(data=dplyr::filter(sel_object_contrast.df, show_label),
-                        aes(label = ptmn_label_no_ptm_type),
+                        aes(label = ptm_label_no_ptm_type),
                         size=ifelse(manylabels, 2.5, 3.5),
                         show.legend = FALSE, segment.color = "gray")
     }
