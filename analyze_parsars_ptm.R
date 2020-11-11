@@ -182,7 +182,8 @@ group_by(contrast, ptm_type, std_type) %>% do({
         new_scale_color() +
         #geom_point_rast(data=dplyr::filter(sel_object_contrast.df, !is_foreground),
         #                alpha=0.2, size=0.5, color="darkgray", shape=16L) +
-        geom_abline(slope=1, intercept=sel_object_contrast_thresholds.df$contrast_offset_log2[[1]], color="dodgerblue4", linetype="dashed") +
+        geom_abline(slope=1, intercept=sel_object_contrast_thresholds.df$contrast_offset_log2[[1]],
+                    color="dodgerblue4", linetype="dashed") +
         geom_abline(slope=1, intercept=sel_object_contrast_thresholds.df$contrast_offset_log2[[1]] - sel_object_contrast_thresholds.df$median_log2_threshold[[1]],
                     color="dodgerblue4", linetype="dotted", size=0.5) +
         geom_abline(slope=1, intercept=sel_object_contrast_thresholds.df$contrast_offset_log2[[1]] + sel_object_contrast_thresholds.df$median_log2_threshold[[1]],
@@ -341,8 +342,6 @@ ggsave(contaminants_plot, file = file.path(analysis_path, "plots", str_c(msfolde
                                            str_c(project_id, "_", msfolder, '_', fit_version, "_contaminants.pdf")),
        width=16, height=12, device = cairo_pdf)
 
-require(multidplyr)
-
 sel_std_type <- "median"
 sel_objects.df <- dplyr::filter(modelobjs_df, object_id == 26850L)# str_detect(object_label, "Phospho_CON__P12763_S325_M2"))
 sel_objects.df <- modelobjs_df
@@ -460,100 +459,331 @@ do({
     tibble()
 })
 
-viral_ptm2ptm.df <- read_tsv(file.path(data_path, msfolder, str_c("ptm_extractor_", data_version),
-                                       str_c("viral_ptm2ptm_", data_version, ".txt"))) %>%
-    left_join(dplyr::select(msdata_full$proteins, protein_ac, is_viral, is_contaminant, genename)) %>%
-    left_join(dplyr::rename_all(dplyr::select(msdata_full$proteins, protein_ac, is_viral, is_contaminant, genename), ~ str_c("hom_", .))) %>%
-    mutate(protein_ac_pair = if_else(protein_ac < hom_protein_ac,
-                                str_c(protein_ac, "-", hom_protein_ac),
-                                str_c(hom_protein_ac, "-", protein_ac)),
-           genename_short = str_remove(genename, "SARS_CoV\\d?_"),
-           hom_genename_short = str_remove(hom_genename, "SARS_CoV\\d?_"),
-           genename_pair = if_else(is.na(hom_genename_short) | (genename_short == hom_genename_short),
-                                   genename_short,
-                                   if_else(genename_short < hom_genename_short,
-                                           str_c(genename_short, "_", hom_genename_short),
-                                           str_c(hom_genename_short, "_", genename_short))),
-           ptm_correct = (ptm_type == "GlyGly" & ptm_AA_seq %in% "K") |
-               (ptm_type == "Phospho" & ptm_AA_seq %in% c("S","T","Y")),
-           hom_ptm_correct = (ptm_type == "GlyGly" & hom_ptm_AA %in% "K") |
-               (ptm_type == "Phospho" & hom_ptm_AA %in% c("S","T","Y")))
+object_effects.df <- dplyr::mutate(object_effects.df,
+                                   timepointXtreatment_effect_type = case_when(as.logical(replace_na(infected, FALSE)) ~ "common",
+                                                                               replace_na(strain == "SARS_CoV2", FALSE) ~ "specific",
+                                                                               TRUE ~ NA_character_))
+object_effects4corr.df <- dplyr::filter(object_effects.df, !is.na(timepointXtreatment_effect_type) & (std_type == "replicate") & !is.na(timepoint)) %>%
+    pivot_wider(c(ptmn_id, timepoint), names_from = timepointXtreatment_effect_type, values_from = c("median_log2")) %>%
+    dplyr::filter(between(common, -4, 4) & between(specific, -0.5, 0.5)) %>%
+    # & !(between(common, -0.1, 0.1) & between(specific, -0.1, 0.1))) %>%
+    dplyr::mutate(common_bin = cut(common, 80)) %>%
+    dplyr::group_by(common_bin) %>%
+    dplyr::slice_sample(n = 500) %>%
+    dplyr::ungroup()
 
-ptm_qvalue_max <- 1E-3
+effect_scatter_plot <- ggplot(object_effects4corr.df) +
+    geom_density2d_filled(aes(x = common, y = specific, alpha=after_stat(level_mid)), fill="midnightblue", bins=100, contour_var = "density") +
+    #scale_fill_viridis_c(option="cividis", trans = power_trans(0.5), limits=c(0.04, 3), na.value = "#00000000") +
+    scale_alpha_continuous(trans = power_trans(0.5), limits=c(0.04, 2), na.value = 0) +
+    facet_wrap(~ timepoint) +
+    theme_bw_ast()
+effect_scatter_plot
+ggsave(effect_scatter_plot, file = file.path(analysis_path, "plots", str_c(msfolder, '_', fit_version),
+                                             str_c(project_id, "_", msfolder, '_', fit_version, "_effects_scatter.pdf")),
+       width=16, height=16, device = cairo_pdf)
 
-viral_ptmn_aligned.df <- select(viral_ptm2ptm.df, -agn_match_ratio) %>% distinct() %>%
-    dplyr::left_join(distinct(select(msdata_full$ptm2gene, ptm_id, protein_ac, is_viral, is_contaminant, ptm_pos, ptm_AA_seq))) %>%
-    dplyr::left_join(distinct(select(msdata_full$ptm2gene, hom_ptm_id=ptm_id, hom_protein_ac=protein_ac, hom_ptm_pos=ptm_pos, hom_ptm_AA=ptm_AA_seq))) %>%
-    dplyr::left_join(select(msdata_full$ptmns, ptmn_id, ptm_id)) %>%
-    #dplyr::left_join(select(msdata_full$ptmns, hom_ptmn_id=ptmn_id, hom_ptm_id=ptm_id)) %>%
-    dplyr::left_join(dplyr::select(msdata_full$ptmn_stats, ptmn_id, pms_qvalue_min=ptm_qvalue_min)) %>%
-    dplyr::left_join(dplyr::select(msdata_full$ptmn_stats, hom_ptm_id=ptm_id, hom_pms_qvalue_min=ptm_qvalue_min) %>%
-                     dplyr::group_by(hom_ptm_id) %>% dplyr::summarise(hom_pms_qvalue_min=min(hom_pms_qvalue_min, na.rm=TRUE), .groups="drop")) %>%
-    dplyr::filter(pmin(coalesce(pms_qvalue_min, 1), coalesce(hom_pms_qvalue_min, 1)) <= ptm_qvalue_max) %>%
-    dplyr::mutate(ptm_status = case_when(is_observed ~ "observed",
-                                         ptm_correct ~ "potential",
-                                         TRUE ~ "N/A"),
-                  organism_short = case_when(organism == "Severe acute respiratory syndrome coronavirus 2 OX=2697049" ~ "SARS_CoV2",
-                            organism == "Human SARS coronavirus OX=694009" ~ "SARS_CoV",
-                            TRUE ~ organism))
-View(filter(viral_ptm2ptm.df, genename_short == "ORF9b" & ptm_pos == 81))
+pepmodstate_intensities_treatwide.df <- pivot_wider(dplyr::inner_join(msdata_full$pepmodstate_intensities, msdata_full$msruns) %>%
+                                                   dplyr::filter(timepoint_num > 0) %>%
+                                                   dplyr::mutate(intensity_norm_log2 = log2(intensity_norm)),
+            c(pepmodstate_id, timepoint, replicate), values_from=c(intensity_norm_log2), names_from="treatment", names_sep=".") %>%
+    dplyr::inner_join(dplyr::filter(msdata_full$pepmodstates, between(nselptms, 1, 2)))
+pepmodstate_intensities_treatwide.df <- mutate(pepmodstate_intensities_treatwide.df,
+                                          CoV2_vs_mock = SARS_CoV2 - mock,
+                                          SARS_vs_mock = SARS_CoV - mock,
+                                          infected_vs_mock = 0.5*(SARS_vs_mock + CoV2_vs_mock),
+                                          CoV2_vs_SARS = 0.5*(CoV2_vs_mock - SARS_vs_mock))
+pepmodstate_intensities_treatwide4corr.df <- pepmodstate_intensities_treatwide.df %>%
+    dplyr::filter(between(infected_vs_mock, -2, 2) & between(CoV2_vs_SARS, -1, 1)) %>%
+    dplyr::group_by(timepoint) %>%
+    dplyr::mutate(common_bin = as.integer(cut(infected_vs_mock, 80))) %>%
+    dplyr::group_by(replicate, timepoint, nselptms, common_bin) %>%
+    dplyr::slice_sample(n = 1000) %>%
+    dplyr::ungroup()
+intensity_scatter_plot <- ggplot(pepmodstate_intensities_treatwide4corr.df) +
+    geom_density2d_filled(aes(x = infected_vs_mock, y = CoV2_vs_SARS, alpha=after_stat(level_mid)), fill="midnightblue", bins=60, contour_var = "density") +
+    #scale_fill_viridis_c(option="cividis", trans = power_trans(1.0), limits=c(0.04, 2), na.value = "#00000000") +
+    scale_alpha_continuous(trans = power_trans(0.5), limits=c(0.04, 2), na.value = 0) +
+    facet_grid(replicate + nselptms ~ timepoint) +
+    theme_bw_ast()
+intensity_scatter_plot
+ggsave(intensity_scatter_plot, file = file.path(analysis_path, "plots", str_c(msfolder, '_', fit_version),
+                                             str_c(project_id, "_", msfolder, '_', fit_version, "_intensity_scatter_treatment.pdf")),
+       width=20, height=40, device = cairo_pdf)
 
-viral_ptmn_stats.df <- dplyr::full_join(viral_ptmn_aligned.df, msdata_full$msruns, by=character()) %>%
-    dplyr::left_join(dplyr::select(msdata_full$ptmns, ptmn_id, ptm_id)) %>%
-    dplyr::left_join(msdata_full$ptmn2pepmodstate) %>%
-    dplyr::left_join(msdata_full$pepmodstate_intensities) %>%
-    dplyr::group_by(ptmn_id, treatment) %>%
-    dplyr::summarise(ptm_treatment_qvalue_min = min(psm_qvalue, na.rm=TRUE),
-                     .groups="drop")
+pepmodstate_intensities_timewide.df <- pivot_wider(dplyr::inner_join(msdata_full$pepmodstate_intensities, msdata_full$msruns) %>%
+                                                   dplyr::filter(timepoint_num > 0) %>%
+                                                   dplyr::mutate(intensity_log2 = log2(intensity_norm)),
+                                               c(pepmodstate_id, treatment, replicate), values_from=c(intensity_log2),
+                                               names_from="timepoint", names_sep=".", names_glue = "{.value}.{timepoint}h") %>%
+    dplyr::inner_join(dplyr::filter(msdata_full$pepmodstates, between(nselptms, 1, 2)))
+pepmodstate_intensities_timewide.df <- mutate(pepmodstate_intensities_timewide.df,
+                                          intensity_log2.12_vs_6 = intensity_log2.12h - intensity_log2.6h,
+                                          intensity_log2.24_vs_12 = intensity_log2.24h - intensity_log2.12h)
+pepmodstate_intensities_timewide4corr.df <- pepmodstate_intensities_timewide.df %>%
+    dplyr::filter(between(intensity_log2.12_vs_6, -2, 2) & between(intensity_log2.24_vs_12, -2, 2)) %>%
+    dplyr::group_by(treatment) %>%
+    dplyr::mutate(common_bin = as.integer(cut(intensity_log2.24_vs_12, 80))) %>%
+    dplyr::group_by(replicate, treatment, nselptms, common_bin) %>%
+    dplyr::slice_sample(n = 500) %>%
+    dplyr::ungroup()
+intensity_scatter_plot <- ggplot(pepmodstate_intensities_timewide4corr.df) +
+    geom_density2d_filled(aes(x = intensity_log2.24_vs_12, y = intensity_log2.12_vs_6, alpha=after_stat(level_mid)), fill="midnightblue", bins=100, contour_var = "density") +
+    #scale_fill_viridis_c(option="cividis", trans = power_trans(1.0), limits=c(0.04, 2), na.value = "#00000000") +
+    scale_alpha_continuous(trans = power_trans(0.5), limits=c(0.04, 1), na.value = 0) +
+    facet_grid(replicate + nselptms ~ treatment) +
+    theme_bw_ast()
+intensity_scatter_plot
+ggsave(intensity_scatter_plot, file = file.path(analysis_path, "plots", str_c(msfolder, '_', fit_version),
+                                                str_c(project_id, "_", msfolder, '_', fit_version, "_intensity_scatter_time.pdf")),
+       width=16, height=40, device = cairo_pdf)
 
-viral_ptmn_intensity.df <- dplyr::full_join(viral_ptmn_aligned.df, conditions.df, by=character()) %>%
-    dplyr::left_join(viral_ptmn_stats.df) %>%
-    dplyr::left_join(dplyr::select(filter(fit_stats$iactions, var == "iaction_labu"), ptmn_id, nselptms, condition, median_log2)) %>%
-    dplyr::mutate(ptm_id = if_else(is.na(ptm_id), -hom_ptm_id, ptm_id)) %>% # assign some ptm_id for unobserved ptm
-    dplyr::filter(treatment == organism_short) %>%
-    # show only the highest ptmn_id per ptm_id
-    dplyr::group_by(ptm_id, condition) %>% dplyr::filter(row_number(-coalesce(100 + median_log2, 0)) == 1L) %>% dplyr::ungroup() %>%
-    dplyr::mutate(timepoint_label = factor(str_c(timepoint, "h p.i."), levels=str_c(sort(unique(conditions.df$timepoint)), "h p.i.")),
-                  shown_ptm_pos = if_else(is.na(agn_ptm_pos), ptm_pos, agn_ptm_pos),
-                  shown_median_log2 = coalesce(global_labu_shift/log(2) + median_log2, 1),
-                  shown_median_log2 = if_else(organism_short == "SARS_CoV2", shown_median_log2, -shown_median_log2),
-                  ptm_label = str_c(ptm_AA_seq, ptm_pos, if_else(coalesce(nselptms, 1) > 1, str_c(" (M", nselptms,")"), "")),
-                  ptm_status = case_when(ptm_status == "observed" & ptm_treatment_qvalue_min > ptm_qvalue_max ~ "observed (high q-value)",
-                                         TRUE ~ ptm_status))
+pepmodstate_intensities_wide.df <- pivot_wider(dplyr::inner_join(msdata_full$pepmodstate_intensities, msdata_full$msruns) %>%
+                                               dplyr::inner_join(total_msrun_shifts.df) %>%
+                                               dplyr::filter(timepoint_num > 0) %>%
+                                               dplyr::mutate(intensity_log2 = log2(intensity_norm) - total_msrun_shift/log(2)),
+                                               c(pepmodstate_id, condition), values_from=c(intensity_log2),
+                                               names_from="replicate", names_sep=".", names_glue = "{.value}.{replicate}") %>%
+    dplyr::inner_join(dplyr::filter(msdata_full$pepmodstates, between(nselptms, 1, 1)))
+pepmodstate_intensities_wide4corr.df <- pepmodstate_intensities_wide.df %>%
+    #dplyr::filter(between(intensity_log2.1, -2, 2) & between(intensity_log2.2, -2, 2)) %>%
+    dplyr::group_by(condition) %>%
+    dplyr::mutate(common_bin = as.integer(cut(intensity_log2.1, 80))) %>%
+    dplyr::group_by(condition, nselptms, common_bin) %>%
+    dplyr::slice_sample(n = 100) %>%
+    dplyr::ungroup()
+intensity_scatter_plot <- ggplot(pepmodstate_intensities_wide4corr.df) +
+    geom_abline(intercept = 0, slope = 1, color="firebrick") +
+    geom_density2d_filled(aes(x = intensity_log2.1, y = intensity_log2.4, alpha=after_stat(level_mid)), fill="midnightblue", bins=25, contour_var = "density") +
+    #scale_fill_viridis_c(option="cividis", trans = power_trans(1.0), limits=c(0.04, 2), na.value = "#00000000") +
+    #scale_alpha_continuous(trans = power_trans(0.5), limits=c(0.005, 0.2), na.value = 0) +
+    scale_alpha_continuous(trans = power_trans(0.5), limits=c(0.002, 0.05), na.value = 0) +
+    scale_x_continuous(limits=c(12,24)) + scale_y_continuous(limits=c(12,24)) +
+    facet_wrap(~ condition, scales = "free", ncol=4) +
+    theme_bw_ast()
+intensity_scatter_plot
+ggsave(intensity_scatter_plot, file = file.path(analysis_path, "plots", str_c(msfolder, '_', fit_version),
+                                                str_c(project_id, "_", msfolder, '_', fit_version, "_intensity_scatter_14.pdf")),
+       width=20, height=16, device = cairo_pdf)
 
-View(filter(viral_ptmn_intensity.df, genename_short == "S" & ptm_pos == 478))
+pepmodstate_intensities.df <- msdata_full$pepmodstate_intensities %>%
+    dplyr::inner_join(total_msrun_shifts.df) %>%
+    dplyr::mutate(intensity_norm = intensity_norm*exp(-total_msrun_shift),
+                  intensity_norm_log2 = log2(intensity_norm)) %>%
+    inner_join(msdata_full$msruns) %>%
+    dplyr::group_by(dataset, pepmodstate_id) %>%
+    dplyr::mutate(intensity_median = median(intensity_norm, na.rm=TRUE),
+                  intensity_mock0h = median(intensity_norm[condition == "mock_0h"], na.rm=TRUE),
+                  .groups="drop") %>%
+    dplyr::group_by(dataset, pepmodstate_id, timepoint) %>%
+    dplyr::mutate(intensity_mock = median(intensity_norm[treatment == "mock"], na.rm=TRUE),
+                  intensity_infected = median(intensity_norm[treatment != "mock"], na.rm=TRUE),
+                  .groups="drop") %>%
+    dplyr::group_by(dataset, pepmodstate_id, condition) %>%
+    dplyr::mutate(intensity_cond = median(intensity_norm, na.rm=TRUE),
+                  .groups="drop") %>%
+    dplyr::mutate(intensity_cond_log2 = log2(intensity_cond),
+                  intensity_infected_log2 = log2(intensity_infected),
+                  intensity_mock_log2 = log2(intensity_mock),
+                  intensity_mock0h_log2 = log2(intensity_mock0h),
+                  intensity_median_log2 = log2(intensity_median),
+                  intensity_cond_vs_mock_log2 = intensity_cond_log2 - intensity_mock_log2,
+                  intensity_cond_vs_mock0h_log2 = intensity_cond_log2 - intensity_mock0h_log2,
+                  intensity_infected_vs_mock_log2 = intensity_infected_log2 - intensity_mock_log2,
+                  intensity_infected_vs_mock0h_log2 = intensity_infected_log2 - intensity_mock0h_log2,
+                  intensity_vs_mock_log2 = intensity_norm_log2 - intensity_mock_log2,
+                  intensity_vs_mock0h_log2 = intensity_norm_log2 - intensity_mock0h_log2)
+pepmodstate_intensities.df <- dplyr::mutate(pepmodstate_intensities.df,
+                                            infected = treatment != "mock") %>%
+    dplyr::inner_join(dplyr::select(msdata_full$pepmodstates, pepmodstate_id, nselptms))
 
-ptm_palette <- c("Phospho" = "royalblue", "GlyGly" = "black", "N/")
-ptm_status_palette <- c("observed"=19L, "observed (high q-value)"=10L, "potential" = 21L, "N/A" = 4L)
-
-group_by(viral_ptmn_intensity.df, genename_pair, agn_len) %>%
-group_walk(~{
-    sel_iactions.df <- .x
-    viral_gene <- .y$genename_pair[[1]]
-    genenames_df <- semi_join(viral_ptm2ptm.df, .y) %>% dplyr::select(genename, hom_genename) %>% dplyr::distinct()
-    genenames <- c(genenames_df$genename, genenames_df$hom_genename)
-    genenames <- sort(unique(genenames[!is.na(genenames)]), decreasing = TRUE)
-    message("Plotting PTMs of ", viral_gene)
-    p <- ggplot(sel_iactions.df, aes(x = agn_ptm_pos, y = shown_median_log2, color = organism_short)) +
-        geom_hline(yintercept = 0, color = "black", size = 1.5) +
-        geom_segment(aes(xend = agn_ptm_pos, y = 0, yend = shown_median_log2)) +
-        geom_point(aes(shape=ptm_status), fill="white") +
-        scale_color_manual("Virus", values = treatment_palette) +
-        new_scale_color() +
-        geom_text_repel(data=filter(sel_iactions.df, treatment == "SARS_CoV2" & ptm_status != "N/A"),
-                        aes(label = ptm_label, color=ptm_type), min.segment.length=0.2, segment.alpha=0.5, segment.size=0.25, nudge_y = 1) +
-        geom_text_repel(data=filter(sel_iactions.df, treatment == "SARS_CoV" & ptm_status != "N/A"),
-                        aes(label = ptm_label, color=ptm_type), min.segment.length=0.2, segment.alpha=0.5, segment.size=0.25, nudge_y = -1) +
-        scale_color_manual("PTM Type", values = ptm_palette) +
-        scale_shape_manual("PTM Status", values = ptm_status_palette) +
-        scale_x_continuous("Aligned Position", limits=c(0L, .y$agn_len[[1]])) +
-        facet_grid(timepoint_label ~ .) +
-        theme_bw_ast(base_family = "") +
-        ggtitle(str_c("PTMs on ", str_c(genenames, collapse="/"), " proteins"))
-    plot_path <- file.path(analysis_path, "plots", str_c(msfolder, '_', fit_version), "viral_ptm")
-    if (!dir.exists(plot_path)) dir.create(plot_path, recursive = TRUE)
-    ggsave(p, file = file.path(plot_path, str_c(project_id, "_", msfolder, '_', fit_version, "_viral_",
-                                                viral_gene, #"_qvalue_1E-3", 
-                                                ".pdf")),
-           width=14, height=16, device = cairo_pdf)
+pepmodstate_intensities_pairs.df <- dplyr::inner_join(pepmodstate_intensities.df, pepmodstate_intensities.df,
+                                                      by = c("dataset", "timepoint", "infected", "pepmodstate_id", "nselptms")) %>%
+    dplyr::filter(between(nselptms, 1, 3))
+group_by(dplyr::filter(pepmodstate_intensities_pairs.df, (msrun.x != msrun.y) & (timepoint != 0)), dataset, timepoint, infected) %>% do({
+    pms_intensity_scatter.df <- .
+    sel_ds <- pms_intensity_scatter.df$dataset[[1]]
+    sel_timepoint <- pms_intensity_scatter.df$timepoint[[1]]
+    sel_infected <- pms_intensity_scatter.df$infected[[1]]
+    message("Plotting dataset=", sel_ds, " timepoint=", sel_timepoint, "h infected=", sel_infected)
+    intensity_scatter_plot <- ggplot(pms_intensity_scatter.df) +
+        geom_abline(intercept = 0, slope = 1, color="firebrick") +
+        geom_point_rast(aes(x = intensity_vs_mock_log2.x, y = intensity_vs_mock_log2.y, color=factor(nselptms)),
+                        fill="midnightblue", size=1, alpha=0.25) +
+        scale_color_manual(values=c("1" = "black", "2" = "midnightblue", "3" = "sienna4")) +
+        #geom_density2d_filled(aes(x = intensity_vs_mock_log2.2, y = intensity_vs_mock_log2.4, alpha=after_stat(level_mid)),
+        #                      fill="midnightblue", bins=100, contour_var = "density") +
+        #scale_fill_viridis_c(option="cividis", trans = power_trans(1.0), limits=c(0.04, 2), na.value = "#00000000") +
+        #scale_alpha_continuous(trans = power_trans(1.0), limits=c(0.05, 1.0), na.value = 0) +
+        scale_x_continuous(limits=c(-3,3)) + scale_y_continuous(limits=c(-3,3)) +
+        facet_grid(msrun.x ~ msrun.y) +
+        theme_bw_ast()
+    ggsave(intensity_scatter_plot, file = file.path(analysis_path, "plots", str_c(msfolder, '_', fit_version),
+                                                    str_c(project_id, "_", msfolder, '_', fit_version, "_intensity_vs_mock_scatter_",
+                                                          sel_ds, "_", sel_timepoint, "h_", if_else(sel_infected, "infected", "mock"), "_raster.pdf")),
+           width=20, height=20, device = cairo_pdf)
+    tibble()
 })
+
+pepmodstate_intensities_wide.df <- pepmodstate_intensities.df %>%
+    dplyr::filter(intensity_vs_mock_log2 != 0) %>%
+    pivot_wider(c(pepmodstate_id, condition, treatment, timepoint),
+                values_from=c(intensity_norm_log2, intensity_vs_mock_log2, intensity_vs_mock0h_log2),
+                names_from="replicate", names_sep=".")
+
+pepmodstate_intensities_wide4corr.df <- pepmodstate_intensities_wide.df %>%
+    dplyr::inner_join(msdata_full$pepmodstates) %>%
+    dplyr::filter(nselptms == 1 & between(intensity_vs_mock_log2.1, -3, 3) & between(intensity_vs_mock_log2.1, -3, 3)) %>%
+    dplyr::group_by(condition) %>%
+    dplyr::mutate(common_bin = as.integer(cut(intensity_vs_mock_log2.1, 80))) %>%
+    dplyr::group_by(condition, common_bin) %>%
+    dplyr::slice_sample(n = 200) %>%
+    dplyr::ungroup()
+
+intensity_scatter_plot <- ggplot(dplyr::filter(pepmodstate_intensities_wide4corr.df, condition != "mock_0h")) +
+    geom_abline(intercept = 0, slope = 1, color="firebrick") +
+    geom_point_rast(aes(x = intensity_vs_mock_log2.3, y = intensity_vs_mock_log2.4),
+                    fill="midnightblue", size=1, alpha=0.25) +
+    #geom_density2d_filled(aes(x = intensity_vs_mock_log2.2, y = intensity_vs_mock_log2.4, alpha=after_stat(level_mid)),
+    #                      fill="midnightblue", bins=100, contour_var = "density") +
+    #scale_fill_viridis_c(option="cividis", trans = power_trans(1.0), limits=c(0.04, 2), na.value = "#00000000") +
+    scale_alpha_continuous(trans = power_trans(1.0), limits=c(0.05, 1.0), na.value = 0) +
+    scale_x_continuous(limits=c(-3,3)) + scale_y_continuous(limits=c(-3,3)) +
+    facet_wrap(~ condition, scales = "free", ncol=4) +
+    theme_bw_ast()
+intensity_scatter_plot
+ggsave(intensity_scatter_plot, file = file.path(analysis_path, "plots", str_c(msfolder, '_', fit_version),
+                                                str_c(project_id, "_", msfolder, '_', fit_version, "_intensity_vs_mock_scatter_34_raster.pdf")),
+       width=16, height=12, device = cairo_pdf)
+
+intensity_scatter_plot <- ggplot(pepmodstate_intensities_wide4corr.df %>% dplyr::filter(treatment == "mock" & timepoint != 0)) +
+    geom_abline(intercept = 0, slope = 1, color="firebrick") +
+    geom_point_rast(aes(x = intensity_vs_med_log2.2, y = intensity_vs_med_log2.4),
+                    fill="midnightblue", size=1, alpha=0.25) +
+    #geom_density2d_filled(aes(x = intensity_vs_mock0h_log2.1, y = intensity_vs_mock0h_log2.3, alpha=after_stat(level_mid)),
+    #                      fill="midnightblue", bins=100, contour_var = "density") +
+    #scale_fill_viridis_c(option="cividis", trans = power_trans(1.0), limits=c(0.04, 2), na.value = "#00000000") +
+    scale_alpha_continuous(trans = power_trans(1.0)) +#, limits=c(0.05, 1.0), na.value = 0) +
+    scale_x_continuous(limits=c(-3,3)) + scale_y_continuous(limits=c(-3,3)) +
+    facet_wrap(~ condition, scales = "free", ncol=2) +
+    theme_bw_ast()
+intensity_scatter_plot
+ggsave(intensity_scatter_plot, file = file.path(analysis_path, "plots", str_c(msfolder, '_', fit_version),
+                                                str_c(project_id, "_", msfolder, '_', fit_version, "_intensity_vs_mock0h_scatter_13_raster.pdf")),
+       width=12, height=12, device = cairo_pdf)
+
+require(broom)
+
+pepmodstate_intensities4glm.df <- pepmodstate_intensities.df %>%
+    dplyr::semi_join(dplyr::filter(msdata_full$pepmodstates, nselptms == 1)) %>%
+    dplyr::filter(between(intensity_vs_mock_log2, -2, 2) &
+                  between(intensity_infected_vs_mock_log2, -2, 2)) %>%
+    dplyr::filter(treatment != "mock") %>%
+    dplyr::group_by(condition) %>%
+    dplyr::mutate(intensity_infected_vs_mock_bin = as.integer(cut(intensity_infected_vs_mock_log2, 50))) %>%
+    dplyr::group_by(condition, intensity_infected_vs_mock_bin) %>%
+    dplyr::slice_sample(n = 500) %>%
+    dplyr::ungroup()
+
+infection_scale.glm <- glm(intensity_vs_mock_log2 ~ 0 + intensity_infected_vs_mock_log2:msrun,
+                           data=pepmodstate_intensities4glm.df)
+
+infection_scales.df <- broom::tidy(infection_scale.glm) %>%
+    tidyr::extract(term, c("msrun"), ":msrun(.+)$", remove=FALSE) %>%
+    dplyr::inner_join(msdata_full$msruns) %>%
+    dplyr::mutate(msrun_scale = estimate,
+                  msrun_scale_log2 = log2(estimate)) %>%
+    dplyr::group_by(timepoint) %>%
+    dplyr::mutate(msrun_scale_log2_median = median(msrun_scale_log2)) %>%
+    dplyr::ungroup() %>%
+    dplyr::mutate(msrun_scale_norm = 2^(msrun_scale_log2 - msrun_scale_log2_median))
+
+infection_scales_plot <- ggplot(infection_scales.df %>% dplyr::mutate(msrun_short = str_remove(msrun, "phospho_SARS_"))) +
+    geom_bar(aes(x = msrun_short, y = msrun_scale_norm, fill=treatment), stat="identity") +
+    scale_fill_manual(values=treatment_palette) +
+    scale_y_log10() +
+    facet_wrap(~ timepoint, scales="free_x", ncol=2) +
+    theme_bw_ast() +
+    theme(axis.text.x = element_text(angle = -45, hjust=0))
+ggsave(infection_scales_plot, file = file.path(analysis_path, "plots", str_c(msfolder, '_', fit_version),
+                                                str_c(project_id, "_", msfolder, '_', fit_version, "_infection_scales.pdf")),
+       width=8, height=8, device = cairo_pdf)
+
+pepmodstate_intensities4mock_glm.df <- pepmodstate_intensities.df %>%
+    dplyr::semi_join(dplyr::filter(msdata_full$pepmodstates, nselptms == 1)) %>%
+    dplyr::filter(between(intensity_vs_mock0h_log2, -2, 2) &
+                      between(intensity_cond_vs_mock0h_log2, -2, 2)) %>%
+    dplyr::filter(treatment == "mock") %>%
+    dplyr::group_by(condition) %>%
+    dplyr::mutate(intensity_infected_vs_mock_bin = as.integer(cut(intensity_cond_vs_mock0h_log2, 50))) %>%
+    dplyr::group_by(condition, intensity_infected_vs_mock_bin) %>%
+    dplyr::slice_sample(n = 500) %>%
+    dplyr::ungroup()
+
+mock_scale.glm <- glm(intensity_vs_mock0h_log2 ~ 0 + intensity_cond_vs_mock0h_log2:msrun,
+                      data=pepmodstate_intensities4mock_glm.df)
+
+mock_scales.df <- broom::tidy(mock_scale.glm) %>%
+    tidyr::extract(term, c("msrun"), ":msrun(.+)$", remove=FALSE) %>%
+    dplyr::inner_join(msdata_full$msruns) %>%
+    dplyr::mutate(msrun_scale = estimate,
+                  msrun_scale_log2 = log2(estimate)) %>%
+    dplyr::group_by(timepoint) %>%
+    dplyr::mutate(msrun_scale_log2_median = median(msrun_scale_log2)) %>%
+    dplyr::ungroup() %>%
+    dplyr::mutate(msrun_scale_norm = 2^(msrun_scale_log2 - msrun_scale_log2_median))
+
+mock_scales_plot <- ggplot(mock_scales.df %>% dplyr::mutate(msrun_short = str_remove(msrun, "phospho_")) %>% dplyr::filter(condition != "mock_0h")) +
+    geom_bar(aes(x = msrun_short, y = msrun_scale_norm, fill=treatment), stat="identity") +
+    scale_fill_manual(values=treatment_palette) +
+    scale_y_log10() +
+    facet_wrap(~ timepoint, scales="free_x", ncol=2) +
+    theme_bw_ast() +
+    theme(axis.text.x = element_text(angle = -45, hjust=0))
+mock_scales_plot
+ggsave(mock_scales_plot, file = file.path(analysis_path, "plots", str_c(msfolder, '_', fit_version),
+                                          str_c(project_id, "_", msfolder, '_', fit_version, "_mock_scales.pdf")),
+       width=8, height=8, device = cairo_pdf)
+
+msrunXeffect.df <- inner_join(conditionXeffect.df, msdata$msruns) %>%
+    dplyr::left_join(bind_rows(dplyr::select(mock_scales.df, msrun, msrun_scale=msrun_scale_norm),
+                               dplyr::select(infection_scales.df, msrun, msrun_scale=msrun_scale_norm))) %>%
+    dplyr::mutate(scaled_mult = mult * msrun_scale)
+msrunXeffect_wide.df <- pivot_wider(bind_rows(msrunXeffect.df, tibble(msrun = setdiff(msdata_full$msruns$msrun, msrunXeffect.df$msrun),
+                                                                      effect="tmp_intercept", scaled_mult = 0)),
+                                    msrun, values_from = scaled_mult, names_from = effect, values_fill = 0) %>%
+    dplyr::select(-tmp_intercept)
+msrunXeffect.mtx <- as.matrix(dplyr::select(msrunXeffect_wide.df, -msrun))
+rownames(msrunXeffect.mtx) <- msrunXeffect_wide.df$msrun
+msrunXeffect.mtx <- msrunXeffect.mtx[msdata_full$msruns$msrun, ]
+
+plots_path <- file.path(analysis_path, "plots", str_c(msfolder, "_", fit_version))
+if (!dir.exists(plots_path)) dir.create(plots_path)
+
+pheatmap(msrunXeffect.mtx, cluster_rows=FALSE, cluster_cols=FALSE,
+         filename = file.path(plots_path, paste0(project_id, "_msrun_exp_design_", msfolder, "_", fit_version, ".pdf")),
+         width = 8, height = 12)
+
+prev.env <- new_environment()
+load("/pool/analysis/astukalov/cov2/scratch/cov2_msglm_fit_snaut_parsars_phospho_20201005_20201008.RData", envir = prev.env)
+c2c.df <- left_join(object_contrasts.df, prev.env$object_contrasts.df,
+                    by=c("object_label", "std_type", "contrast", "ptm_type", "ptm_AA_seq", "ptm_pos", "nselptms"),
+                    suffix=c("", ".prev"))
+i2i.df <- left_join(fit_stats$iactions, prev.env$fit_stats$iactions,
+                    by=c("object_label", "condition", "ptm_type", "ptm_AA_seq", "ptm_pos", "nselptms", "var"),
+                    suffix=c("", ".prev")) %>% dplyr::filter(var == "iaction_labu") %>%
+    inner_join(conditions.df)
+e2e.df <- left_join(fit_stats$object_effects, prev.env$fit_stats$object_effects,
+                    by=c("object_label", "effect", "ptm_type", "ptm_AA_seq", "ptm_pos", "nselptms", "var"),
+                    suffix=c("", ".prev")) %>% dplyr::filter(var == "obj_effect") %>%
+    inner_join(effects.df)
+
+hits.df <- filter(c2c.df, contrast=="SARS_CoV2@6h_vs_mock@6h" & std_type=="median" & is_hit.prev & median_log2.prev < -0.25)
+View(dplyr::select(hits.df, object_label, object_label, contrast, is_hit, is_hit.prev,
+                   median_log2, median_log2.prev, sd_log2, sd_log2.prev, p_value, p_value.prev))
+hit_iactions.df <- semi_join(i2i.df, dplyr::select(hits.df, object_label)) %>% filter(timepoint_num <= 6)
+View(dplyr::select(hit_iactions.df, object_label, object_label, timepoint, treatment, condition,
+                   median_log2, median_log2.prev, sd_log2, sd_log2.prev))
+hit_effs.df <- semi_join(e2e.df, dplyr::select(hits.df, object_label))
+View(dplyr::select(hit_effs.df, object_label, object_label, effect, effect_label,
+                   median_log2, median_log2.prev, sd_log2, sd_log2.prev, p_value, p_value.prev))
