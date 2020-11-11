@@ -1,5 +1,5 @@
 proj_info = (id = "cov2",
-             hotnet_ver = "20200917")
+             hotnet_ver = "20201022")
 @info "Assembling HHotNet permuted tree results for $(proj_info.id), ver=$(proj_info.hotnet_ver)"
 
 const misc_scripts_path = joinpath(base_scripts_path, "misc_jl");
@@ -20,7 +20,7 @@ end;
 
 for bait_ix in eachindex(bait2nperms)
 expected_bait_id, nperms = bait2nperms[bait_ix]
-@info "Loading permutations for  bait #$(bait_ix) (bait_id=$(expected_bait_id), nperms=$(nperms))"
+@info "Loading permutations for bait #$(bait_ix) (bait_id=$(expected_bait_id), nperms=$(nperms))"
 bait_id, vertex_weights, vertex_walkweights, perm_vertex_weights, sink_ixs,
 diedge_ixs, diedge_stepweights, diedge_walkweights, _ =
 open(ZstdDecompressorStream, joinpath(scratch_path, "$(proj_info.id)_hotnet_perm_input_$(proj_info.hotnet_ver)",
@@ -80,20 +80,6 @@ perm_diedge_walkweights = perm_diedge_walkweights[:, perm_loaded]
 
 GC.gc()
 
-@info "Assembling tree statistics for bait #$bait_ix ($bait_id)"
-treestats_df = vcat(perm_treestats_dfs...)
-treestats_df[!, :bait_id] .= bait_id;
-
-@info "Calculating vertex statistics for bait #$bait_ix ($bait_id), nv=$(length(vertex_weights))"
-vertex_stats_df = HHN.vertex_stats(vertex_weights, vertex_walkweights,
-                            perm_vertex_weights, perm_vertex_walkweights)
-vertex_stats_df.prob_perm_walkweight_greater = 1.0 .- vertex_stats_df.ngreater_walkweight ./ nperms;
-vertex_stats_df[!, :bait_id] .= bait_id;
-vertex_stats_df.gene_id = vertex2gene[vertex_stats_df.vertex];
-vertex_stats_df.gene_name = levels!(categorical(getindex.(Ref(reactomefi_genes),
-                                                           vertex_stats_df.gene_id)),
-                                     levels(reactomefi_genes));
-
 @info "Calculating diedge statistics for bait #$bait_ix ($bait_id), nde=$(length(diedge_ixs))"
 diedge_stats_df = HHN.diedge_stats(length(vertex_weights), diedge_ixs,
                                 diedge_stepweights, diedge_walkweights,
@@ -108,12 +94,30 @@ diedge_stats_df.src_gene_name = levels!(categorical(getindex.(Ref(reactomefi_gen
 diedge_stats_df.dest_gene_name = levels!(categorical(getindex.(Ref(reactomefi_genes),
                                             diedge_stats_df.dest_gene_id)),
                                          levels(reactomefi_genes))
+# purge diedges weights ASAP
+perm_diedge_stepweights = nothing
+perm_diedge_walkweights = nothing
+GC.gc()
+
+@info "Assembling tree statistics for bait #$bait_ix ($bait_id)"
+perm_treestats_df = vcat(perm_treestats_dfs...)
+perm_treestats_df[!, :bait_id] .= bait_id;
+
+@info "Calculating vertex statistics for bait #$bait_ix ($bait_id), nv=$(length(vertex_weights))"
+vertex_stats_df = HHN.vertex_stats(vertex_weights, vertex_walkweights,
+                            perm_vertex_weights, perm_vertex_walkweights)
+vertex_stats_df.prob_perm_walkweight_greater = 1.0 .- vertex_stats_df.ngreater_walkweight ./ nperms;
+vertex_stats_df[!, :bait_id] .= bait_id;
+vertex_stats_df.gene_id = vertex2gene[vertex_stats_df.vertex];
+vertex_stats_df.gene_name = levels!(categorical(getindex.(Ref(reactomefi_genes),
+                                                           vertex_stats_df.gene_id)),
+                                     levels(reactomefi_genes));
 
 output_prefix = "$(proj_info.id)_hotnet_perm_assembled_$(proj_info.hotnet_ver)"
 isdir(joinpath(scratch_path, output_prefix)) || mkdir(joinpath(scratch_path, output_prefix))
 
 open(ZstdCompressorStream, joinpath(scratch_path, output_prefix, "$(output_prefix)_$(bait_ix).jlser.zst"), "w") do io
-    serialize(io, (treestats_df, vertex_stats_df, diedge_stats_df))
+    serialize(io, (perm_treestats_df, vertex_stats_df, diedge_stats_df))
 end
 
 end

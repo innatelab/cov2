@@ -5,7 +5,7 @@ proj_info = (id = "cov2",
              oeproteome_folder = "spectronaut_oeproteome_20200527",
              oeproteome_data_ver = "20200527",
              oeproteome_fit_ver = "20200608",
-             hotnet_ver = "20200917")
+             hotnet_ver = "20201022")
 using Pkg
 Pkg.activate(joinpath(base_scripts_path, "adhoc", proj_info.id))
 
@@ -64,7 +64,7 @@ apms_fit_rdata = load(joinpath(scratch_path, "$(proj_info.id)_msglm_fit_$(proj_i
 apms_data_rdata = load(joinpath(scratch_path, "$(proj_info.id)_msdata_full_$(proj_info.apms_folder)_$(proj_info.apms_fit_ver).RData"))
 apms_network_rdata = load(joinpath(analysis_path, "networks", "$(proj_info.id)_4graph_$(proj_info.apms_folder)_$(proj_info.apms_fit_ver).RData"))
 oeproteome_data_rdata = load(joinpath(scratch_path, "$(proj_info.id)_msdata_full_$(proj_info.oeproteome_folder)_$(proj_info.oeproteome_data_ver).RData"))
-oeproteome_fit_rdata = load(joinpath(scratch_path, "$(proj_info.id)_msglm_fit_$(proj_info.oeproteome_folder)_$(proj_info.oeproteome_data_ver).RData"))
+oeproteome_fit_rdata = load(joinpath(scratch_path, "$(proj_info.id)_msglm_fit_$(proj_info.oeproteome_folder)_$(proj_info.oeproteome_fit_ver).RData"))
 
 #--- map OE proteome to reactome network
 objects_df = copy(oeproteome_data_rdata["msdata_full"]["protgroups"])
@@ -89,13 +89,21 @@ oeproteome_contrasts_df.is_source = [
     (coalesce(r.p_value, 1.0) <= 0.001 && abs(r.median_log2) >= 0.25) &&
     (coalesce(r.p_value_batch, 1.0) <= 0.001 && abs(r.median_log2_batch) >= 0.25)
     for r in eachrow(oeproteome_contrasts_df)]
-oeproteome_contrasts_df.vertex_weight = [ifelse(r.is_source,
+oeproteome_contrasts_df.vertex_weight = [ifelse(
+    (coalesce(r.p_value, 1.0) <= 0.01 && abs(r.median_log2) >= 0.25) &&
+    (coalesce(r.p_value_batch, 1.0) <= 0.01 && abs(r.median_log2_batch) >= 0.25),
     (-log10(max(1E-20, r.p_value)))^0.5 * abs(r.median_log2)^0.5, 0.0)
     for r in eachrow(oeproteome_contrasts_df)]
 extrema(oeproteome_contrasts_df[oeproteome_contrasts_df.vertex_weight .> 0, :vertex_weight])
 quantile(oeproteome_contrasts_df[oeproteome_contrasts_df.vertex_weight .> 0, :vertex_weight], 0.5)
 oeproteome_contrasts_stats_df = combine(groupby(oeproteome_contrasts_df, [:bait_full_id, :contrast]),
-        :vertex_weight => (w -> quantile(filter(>(0), w), 0.5)) => :vertex_weight_median)
+        :vertex_weight => (w -> quantile(filter(>(0), w), 0.5)) => :vertex_weight_median,
+        :vertex_weight => (w -> sum(>(0), w)) => :n_nzweights,
+        :is_source => (w -> sum(w)) => :n_sources)
+
+flows_path = joinpath(analysis_path, "networks", "apms_oeproteome_flows_$(proj_info.hotnet_ver)")
+isdir(flows_path) || mkdir(flows_path)
+CSV.write(joinpath(flows_path, "oeproteome_contrast_stats_$(proj_info.hotnet_ver).txt"), oeproteome_contrasts_stats_df, delim='\t')
 
 oeproteome_obj2gene_df = innerjoin(
     filter(r -> r.is_majority, oeproteome_data_rdata["msdata_full"]["protein2protgroup"]),
@@ -324,6 +332,8 @@ for (root, dirs, files) in Filesystem.walkdir(joinpath(scratch_path, chunk_prefi
 end
 tree_stats_df = vcat(tree_stats_dfs...)
 tree_stats_dfs = nothing
+@save(joinpath(scratch_path, "$(proj_info.id)_hotnet_treestats_$(proj_info.hotnet_ver).jld2"),
+      tree_stats_df)
 
 # collect assembled permuted data-based statistics (see hotnet_perm_chunk.jl and hotnet_perm_assemble.jl)
 chunk_prefix = "$(proj_info.id)_hotnet_perm_assembled_$(proj_info.hotnet_ver)"
@@ -480,8 +490,6 @@ PlotlyUtils.permstats_plot(
     yaxis_metric=sel_metric)
 
 includet(joinpath(misc_scripts_path, "graphml_writer.jl"))
-print(propertynames(tree_extremes_df))
-
 
 function flowgraphml(bait_id::AbstractString, threshold::Number; kwargs...)
     orig_diedges = DataFrames.rename(reactomefi_diedges_used_df,
@@ -493,9 +501,9 @@ function flowgraphml(bait_id::AbstractString, threshold::Number; kwargs...)
     vertices_df = DataFrame(vertex = 1:nv(reactomefi_digraph_rev),
                             gene = ifelse.(vertex2gene .> 0, vertex2gene, missing),
                             gene_name = ifelse.(vertex2gene .> 0, getindex.(Ref(reactomefi_genes), vertex2gene), missing))
-    vertices_df = leftjoin(vertices_df, filter!(r -> r.bait_id == bait_id, select(vertex_stats_df,
+    vertices_df = leftjoin(vertices_df, select!(filter(r -> r.bait_id == bait_id, vertex_stats_df),
                                 [:vertex, :oeproteome_median_log2, :oeproteome_p_value,
-                                 :apms_median_log2, :apms_p_value], copycols=false)), on=:vertex)
+                                 :apms_median_log2, :apms_p_value]), on=:vertex)
     vertices_df.oeproteome_median_log2_signif = ifelse.(coalesce.(vertices_df.oeproteome_p_value, false) .<= 0.01,
                                                         vertices_df.oeproteome_median_log2, missing)
     vertices_df.apms_median_log2_signif = ifelse.(coalesce.(vertices_df.apms_p_value, false) .<= 0.01,
@@ -515,6 +523,7 @@ function flowgraphml(bait_id::AbstractString, threshold::Number; kwargs...)
                 : nothing,
             source_threshold=randomwalk_params.source_weight_min,
             sinks=get(bait2apms_vertices, bait_id, valtype(bait2apms_vertices)()),
+            flow_metrics = filter(r -> r.bait_id == bait_id, tree_stats_df),
             step_sinks=nothing,
             orig_diedges=orig_diedges,
             extra_node_attrs=[:apms_p_value, :apms_median_log2, :apms_median_log2_signif,
@@ -530,8 +539,12 @@ isdir(flows_path) || mkdir(flows_path)
 CSV.write(joinpath(flows_path, "apms_oeproteome_flows_$(proj_info.hotnet_ver)_cut_thresholds.txt"), bait_cut_thresholds_df, delim='\t')
 
 sel_bait_ids = unique(first.(collect(keys(bait2cut_threshold))))
-for bait_id in sel_bait_ids, valtype in unique(last.(collect(keys(bait2cut_threshold))))
-    @info "Flowgraph for $bait_id cut=$valtype"
+sel_bait_ids = filter(r -> r.nflows == 0, innerjoin(unique!(select(bait_cut_thresholds_df, [:bait_id, :value_type, :threshold])),
+                                                    tree_stats_df, on=[:bait_id, :threshold])).bait_id |> unique
+flowgraph_todo = vec([(bait_id, valtype) for bait_id in sel_bait_ids, valtype in unique(last.(collect(keys(bait2cut_threshold))))])
+Threads.@threads for i in 1:length(flowgraph_todo)
+    bait_id, valtype = flowgraph_todo[i]
+    @info "Flowgraph #$i: bait=$bait_id cut=$valtype"
     cut_threshold_df = get(bait2cut_threshold, (bait_id, valtype), nothing)
     if isnothing(cut_threshold_df)
         @warn "  No threshold found, skipping"
@@ -544,12 +557,16 @@ for bait_id in sel_bait_ids, valtype in unique(last.(collect(keys(bait2cut_thres
         step_threshold=cut_threshold, maxsteps=2,
         layout_cut_threshold=cut_threshold * 1.25,
         pvalue_mw_max = 0.001, verbose=true)
-    isempty(flow_graph.nodes) || HotnetUtils.layout_flowgraph!(flow_graph)
+    isempty(flow_graph.nodes) || HotnetUtils.layout_flowgraph!(flow_graph, scale=80, progressbar=false)
     valtype_flows_path = joinpath(flows_path, valtype)
     isdir(valtype_flows_path) || mkdir(valtype_flows_path)
     open(joinpath(valtype_flows_path, "$(proj_info.id)_$(bait_id)_flow_$(proj_info.hotnet_ver)_$(valtype).graphml"), "w") do io
         write(io, flow_graph)
     end
+end
+HotnetUtils.layout_flowgraph!(test_flowgraph, scale=80);
+open(joinpath(flows_path, "test.graphml"), "w") do io
+    write(io, test_flowgraph)
 end
 
 include(joinpath(misc_scripts_path, "plots", "plotly_utils.jl"))
@@ -557,17 +574,16 @@ include(joinpath(misc_scripts_path, "plots", "plotly_utils.jl"))
 sel_bait_ids = ["SARS_CoV2_ORF7a"]
 metrics_plot_path = joinpath(flows_path, "metrics")
 isdir(metrics_plot_path) || mkdir(metrics_plot_path)
-for bait_id in sel_bait_ids, (metric, stat) in [(:flow_avginvlen, "max"), (:flow_avghopweight, "max"), (:flow_avgweight, "max"), (:maxcomponent_size, "max")]
+for bait_id in sel_bait_ids, (metric, stat) in [(:flow_avginvlen, "max"), #=(:flow_avghopweight, "max"),
+                                                (:flow_avgweight, "max"),=# (:maxcomponent_size, "max")]
     @info "Plotting $metric stats for $bait_id"
     realstats_df = filter(r -> !r.is_permuted && (r.bait_id == bait_id) && !ismissing(r[metric]), tree_stats_df)
     aggstats_df = filter(r -> r.bait_id == bait_id, tree_perm_aggstats_wide_df)
     isempty(aggstats_df) && continue
     extremes_df = filter(r -> (r.bait_id == bait_id) && (r.stat == stat) && (coalesce(r.quantile, NaN) == (stat == "max" ? 1.0 - sel_quantile : sel_quantile)) &&
-                    (r.metric == metric) && !ismissing(r.value), tree_extremes_df)
+                    (r.metric == metric) && !ismissing(r.value) && (r.value_type == "opt"), tree_extremes_df)
     bait_stats_plot = PlotlyUtils.permstats_plot(
-        realstats_df,
-        aggstats_df,
-        extremes_df,
+        realstats_df, aggstats_df, extremes_df,
         threshold_range=(max(0.0, cut_threshold_range[1]*0.75), cut_threshold_range[2]*1.25),
         yaxis_metric=metric)
     #bait_stats_plot.plot.layout[:width] = "300px"
@@ -575,7 +591,8 @@ for bait_id in sel_bait_ids, (metric, stat) in [(:flow_avginvlen, "max"), (:flow
     #bait_stats_plot.plot.layout[:font_size] = "20"
     try
         savefig(bait_stats_plot.plot,
-            joinpath(metrics_plot_path, "$(proj_info.id)_$(bait_id)_$(metric)_$(proj_info.hotnet_ver).svg"))
+            #joinpath(metrics_plot_path, "$(proj_info.id)_$(bait_id)_$(metric)_$(proj_info.hotnet_ver).pdf"))
+            joinpath(metrics_plot_path, "$(bait_id)_$(metric).pdf"))
     catch e
         if e isa InterruptException
             rethrow(e)
