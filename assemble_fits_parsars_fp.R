@@ -25,8 +25,8 @@ require(stringr)
 require(maxquantUtils)
 
 message('Loading data...')
-load(file.path(scratch_path, str_c(project_id, '_msglm_data_', msfolder, '_', data_version, '.RData')))
 load(file.path(scratch_path, str_c(project_id, '_msdata_full_', msfolder, '_', data_version, '.RData')))
+load(file.path(scratch_path, str_c(project_id, '_msglm_data_', msfolder, '_', data_version, '.RData')))
 
 modelobj <- "protregroup"
 quantobj <- "pepmodstate"
@@ -208,14 +208,13 @@ object_contrasts.df <- object_contrasts.df %>%
   dplyr::mutate(is_signif = p_value <= p_value_threshold & abs(median_log2) >= median_log2_threshold,
                 is_signif_lesser = p_value <= p_value_threshold_lesser & abs(median_log2) >= median_log2_threshold_lesser,
                 is_hit_nomschecks = is_signif & !is_contaminant & !is_reverse,
-                is_hit = is_hit_nomschecks & (pmax(nmsruns_quanted_lhs_max, nmsruns_quanted_rhs_max) >=2) &
-                                             (pmin(nmsruns_quanted_lhs_max, nmsruns_quanted_rhs_max) >=1) &
+                is_hit = is_hit_nomschecks & (pmax(nmsruns_quanted_lhs_max, nmsruns_quanted_rhs_max)>=2) &
                   is_msvalid_object,
                 change = if_else(is_signif, if_else(median_log2 < 0, "-", "+"), "."),
                 is_specific_virus_lhs = str_detect(treatment_lhs, "SARS"),
                 is_specific_virus_rhs = str_detect(treatment_rhs, "SARS"),
                 is_mock_rhs = treatment_rhs == "mock") %>%
-  dplyr::group_by(std_type, object_id, timepoint_rhs, contrast_kind) %>%
+  dplyr::group_by(std_type, object_id, timepoint_lhs, timepoint_rhs, contrast_kind) %>%
   # declare _vs_mock a hit if it's a hit or it's significant with less stringent threshold
   # and a strong hit in another virus treatment, while the difference between the viruses is not significant
   dplyr::mutate(is_hit_composed = is_hit | if_else(contrast_kind == "treatment_vs_treatment",
@@ -225,11 +224,12 @@ object_contrasts.df <- object_contrasts.df %>%
                                                    FALSE),
                 composed_hit_treatment = if_else(contrast_kind == "treatment_vs_treatment" & is_hit_composed & is_specific_virus_lhs & is_mock_rhs,
                                                  treatment_lhs, NA_integer_),
-                composed_hit_type = str_c(composed_hit_treatment[!is.na(composed_hit_treatment)], collapse="+")) %>%
+                composed_hit_treatments = str_c(composed_hit_treatment[!is.na(composed_hit_treatment)], collapse="+")) %>%
   dplyr::ungroup() %>%
   dplyr::mutate(composed_hit_type = if_else(contrast_kind != "treatment_vs_treatment", NA_character_,
-                                            if_else(str_detect(composed_hit_type, fixed("+")), "shared",
-                                                    if_else(composed_hit_type != "", composed_hit_type, "none"))))
+                                            if_else(str_detect(composed_hit_treatments, fixed("+")), "shared",
+                                                    if_else(composed_hit_treatments != "", composed_hit_treatments, "none"))),
+                change = if_else(is_hit_composed, if_else(median_log2 < 0, "-", "+"), "."))
 object_contrast_stats.df <- dplyr::group_by(object_contrasts.df, contrast, contrast_type, contrast_kind, std_type) %>%
   dplyr::summarise(p_value_001 = quantile(p_value, 0.001),
                    p_value_01 = quantile(p_value, 0.01),
@@ -274,7 +274,8 @@ pre_object_contrasts_report.df <- filter(object_contrasts.df, contrast_kind=="tr
                 median_log2, mean_log2, sd_log2, any_of(c("prob_nonpos", "prob_nonneg", "p_value")),
                 is_signif, is_hit_nomschecks, is_hit, change, is_hit_composed, composed_hit_type)
 
-objects4report.df <- dplyr::select(modelobjs_df, any_of(report_cols))
+objects4report.df <- dplyr::select(modelobjs_df, any_of(report_cols)) %>%
+  dplyr::semi_join(dplyr::select(object_contrasts.df, object_id))
 
 object_contrasts_report.df <- objects4report.df %>%
   dplyr::left_join(pivot_wider(pre_object_contrasts_report.df, c(std_type, object_id),
@@ -284,13 +285,19 @@ object_contrasts_report.df <- objects4report.df %>%
                 ends_with("SARS_CoV2@6h_vs_mock@6h"), ends_with("SARS_CoV@6h_vs_mock@6h"), ends_with("SARS_CoV2@6h_vs_SARS_CoV@6h"),
                 ends_with("SARS_CoV2@12h_vs_mock@12h"), ends_with("SARS_CoV@12h_vs_mock@12h"), ends_with("SARS_CoV2@12h_vs_SARS_CoV@12h"),
                 ends_with("SARS_CoV2@24h_vs_mock@24h"), ends_with("SARS_CoV@24h_vs_mock@24h"), ends_with("SARS_CoV2@24h_vs_SARS_CoV@24h")) %>%
-  dplyr::select(-matches("_composed_.+_vs_SARS_CoV2@")) %>%
+  # composed_hit_type is the same for all comparison of the same timepoint
+  dplyr::select(-matches("composed_hit_type.+SARS_CoV2@\\d+h_vs_(SARS_CoV|mock)@")) %>%#, #-matches("is_hit_composed\\.SARS_CoV2.+_vs_SARS_CoV")) %>%
+  dplyr::rename_at(vars(matches("composed_hit_type")), ~str_remove(.x, "SARS_CoV@\\d+h_vs_mock@")) %>%
   dplyr::arrange(gene_names, majority_protein_acs, std_type)
 
 write_tsv(filter(object_contrasts_report.df, std_type == "replicate") %>% dplyr::select(-std_type, -object_id),
           file.path(analysis_path, "reports", paste0(project_id, '_', msfolder, '_contrasts_report_', fit_version, '_replicate_wide.txt')))
 write_tsv(filter(object_contrasts_report.df, std_type == "median") %>% dplyr::select(-std_type, -object_id),
           file.path(analysis_path, "reports", paste0(project_id, '_', msfolder, '_contrasts_report_', fit_version, '_median_wide.txt')))
+write.xlsx(filter(object_contrasts_report.df, std_type == "replicate") %>% dplyr::select(-std_type, -object_id),
+           file.path(analysis_path, "reports", paste0(project_id, '_', msfolder, '_contrasts_report_', fit_version, '_replicate_wide.xlsx')))
+write.xlsx(filter(object_contrasts_report.df, std_type == "median") %>% dplyr::select(-std_type, -object_id),
+           file.path(analysis_path, "reports", paste0(project_id, '_', msfolder, '_contrasts_report_', fit_version, '_median_wide.xlsx')))
 
 object_contrasts_long_report.df <- objects4report.df %>%
   dplyr::left_join(pre_object_contrasts_report.df) %>%
