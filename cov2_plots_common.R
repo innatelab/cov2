@@ -13,3 +13,4 @@ organism_type_palette <- c("SARS-CoV" = "#811A02",
                            "HCoV" = "seagreen",
                            "host" = "black",
                            "control" = "gray")
+treatment_palette <- c("SARS-CoV"="#811A02", "SARS-CoV-2"="#F4982A", "mock"="gray")
