@@ -187,17 +187,28 @@ for bait_id in bait_ids
     bait2vertex_weights[bait_id] = vertex_weights
 end
 
+randomwalk_params = (restart_prob = 0.4,
+                     inedge_weight_min = 1.0,
+                     source_weight_min = 1.5,
+                     flow_weight_max = 0.005)
+reactomefi_adjmtx = Matrix(LightGraphs.weights(reactomefi_digraph_rev));
+reactomefi_walkmtx = HHN.random_walk_matrix(reactomefi_digraph_rev, randomwalk_params.restart_prob)
+
 ### select optimal restart probability
 test_restart_probs = 0.05:0.05:0.95
 test_diedge_weight_min = 1.0
-reactomefi_test_walkmtxs = HHN.random_walk_matrix.(Ref(reactomefi_digraph_rev), test_restart_probs,
-                                              inedge_weights=bait2vertex_weights["SARS_CoV2_M"] .+ diedge_weight_min)
+reactomefi_test_walkmtxs = [HHN.similarity_matrix(
+    HHN.stepmatrix(reactomefi_adjmtx,
+                   inedge_weights=bait2vertex_weights["SARS_CoV2_M"] .+ randomwalk_params.inedge_weight_min),
+    bait2vertex_weights["SARS_CoV2_M"], restart_probability=p) for p in test_restart_probs]
 
 # calculate average probability to stay in the original direct neighborhood of a vertex
 # or travel further
-vtx_totprobs = vec.(sum.(reactomefi_test_walkmtxs, dims=1)) - diag.(reactomefi_test_walkmtxs)
-vtx_neiprobs = HHN.neighborhood_weights.(reactomefi_test_walkmtxs, Ref(reactomefi_digraph_rev))
-vtx_extprobs = vtx_totprobs .- vtx_neiprobs
+vtx_totprob = vec.(sum.(reactomefi_test_walkmtxs, dims=1))
+vtx_totprob_sum = sum.(vtx_totprob)
+vtx_noselfprobs = (vec.(sum.(reactomefi_test_walkmtxs, dims=1)) - diag.(reactomefi_test_walkmtxs)) ./ vtx_totprob_sum
+vtx_neiprobs = HHN.neighborhood_weights.(reactomefi_test_walkmtxs, Ref(reactomefi_digraph_rev)) ./ vtx_totprob_sum
+vtx_extprobs = vtx_noselfprobs .- vtx_neiprobs
 
 restartprob_stats_df = vcat(DataFrame(restart_prob = test_restart_probs,
                                       vertices = "neighbors",
@@ -212,13 +223,6 @@ savefig(restartXneighb_plot,
         joinpath(analysis_path, "networks", "$(proj_info.id)_restart_probability_neighborhood_$(proj_info.hotnet_ver).svg"))
 
 ###
-randomwalk_params = (restart_prob = 0.4,
-                     inedge_weight_min = 1.0,
-                     source_weight_min = 1.5,
-                     flow_weight_max = 0.005)
-reactomefi_adjmtx = Matrix(LightGraphs.weights(reactomefi_digraph_rev));
-reactomefi_walkmtx = HHN.random_walk_matrix(reactomefi_digraph_rev, randomwalk_params.restart_prob)
-
 sel_bait_ids = bait_ids
 bait_stepmtxs = [bait_id => HHN.stepmatrix(reactomefi_adjmtx,
                         inedge_weights=bait2vertex_weights[bait_id] .+ randomwalk_params.inedge_weight_min)
