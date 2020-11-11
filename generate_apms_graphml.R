@@ -1,41 +1,37 @@
 project_id <- 'cov2'
 message('Project ID=', project_id)
-report_version = "20200612"
-apms_info <- list(ms_folder = 'mq_apms_20200525',
-                  data_version = "20200525",
-                  fit_version = "20200525")
+report_version = "20201104"
+apms_info <- list(msfolder = 'mq_apms_20200525',
+                  data_ver = "20200525",
+                  fit_ver = "20200525")
 datasets <- list(
     apms = apms_info,
-    prev_apms = list(ms_folder = 'mq_apms_20200510',
-                data_version = "20200515",
-                fit_version = "20200515"),
-    oeproteome = list(ms_folder = 'spectronaut_oeproteome_20200527',
-                      data_version = "20200527",
-                      fit_version = "20200608"),
-    cov2ts_phospho = list(ms_folder = 'cov2timecourse_phospho_dia_20200423',
-                          data_version = "20200428",
-                          fit_version = "20200428"),
-    cov2ts_proteome = list(ms_folder = 'cov2timecourse_dia_20200423',
-                           data_version = "20200429",
-                           fit_version = "20200429"),
-    cov2el_proteome = list(ms_folder = 'cov2earlylate_fp_phos_ubi_dda_20200429',
-                           data_version = "20200514",
-                           fit_version = "20200514")
-)
-perseus_datasets <- list(
-    cov2el_phospho = list(ms_folder = "cov2earlylate_fp_phos_ubi_dda_20200601",
-                          filename="output_Phospho (STY)Sites",
-                          fit_version="20200510",
-                          ptm="phospho", prefix="pho"),
-    cov2el_ubi = list(ms_folder="cov2earlylate_fp_phos_ubi_dda_20200601",
-                      filename="output_S0-01_GlyGly (K)Sites",
-                      fit_version="20200510",
-                      ptm="ubiquitin", prefix="ubi")
+    prev_apms = list(msfolder = 'mq_apms_20200510',
+                data_ver = "20200515",
+                fit_ver = "20200515"),
+    oeproteome = list(msfolder = 'spectronaut_oeproteome_20200527',
+                      data_ver = "20200527",
+                      fit_ver = "20200608"),
+    phospho = list(msfolder = 'snaut_parsars_phospho_20201005',
+                   data_ver = "20201012",
+                   fit_ver = "20201012",
+                   ptm_extractor_version = "20201012"),
+    proteome = list(msfolder = 'snaut_parsars_fp_20200829',
+                    data_ver = "20200830",
+                    fit_ver = "20200830"),
+    ubi = list(msfolder = 'snaut_parsars_ptm_20200907',
+               data_ver = "20201012",
+               fit_ver = "20201012",
+               ptm_extractor_version = "20201012"),
 )
 
+cov2_rnaseq = list(data_folder = "parsars_rnaseq_20201020",
+                   data_ver = "20201020",
+                   fit_ver = "20201020")
+
 message("Assembling fit results for project ", project_id,
-        " (APMS dataset v", datasets$apms$data_version, ", fit v", datasets$apms$fit_version, ", ",
-          "OE proteome dataset v", datasets$oeproteome$data_version, ", fit v", datasets$oeproteome$fit_version, ")")
+        " (APMS dataset v", datasets$apms$data_ver, ", fit v", datasets$apms$fit_ver, ", ",
+          "OE proteome dataset v", datasets$oeproteome$data_ver, ", fit v", datasets$oeproteome$fit_ver, ")")
 
 source("~/R/config.R")
 source(file.path(base_scripts_path, 'R/misc/setup_base_paths.R'))
@@ -59,61 +55,17 @@ for (envname in names(datasets)) {
         assign(str_c(envname, ".env"), ds.env)
     }
     envinfo <- datasets[[envname]]
-    load(file.path(scratch_path, paste0(project_id, '_msglm_data_', envinfo$ms_folder, '_', envinfo$data_version, '.RData')), envir = ds.env)
-    load(file.path(scratch_path, paste0(project_id, '_msdata_full_', envinfo$ms_folder, '_', envinfo$data_version, '.RData')), envir = ds.env)
-    load(file.path(scratch_path, paste0(project_id, '_msglm_fit_', envinfo$ms_folder, '_', envinfo$data_version, '.RData')), envir = ds.env)
+    load(file.path(scratch_path, paste0(project_id, '_msglm_data_', envinfo$msfolder, '_', envinfo$data_ver, '.RData')), envir = ds.env)
+    load(file.path(scratch_path, paste0(project_id, '_msdata_full_', envinfo$msfolder, '_', envinfo$data_ver, '.RData')), envir = ds.env)
+    load(file.path(scratch_path, paste0(project_id, '_msglm_fit_', envinfo$msfolder, '_', envinfo$data_ver, '.RData')), envir = ds.env)
 }
-load(file.path(analysis_path, "networks", paste0(project_id, '_4graph_', datasets$prev_apms$ms_folder, '_', datasets$prev_apms$fit_version, '.RData')), envir = prev_apms.env)
-cov2ts_phospho.env$msdata_full$ptmgroup2psitep <- read_tsv(file.path(data_path, datasets$cov2ts_phospho$ms_folder,
-                                                                     "COV2_DIA_phospho_0.75probablity_no normalization_psitep_nodata.txt"))
-for (envname in names(perseus_datasets)) {
-    message("Loading perseus ", envname, " data...")
-    ds.env <- new.env(parent=baseenv())
-    assign(str_c(envname, ".env"), ds.env)
-    dsinfo <- perseus_datasets[[envname]]
+load(file.path(analysis_path, "networks", paste0(project_id, '_4graph_', datasets$prev_apms$msfolder, '_', datasets$prev_apms$fit_ver, '.RData')), envir = prev_apms.env)
+#phospho.env$msdata_full$ptmgroup2psitep <- read_tsv(file.path(data_path, datasets$phospho$msfolder,
+#                                                           "COV2_DIA_phospho_0.75probablity_no normalization_psitep_nodata.txt"))
+rnaseq.env <- new.env(parent=baseenv())
+load(file.path(scratch_path, paste0(project_id, '_', datasets$rnaseq$data_folder, '_', datasets$rnaseq$fit_ver, '.RData')), envir = rnaseq.env)
 
-    ds.env$perseus_analysis_orig.df = read_tsv(file.path(data_path, dsinfo$ms_folder,
-                                                  "curban_analysis", paste0(dsinfo$filename, ".txt")),
-                                               col_names = TRUE, comment="#", quote = "", guess_max = 10000) %>%
-        dplyr::rename(ptmgroup_id = id)
-    #vars(c("Positions within proteins", "Leading proteins",
-    #       "Protein", "Protein names", "Gene names"))
-    ds.env$perseus_analysis_long.df <- tidyr::pivot_longer(
-                dplyr::select(ds.env$perseus_analysis_orig.df, ptmgroup_id, protgroup_ids = `Protein group IDs`,
-                              protein_ac = Protein, ptm_pos = Position, ptm_aa = `Amino acid`, charge = Charge, Multiplicity,
-                              gene_names = `Gene names`,
-                              contains("Student's T-test")),
-                     cols=contains("Student's T-test"),
-                     names_pattern=str_c("^(.+) (", dsinfo$prefix, "_.+)$"),
-                     names_to=c(".value", "comparison")) %>%
-    dplyr::rename(is_signif = `Student's T-test Significant`,
-                  delta_log2 = `Student's T-test Difference`,
-                  mlog10_p_value = `-Log Student's T-test p-value`,
-                  q_value = `Student's T-test q-value`,
-                  ttest_stat = `Student's T-test Test statistic`) %>%
-    dplyr::filter(!is.na(comparison)) %>%
-    tidyr::extract(comparison, c("timepoint"), paste0(dsinfo$prefix, "_SARS_COV2_(\\d+)h_", dsinfo$prefix, "_mock_(?:\\d+)h"), remove=FALSE) %>%
-    dplyr::mutate_at(vars(mlog10_p_value, ttest_stat), ~if_else(is.nan(.), NA_real_, .)) %>%
-    dplyr::mutate(contrast_lhs = "SARS_COV2",
-                  contrast_rhs = "mock",
-                  ptm_type = dsinfo$ptm,
-                  dataset = envname,
-                  timepoint = parse_integer(timepoint),
-                  p_value = 10^(-mlog10_p_value),
-                  is_signif = coalesce(is_signif == "+", FALSE),
-                  change = if_else(is_signif, if_else(delta_log2 > 0, "+", "-"), "."),
-                  ptm_label = str_c(gene_names, "_", ptm_aa, ptm_pos)
-    )
-    # leave the most significant comparison
-    ds.env$perseus_analysis_short.df <- dplyr::group_by(ds.env$perseus_analysis_long.df,
-                                                        protein_ac, ptm_pos, ptm_aa, timepoint) %>%
-        dplyr::filter(row_number(-mlog10_p_value) == 1L) %>%
-        dplyr::ungroup()
-}
-
-dplyr::select(ds.env$perseus_analysis_orig.df, id, matches(str_c("^(.+?) (", dsinfo$prefix, "_.+)\\$")))
-View(cov2el_phospho.env$perseus_analysis_long.df)
-
+mscalib_pepmodstate <- instr_calib_pepmodstate
 source(file.path(project_scripts_path, 'setup_modelobj.R'))
 
 bait_checks.df <- get(str_c("bait_checks_", modelobj, ".df"))
@@ -126,8 +78,8 @@ bait_checks.df$object_id <- bait_checks.df[[modelobj_idcol]]
 #            remove = FALSE)
 #write_tsv(crispr_plasmids.df, file.path(data_path, "AP_plasmids_20200409_with_genename.txt"), na = "")
 
-is_in_prev_apms <- str_c("is_in_", datasets$prev_apms$fit_version, "_apms")
-prev_iactions_obj.df <- filter(prev_apms.env$iactions_ex_4graphml.df, str_detect(type, "experiment")) %>%
+is_in_prev_apms <- str_c("is_in_", datasets$prev_apms$fit_ver, "_apms")
+prev_iactions_obj.df <- dplyr::filter(prev_apms.env$iactions_ex_4graphml.df, str_detect(type, "experiment")) %>%
     dplyr::inner_join(select(filter(prev_apms.env$msdata_full$protein2protregroup, is_majority),
                              protein_ac, dest_object_id = protregroup_id)) %>%
     dplyr::select(bait_full_id, protein_ac, prob_nonpos) %>%
@@ -158,123 +110,118 @@ oeproteome_effects_obj.df <- filter(oeproteome.env$object_contrasts.df, str_dete
     dplyr::filter(row_number() == 1L) %>% # pick the most significant if multiple matches
     dplyr::ungroup()
 
-cov2ts_proteome_effects_obj.df <- filter(cov2ts_proteome.env$object_contrasts.df, str_detect(contrast, "SARS.+_vs_mock") & std_type == "replicate") %>%
-    dplyr::inner_join(dplyr::select(filter(cov2ts_proteome.env$msdata_full$protein2protgroup, is_majority),
+proteome_effects_obj.df <- filter(proteome.env$object_contrasts.df, str_detect(contrast, "SARS.+_vs_mock") & std_type == "median") %>%
+    dplyr::inner_join(dplyr::select(filter(proteome.env$msdata_full$protein2protgroup, is_majority),
                                     protein_ac, object_id = protgroup_id)) %>%
     dplyr::select(contrast, protein_ac,
-                  cov2ts_proteome_median_log2 = median_log2, cov2ts_proteome_p_value = p_value, cov2ts_proteome_is_hit = is_hit_nomschecks) %>%
+                  proteome_median_log2 = median_log2, proteome_p_value = p_value,
+                  proteome_is_hit = is_hit_composed, proteome_hit_type = composed_hit_type,
+                  proteome_change = change) %>%
     dplyr::inner_join(filter(msdata_full$protein2protregroup, is_majority)) %>%
     dplyr::mutate(object_id = protregroup_id) %>%
-    tidyr::extract(contrast, "timepoint", "mock@(\\d+)h", remove=FALSE) %>%
+    tidyr::extract(contrast, "timepoint", "^SARS.+mock@(\\d+)h", remove=FALSE) %>%
     dplyr::mutate(timepoint = parse_integer(timepoint)) %>%
-    dplyr::group_by(contrast, object_id) %>%
-    dplyr::filter(row_number(cov2ts_proteome_p_value) == 1L) %>% # pick the most significant if multiple matches
+    dplyr::group_by(contrast, object_id, timepoint) %>%
+    dplyr::filter(row_number(proteome_p_value) == 1L) %>% # pick the most significant if multiple matches
+    dplyr::ungroup() %>%
+    dplyr::arrange(object_id, timepoint, contrast) %>%
+    dplyr::mutate(hit_ref = if_else(proteome_is_hit, str_c(timepoint, "h:", proteome_hit_type, "(", proteome_change, ")"), "")) %>%
     dplyr::group_by(object_id) %>%
-    dplyr::summarise(cov2ts_proteome_timepoints = if_else(any(cov2ts_proteome_is_hit),
-                                                          str_c(sort(timepoint[cov2ts_proteome_is_hit]), "h",
-                                                                if_else(cov2ts_proteome_median_log2[cov2ts_proteome_is_hit] > 0, "+", "-"),
-                                                                collapse=" "), NA_character_),
-                     cov2ts_proteome_median_log2 = cov2ts_proteome_median_log2[row_number(cov2ts_proteome_p_value) == 1L],
-                     cov2ts_proteome_p_value = cov2ts_proteome_p_value[row_number(cov2ts_proteome_p_value) == 1L],
-                     cov2ts_proteome_is_hit = any(cov2ts_proteome_is_hit)) %>%
+    dplyr::summarise(proteome_timepoints = if_else(any(proteome_is_hit),
+                                                   str_c(unique(hit_ref[proteome_is_hit]), collapse=" "), NA_character_),
+                     #proteome_median_log2 = proteome_median_log2[row_number(proteome_p_value) == 1L],
+                     #proteome_p_value = proteome_p_value[row_number(proteome_p_value) == 1L],
+                     proteome_is_hit = any(proteome_is_hit)) %>%
     dplyr::ungroup()
 
-cov2el_proteome_effects_obj.df <- filter(cov2el_proteome.env$object_contrasts.df, str_detect(contrast, "SARS.+_vs_mock") & std_type == "replicate") %>%
-    dplyr::inner_join(dplyr::select(filter(cov2el_proteome.env$msdata_full$protein2protregroup, is_majority),
-                                    protein_ac, object_id = protregroup_id)) %>%
-    dplyr::select(contrast, protein_ac, median_log2, p_value, is_hit = is_hit_nomschecks) %>%
-    dplyr::inner_join(filter(msdata_full$protein2protregroup, is_majority)) %>%
+rnaseq_effects_obj.df <- filter(rnaseq.env$object_contrasts.df, str_detect(contrast, "SARS.+_vs_mock")) %>%
+    dplyr::select(contrast, gene_name,
+                  rnaseq_mean_log2 = mean_log2, rnaseq_p_value = p_value,
+                  rnaseq_is_hit = is_hit_composed, rnaseq_hit_type = composed_hit_type,
+                  rnaseq_change = change) %>%
+    dplyr::inner_join(dplyr::inner_join(dplyr::filter(msdata_full$protein2protregroup, is_majority),
+                                        msdata_full$proteins) %>%
+                      dplyr::select(protregroup_id, gene_name) %>% dplyr::distinct()) %>%
     dplyr::mutate(object_id = protregroup_id) %>%
-    tidyr::extract(contrast, "timepoint", "mock@(\\d+)h", remove=FALSE) %>%
+    tidyr::extract(contrast, "timepoint", "^SARS.+mock@(\\d+)h", remove=FALSE) %>%
     dplyr::mutate(timepoint = parse_integer(timepoint)) %>%
-    dplyr::group_by(contrast, object_id) %>%
-    dplyr::filter(row_number(p_value) == 1L) %>% # pick the most significant if multiple matches
+    dplyr::group_by(contrast, object_id, timepoint) %>%
+    dplyr::filter(row_number(rnaseq_p_value) == 1L) %>% # pick the most significant if multiple matches
+    dplyr::ungroup() %>%
+    dplyr::arrange(object_id, timepoint, contrast) %>%
+    dplyr::mutate(hit_ref = if_else(rnaseq_is_hit, str_c(timepoint, "h:", rnaseq_hit_type, "(", rnaseq_change, ")"), "")) %>%
     dplyr::group_by(object_id) %>%
-    dplyr::summarise(cov2el_proteome_timepoints = if_else(any(is_hit),
-                                                          str_c(sort(timepoint[is_hit]), "h",
-                                                                if_else(median_log2[is_hit] > 0, "+", "-"),
-                                                                collapse=" "), NA_character_),
-                     cov2el_proteome_median_log2 = median_log2[row_number(p_value) == 1L],
-                     cov2el_proteome_p_value = p_value[row_number(p_value) == 1L],
-                     cov2el_proteome_is_hit = any(is_hit)) %>%
+    dplyr::summarise(rnaseq_timepoints = if_else(any(rnaseq_is_hit),
+                                                   str_c(unique(hit_ref[rnaseq_is_hit]), collapse=" "), NA_character_),
+                     #rnaseq_median_log2 = rnaseq_median_log2[row_number(rnaseq_p_value) == 1L],
+                     #rnaseq_p_value = rnaseq_p_value[row_number(rnaseq_p_value) == 1L],
+                     rnaseq_is_hit = any(rnaseq_is_hit)) %>%
     dplyr::ungroup()
 
-cov2ts_phospho_effects_obj.df <- filter(cov2ts_phospho.env$object_contrasts.df, str_detect(contrast, "SARS.+_vs_mock") & std_type == "replicate") %>%
-    dplyr::mutate(ptmgroup_shortid = str_remove(ptmgroup_id, "_M\\d+$")) %>%
-    dplyr::inner_join(dplyr::transmute(cov2ts_phospho.env$msdata_full$ptmgroup2psitep,
-                                       ptmgroup_shortid, protein_ac, ptm_gene_name=gene_name, ptm_pos=data_ptm_pos, ptm_label=str_c(data_ptm_AA, data_ptm_pos))) %>%
-    dplyr::select(contrast, protein_ac, ptm_label, ptm_pos, ptm_gene_name,
-                  cov2ts_phospho_median_log2 = median_log2, cov2ts_phospho_p_value = p_value, cov2ts_phospho_is_hit = is_hit_nomschecks) %>%
+phospho_effects_obj.df <- filter(phospho.env$object_contrasts.df, str_detect(contrast, "^SARS.+_vs_mock") & std_type == "median") %>%
+    dplyr::filter(ptmid_is_reference) %>%
+    #dplyr::mutate(ptmgroup_shortid = str_remove(ptmgroup_id, "_M\\d+$")) %>%
+    #dplyr::inner_join(dplyr::transmute(phospho.env$msdata_full$ptm2gene,
+    #                                   ptmgroup_shortid, protein_ac, ptm_gene_name=gene_name, ptm_pos=data_ptm_pos, ptm_label=str_c(data_ptm_AA, data_ptm_pos))) %>%
+    dplyr::select(contrast, protein_ac, ptm_AA_seq, ptm_pos, ptm_gene_name=gene_name,
+                  phospho_median_log2 = median_log2, phospho_p_value = p_value,
+                  phospho_is_hit = is_hit_composed, phospho_hit_type = composed_hit_type,
+                  phospho_change = change) %>%
     dplyr::inner_join(filter(msdata_full$protein2protregroup, is_majority)) %>%
     dplyr::inner_join(select(msdata_full$protregroups, protregroup_id, object_label=protregroup_label)) %>%
-    tidyr::extract(contrast, "timepoint", "mock@(\\d+)h", remove=FALSE) %>%
-    dplyr::mutate(ptm_label = if_else(ptm_gene_name != str_remove(object_label, "\\.\\.\\.$"),
-                                      str_c(ptm_gene_name, "_", ptm_label), ptm_label),
+    tidyr::extract(contrast, "timepoint", "^SARS.+mock@(\\d+)h", remove=FALSE) %>%
+    dplyr::mutate(ptm_label = str_c(ptm_AA_seq, ptm_pos, "@", ptm_gene_name),
                   object_id = protregroup_id,
                   timepoint = parse_integer(timepoint)) %>%
     dplyr::group_by(contrast, object_id, ptm_label) %>%
-    dplyr::filter(row_number(cov2ts_phospho_p_value) == 1L) %>% # pick the most significant if multiple matches
-    dplyr::arrange(object_id, ptm_pos, ptm_label, timepoint) %>%
-    dplyr::group_by(object_id, ptm_pos, ptm_label) %>%
-    dplyr::summarise(timepoints = if_else(any(cov2ts_phospho_is_hit), str_c(timepoint[cov2ts_phospho_is_hit], "h",
-                                                                            if_else(cov2ts_phospho_median_log2[cov2ts_phospho_is_hit] > 0, "+", "-"),
-                                                                            collapse=" "), NA_character_),
-                     cov2ts_phospho_median_log2 = cov2ts_phospho_median_log2[row_number(cov2ts_phospho_p_value) == 1L],
-                     cov2ts_phospho_p_value = cov2ts_phospho_p_value[row_number(cov2ts_phospho_p_value) == 1L],
-                     cov2ts_phospho_is_hit = any(cov2ts_phospho_is_hit)) %>%
+    dplyr::filter(row_number(phospho_p_value) == 1L) %>% # pick the most significant if multiple matches
+    dplyr::arrange(object_id, ptm_gene_name, ptm_pos, ptm_label, timepoint, contrast) %>%
+    dplyr::mutate(hit_ref = if_else(phospho_is_hit, str_c(timepoint, "h:", phospho_hit_type, "(", phospho_change, ")"), "")) %>%
+    dplyr::group_by(object_id, ptm_gene_name, ptm_pos, ptm_label) %>%
+    dplyr::summarise(ptm_hits = if_else(any(phospho_is_hit), str_c(unique(hit_ref[phospho_is_hit]), collapse=" "), NA_character_),
+                     #phospho_median_log2 = phospho_median_log2[row_number(phospho_p_value) == 1L],
+                     #phospho_p_value = phospho_p_value[row_number(phospho_p_value) == 1L],
+                     phospho_is_hit = any(phospho_is_hit)) %>%
     dplyr::arrange(object_id, ptm_pos, ptm_label) %>%
     dplyr::group_by(object_id) %>%
-    dplyr::summarise(cov2ts_phospho_ptms = if_else(any(cov2ts_phospho_is_hit), str_c(ptm_label[cov2ts_phospho_is_hit],
-                                                                                     "(", timepoints[cov2ts_phospho_is_hit], ")", collapse=" "), NA_character_),
-                     cov2ts_phospho_median_log2 = cov2ts_phospho_median_log2[row_number(cov2ts_phospho_p_value) == 1L],
-                     cov2ts_phospho_p_value = cov2ts_phospho_p_value[row_number(cov2ts_phospho_p_value) == 1L],
-                     cov2ts_phospho_is_hit = any(cov2ts_phospho_is_hit)) %>%
+    dplyr::summarise(phospho_ptms = if_else(any(phospho_is_hit), str_c(ptm_label[phospho_is_hit],
+                                                                       str_c("[", ptm_hits[phospho_is_hit], "]"), collapse=" "), NA_character_),
+                     #phospho_median_log2 = phospho_median_log2[row_number(phospho_p_value) == 1L],
+                     #phospho_p_value = phospho_p_value[row_number(phospho_p_value) == 1L],
+                     phospho_is_hit = any(phospho_is_hit)) %>%
     dplyr::ungroup()
 
-cov2el_phospho_effects_obj.df <- cov2el_phospho.env$perseus_analysis_short.df %>%
+ubi_effects_obj.df <- filter(ubi.env$object_contrasts.df, str_detect(contrast, "^SARS.+_vs_mock") & std_type == "median") %>%
+    dplyr::filter(ptmid_is_reference) %>%
+    #dplyr::mutate(ptmgroup_shortid = str_remove(ptmgroup_id, "_M\\d+$")) %>%
+    #dplyr::inner_join(dplyr::transmute(phospho.env$msdata_full$ptm2gene,
+    #                                   ptmgroup_shortid, protein_ac, ptm_gene_name=gene_name, ptm_pos=data_ptm_pos, ptm_label=str_c(data_ptm_AA, data_ptm_pos))) %>%
+    dplyr::select(contrast, protein_ac, ptm_AA_seq, ptm_pos, ptm_gene_name=gene_name,
+                  ubi_median_log2 = median_log2, ubi_p_value = p_value,
+                  ubi_is_hit = is_hit_composed, ubi_hit_type = composed_hit_type,
+                  ubi_change = change) %>%
     dplyr::inner_join(filter(msdata_full$protein2protregroup, is_majority)) %>%
     dplyr::inner_join(select(msdata_full$protregroups, protregroup_id, object_label=protregroup_label)) %>%
-    dplyr::mutate(object_id = protregroup_id) %>%
-    dplyr::group_by(timepoint, object_id, ptm_label) %>%
-    dplyr::filter(row_number(p_value) == 1L) %>% # pick the most significant if multiple matches
-    dplyr::arrange(object_id, ptm_pos, ptm_label, timepoint) %>%
-    dplyr::group_by(object_id, ptm_pos, ptm_label) %>%
-    dplyr::summarise(timepoints = if_else(any(is_signif), str_c(timepoint[is_signif], "h",
-                                                                if_else(delta_log2[is_signif] > 0, "+", "-"),
-                                                                collapse=" "), NA_character_),
-                     delta_log2 = delta_log2[row_number(p_value) == 1L],
-                     p_value = p_value[row_number(p_value) == 1L],
-                     is_signif = any(is_signif)) %>%
+    tidyr::extract(contrast, "timepoint", "^SARS.+mock@(\\d+)h", remove=FALSE) %>%
+    dplyr::mutate(ptm_label = str_c(ptm_AA_seq, ptm_pos, "@", ptm_gene_name),
+                  object_id = protregroup_id,
+                  timepoint = parse_integer(timepoint)) %>%
+    dplyr::group_by(contrast, object_id, ptm_label) %>%
+    dplyr::filter(row_number(ubi_p_value) == 1L) %>% # pick the most significant if multiple matches
+    dplyr::arrange(object_id, ptm_gene_name, ptm_pos, ptm_label, timepoint, contrast) %>%
+    dplyr::mutate(hit_ref = if_else(ubi_is_hit, str_c(timepoint, "h:", ubi_hit_type, "(", ubi_change, ")"), "")) %>%
+    dplyr::group_by(object_id, ptm_gene_name, ptm_pos, ptm_label) %>%
+    dplyr::summarise(ptm_hits = if_else(any(ubi_is_hit), str_c(unique(hit_ref[ubi_is_hit]), collapse=" "), NA_character_),
+                     #ubi_median_log2 = ubi_median_log2[row_number(ubi_p_value) == 1L],
+                     #ubi_p_value = ubi_p_value[row_number(ubi_p_value) == 1L],
+                     ubi_is_hit = any(ubi_is_hit)) %>%
     dplyr::arrange(object_id, ptm_pos, ptm_label) %>%
     dplyr::group_by(object_id) %>%
-    dplyr::summarise(cov2el_phospho_ptms = if_else(any(is_signif), str_c(ptm_label[is_signif],
-                                                                         "(", timepoints[is_signif], ")", collapse=" "), NA_character_),
-                     cov2el_phospho_median_log2 = delta_log2[row_number(p_value) == 1L],
-                     cov2el_phospho_p_value = p_value[row_number(p_value) == 1L],
-                     cov2el_phospho_is_hit = any(is_signif)) %>%
-    dplyr::ungroup()
-
-cov2el_ubi_effects_obj.df <- cov2el_ubi.env$perseus_analysis_short.df %>%
-    dplyr::inner_join(filter(msdata_full$protein2protregroup, is_majority)) %>%
-    dplyr::inner_join(select(msdata_full$protregroups, protregroup_id, object_label=protregroup_label)) %>%
-    dplyr::mutate(object_id = protregroup_id) %>%
-    dplyr::group_by(timepoint, object_id, ptm_label) %>%
-    dplyr::filter(row_number(p_value) == 1L) %>% # pick the most significant if multiple matches
-    dplyr::arrange(object_id, ptm_pos, ptm_label, timepoint) %>%
-    dplyr::group_by(object_id, ptm_pos, ptm_label) %>%
-    dplyr::summarise(timepoints = if_else(any(is_signif), str_c(timepoint[is_signif], "h",
-                                                                if_else(delta_log2[is_signif] > 0, "+", "-"),
-                                                                collapse=" "), NA_character_),
-                     delta_log2 = delta_log2[row_number(p_value) == 1L],
-                     p_value = p_value[row_number(p_value) == 1L],
-                     is_signif = any(is_signif)) %>%
-    dplyr::arrange(object_id, ptm_pos, ptm_label) %>%
-    dplyr::group_by(object_id) %>%
-    dplyr::summarise(cov2el_ubi_ptms = if_else(any(is_signif), str_c(ptm_label[is_signif],
-                                                                         "(", timepoints[is_signif], ")", collapse=" "), NA_character_),
-                     cov2el_ubi_median_log2 = delta_log2[row_number(p_value) == 1L],
-                     cov2el_ubi_p_value = p_value[row_number(p_value) == 1L],
-                     cov2el_ubi_is_hit = any(is_signif)) %>%
+    dplyr::summarise(ubi_ptms = if_else(any(ubi_is_hit), str_c(ptm_label[ubi_is_hit],
+                                                                       str_c("[", ptm_hits[ubi_is_hit], "]"), collapse=" "), NA_character_),
+                     #ubi_median_log2 = ubi_median_log2[row_number(ubi_p_value) == 1L],
+                     #ubi_p_value = ubi_p_value[row_number(ubi_p_value) == 1L],
+                     ubi_is_hit = any(ubi_is_hit)) %>%
     dplyr::ungroup()
 
 crispr_plasmids.df <- read_tsv(file.path(data_path, "CRISPR_plasmids_20200410.txt")) %>%
@@ -335,11 +282,10 @@ iactions_4table.df <- filter(object_contrasts.df, str_detect(contrast, "_vs_othe
     #left_join(prev_iactions_obj.df) %>%
     left_join(oeproteome_effects_obj.df) %>%
     #left_join(hom_object_contrasts.df) %>%
-    left_join(cov2ts_proteome_effects_obj.df) %>%
-    left_join(cov2ts_phospho_effects_obj.df) %>%
-    left_join(cov2el_proteome_effects_obj.df) %>%
-    left_join(cov2el_phospho_effects_obj.df) %>%
-    left_join(cov2el_ubi_effects_obj.df) %>%
+    left_join(proteome_effects_obj.df) %>%
+    left_join(phospho_effects_obj.df) %>%
+    left_join(ubi_effects_obj.df) %>%
+    left_join(rnaseq_effects_obj.df) %>%
     left_join(dplyr::select(modelobjs_df, object_id, protein_description, any_of(c("npepmods_unique", "npeptides_unique")))) %>%
     dplyr::mutate(oeproteome_is_upregulation = coalesce(oeproteome_is_hit_stringent, FALSE) & coalesce(oeproteome_median_log2, 0) > 0 &
                       median_log2 > 0 & (median_log2 - coalesce(oeproteome_median_log2, 0)) <= oeproteome_log2_mindelta,
@@ -357,8 +303,7 @@ iactions_4table.df <- filter(object_contrasts.df, str_detect(contrast, "_vs_othe
                   #matches("is_in_\\d+_apms"), matches("prev_prob"),
                   ends_with("_homology"),
                   starts_with("oeproteome_"),
-                  starts_with("cov2ts_proteome"), starts_with("cov2ts_phospho"),
-                  starts_with("cov2el_proteome"), starts_with("cov2el_phospho"), starts_with("cov2el_ubi"),
+                  starts_with("rnaseq"), starts_with("proteome"), starts_with("phospho"), starts_with("ubi"), starts_with("rnaseq"),
                   #starts_with("krogan_"), 
                   starts_with("virhostnet_")#,
                   #crispr_plasmid_ids
@@ -366,12 +311,14 @@ iactions_4table.df <- filter(object_contrasts.df, str_detect(contrast, "_vs_othe
     dplyr::select(-oeproteome_is_hit_stringent)
 write_tsv(iactions_4table.df,
           file.path(analysis_path, 'networks',
-                    str_c(project_id, '_interactions_all_', apms_info$ms_folder, '_', report_version, modelobj_suffix, '.txt')),
+                    str_c(project_id, '_interactions_all_', apms_info$msfolder, '_', report_version, modelobj_suffix, '.txt')),
           na = "")
 write_tsv(filter(iactions_4table.df, is_hit),
           file.path(analysis_path, 'networks',
-                    str_c(project_id, '_interactions_signif_', apms_info$ms_folder, '_', report_version, modelobj_suffix, '.txt')),
+                    str_c(project_id, '_interactions_signif_', apms_info$msfolder, '_', report_version, modelobj_suffix, '.txt')),
           na = "")
+
+require(writexl)
 
 hom_object_contrasts.df <- filter(object_contrasts.df, contrast_type == "comparison" & str_detect(contrast, "_corrected") & std_type == "replicate") %>%
     dplyr::left_join(dplyr::select(bait_checks.df, bait_full_id, bait_homid)) %>%
@@ -380,7 +327,7 @@ hom_object_contrasts.df <- filter(object_contrasts.df, contrast_type == "compari
     dplyr::select(gene_names, majority_protein_acs, bait_id, contrast, contrast_offset, median_log2, p_value, change, is_hit = is_hit_nomschecks)
 write_tsv(hom_object_contrasts.df,
           file.path(analysis_path, 'networks',
-                    str_c(project_id, '_interactions_signif_homology_comparison_', apms_info$ms_folder, '_', report_version, modelobj_suffix, '.txt')),
+                    str_c(project_id, '_interactions_signif_homology_comparison_', apms_info$msfolder, '_', report_version, modelobj_suffix, '.txt')),
           na = "")
 
 bait_labels.df <- distinct(select(iactions_4graphml_pre.df, contrast)) %>%
@@ -483,11 +430,11 @@ objects_4graphml.df <- dplyr::bind_rows(semi_join(modelobjs_df,
               dplyr::filter(row_number(oeproteome_p_value) == 1L) %>% dplyr::ungroup() %>%
               dplyr::select(object_id, starts_with("oeproteome_"))) %>%
     dplyr::mutate(oeproteome_is_hit = coalesce(oeproteome_is_hit, FALSE) & oeproteome_median_log2_max >= 1) %>%
-    left_join(cov2ts_proteome_effects_obj.df) %>%
-    left_join(cov2ts_phospho_effects_obj.df) %>%
+    left_join(proteome_effects_obj.df) %>%
+    left_join(phospho_effects_obj.df) %>%
     left_join(cov2el_proteome_effects_obj.df) %>%
     left_join(cov2el_phospho_effects_obj.df) %>%
-    left_join(cov2el_ubi_effects_obj.df)
+    left_join(ubi_effects_obj.df)
 
 # integrate known PPI
 ppi.env <- new.env(parent=baseenv())
@@ -659,8 +606,8 @@ iactions.graphml <- GraphML.generate(objects_4graphml.df,
 )
 
 write(iactions.graphml, file.path(analysis_path, 'networks',
-                                  str_c(project_id, '_', datasets$apms$ms_folder, '_', report_version, '.graphml')))
-rgraph_filepath <- file.path(analysis_path, 'networks', str_c(project_id, '_4graph_', datasets$apms$ms_folder, '_', report_version, '.RData'))
+                                  str_c(project_id, '_', datasets$apms$msfolder, '_', report_version, '.graphml')))
+rgraph_filepath <- file.path(analysis_path, 'networks', str_c(project_id, '_4graph_', datasets$apms$msfolder, '_', report_version, '.RData'))
 results_info <- list(project_id = project_id, datasets,
                      modelobj = modelobj, quantobj = quantobj)
 object_contrasts_slim.df <- select(object_contrasts.df, contrast, contrast_type, std_type,
@@ -673,3 +620,4 @@ save(results_info, iactions_4table.df, iactions_ex_4graphml.df, objects_4graphml
      object_contrasts_slim.df,
      bait2object.df, missed_bait_objects.df, bait_labels.df,
      file = rgraph_filepath)
+
