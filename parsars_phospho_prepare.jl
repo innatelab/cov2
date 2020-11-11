@@ -1,10 +1,11 @@
+using Pkg
+Pkg.activate(@__DIR__)
+
 proj_info = (id = "cov2",
              data_ver = "20201012",
              msfolder = "snaut_parsars_phospho_20201005",
              ptm_locprob_min = 0.75,
              )
-using Pkg
-Pkg.activate(@__DIR__)
 using Revise
 using StatsBase, DataFrames, CSV, FastaIO, JLD2, CodecZlib, Base.Filesystem
 
@@ -14,12 +15,13 @@ const data_path = joinpath(analysis_path, "data")
 const scratch_path = joinpath(analysis_path, "scratch")
 const plots_path = joinpath(analysis_path, "plots")
 
-Revise.includet(joinpath(misc_scripts_path, "delimdata_utils.jl"));
-Revise.includet(joinpath(misc_scripts_path, "frame_utils.jl"));
-Revise.includet(joinpath(misc_scripts_path, "ms_import.jl"));
-Revise.includet(joinpath(misc_scripts_path, "fasta_reader.jl"));
-Revise.includet(joinpath(misc_scripts_path, "ptm_extractor.jl"));
-Revise.includet(joinpath(misc_scripts_path, "phosphositeplus_reader.jl"));
+includet(joinpath(misc_scripts_path, "delimdata_utils.jl"));
+includet(joinpath(misc_scripts_path, "frame_utils.jl"));
+includet(joinpath(misc_scripts_path, "ms_import.jl"));
+includet(joinpath(misc_scripts_path, "fasta_reader.jl"));
+includet(joinpath(misc_scripts_path, "ptm_extractor.jl"));
+includet(joinpath(misc_scripts_path, "phosphositeplus_reader.jl"));
+includet(joinpath(misc_scripts_path, "protgroup_crossmatch.jl"));
 
 # read direct Spectronaut output
 pmsreports = Dict(name => begin
@@ -154,17 +156,10 @@ ptmns_df = unique!(select(ptmn2pms_df, [:ptm_id, :ptm_label, :ptm_type, :nselptm
 sort!(ptmns_df, [:ptm_type, :ptm_id, :nselptms])
 ptmns_df.ptmn_id = 1:nrow(ptmns_df)
 ptmns_df.ptmn_label = categorical(ptmns_df.ptm_label .* "_M" .* string.(ptmns_df.nselptms))
-ptmn2pms_df = innerjoin(ptmn2pms_df, select(ptmns_df, Not(:ptm_label), copycols=false), on=[:ptm_id, :ptm_type, :nselptms])
+ptmn2pms_df = innerjoin(ptmn2pms_df, select(ptmns_df, Not(:ptm_label), copycols=false), on=[:ptm_id, :ptm_type, :nselptms]) # add ptmn_id and label
 sort!(ptmn2pms_df, [:ptmn_id, :pepmodstate_id])
 
 ptm2ptmgroup_df, ptmn2ptmngroup_df, ptmgroup2ptmngroup_df = PTMExtractor.ptmgroups(ptmn2pms_df, verbose=true)
-
-ptmn2pms2protein_df = innerjoin(innerjoin(ptm2pms2protein_df, ptm2protein_df, on=[:protein_ac, :ptm_type, :ptm_pos, :ptm_AAs, :ptm_AA_seq]),
-                                ptmn2pms_df, on=[:pepmodstate_id, :ptm_id])
-ptmn2pms_df = disallowmissing!(unique!(select(ptmn2pms2protein_df, [:ptmn_id, :ptm_id, :pepmodstate_id, :peptide_id, :ptm_offset])))
-
-print(countmap(collect(values(countmap(ptmn2pms_df.pepmodstate_id)))))
-print(countmap(collect(values(countmap(filter(r -> r.nselptms == 1, ptmns_df).ptmn_id)))))
 
 pms_intensities_df = vcat([begin
     df = MSImport.Spectronaut.pivot_longer(report.data, [:pepmodstate_id, :pepmod_seq])
@@ -223,7 +218,7 @@ psitepseqs_df = Fasta.read_phosphositeplus(joinpath(psitep_path, "Phosphosite_PT
 psitepseqs_df.is_ref_isoform = .!occursin.(Ref(r"-\d+$"), psitepseqs_df.protein_ac);
 
 @save(joinpath(scratch_path, "phosphositeplus_annotations_20200828.jld2"), psitep_annot_dfs, psitep_annots_df, psitepseqs_df)
-#@load(joinpath(scratch_path, "phosphositeplus_annotations_20200828.jld2"), psitep_annot_dfs, psitep_annots_df)
+#@load(joinpath(scratch_path, "phosphositeplus_annotations_20200828.jld2"), psitep_annot_dfs, psitep_annots_df, psitepseqs_df)
 
 # map PTMs to PhosphoSitePlus sequences
 ptm2psitep_df = PTMExtractor.map_aapos(ptm2protein_df, proteins_df, psitepseqs_df,
@@ -249,17 +244,24 @@ ptmns_df2 = leftjoin(innerjoin(innerjoin(innerjoin(ptmns_df, ptm2ptmgroup_df, on
 @assert ptmns_df2.ptmn_id == ptmns_df.ptmn_id
 ptmns_df2.protein_rank = get.(Ref(protein_ranks), ptmns_df2.protein_ac, missing)
 ptmns_df2.ptm_is_known = coalesce.(ptmns_df2.ptm_is_known, false)
-ptmns_df2[!, :ptmid_is_reference] .= false
-for ptmgroup_df in groupby(ptmns_df2, :ptmgroup_id)
+ptms_df = unique!(select(ptmns_df2, [:ptmgroup_id, :ptm_id, :ptm_is_known, :protein_rank, :genename, :protein_ac, :ptm_pos]))
+ptms_df[!, :ptmid_is_reference] .= false
+for ptmgroup_df in groupby(ptms_df, :ptmgroup_id)
     ptmorder = sortperm(ptmgroup_df, [order(:ptm_is_known, rev=true), :protein_rank, :genename, :protein_ac, :ptm_pos])
     ptmgroup_df.ptmid_is_reference[ptmorder[1]] = true
 end
+ptmns_df2.ptmid_is_reference = ptmns_df2.ptm_id .∈ Ref(Set(ptms_df.ptm_id[ptms_df.ptmid_is_reference]))
 open(GzipCompressorStream, joinpath(output_path, "ptmns_grouped.txt.gz"), "w") do io
     CSV.write(io, ptmns_df2, delim='\t')
 end
 
 # map viral PTMs to each other
 using DataFrames, BioAlignments
+
+viral_aa_all_df = PTMExtractor.ptmsites(filter(r -> r.is_viral, proteins_df))
+viral_aa_all_df.flanking_15AAs = PTMExtractor.flanking_sequence.(getindex.(Ref(protein_seqs), viral_aa_all_df.protein_ac), viral_aa_all_df.ptm_pos, flanklen=15)
+viral_aa_all_df = innerjoin(viral_aa_all_df, select(proteins_df, [:protein_ac, :protein_code, :genename, :organism]), on=:protein_ac)
+CSV.write(joinpath(output_path, "viral_aa_all_$(proj_info.data_ver)_ext.txt"), viral_aa_all_df, delim='\t')
 
 viral_ptm2protein_all_df = PTMExtractor.ptmsites(filter(r -> r.is_viral, proteins_df), ["Phospho" => "STY"])
 FrameUtils.matchcategoricals!(viral_ptm2protein_all_df, ptm2protein_df, cols=[:ptm_type, :ptm_AAs])
@@ -271,32 +273,33 @@ viral_ptm2protein_all_df = leftjoin(viral_ptm2protein_all_df,
 viral_ptm2protein_all_df.is_observed = .!ismissing.(viral_ptm2protein_all_df.is_observed)
 viral_ptm2protein_all_df = innerjoin(viral_ptm2protein_all_df, select(proteins_df, [:protein_ac, :protein_code, :genename, :organism]), on=:protein_ac)
 
-viral_ptm2ptm_df = PTMExtractor.map_aapos(viral_ptm2protein_all_df,
-                                       filter(r -> r.is_viral, proteins_df), filter(r -> r.is_viral, proteins_df),
-                                       destmap_prefix=:hom_, obj_prefix=:ptm_, objid_col=[:ptm_type, :ptm_pos, :ptm_AA_seq], verbose=true,
-                                       scoremodel=AffineGapScoreModel(BLOSUM80, match=5, mismatch=-4, gap_open=-5, gap_extend=-3),
-                                       seqgroup_col=[:is_viral],
-                                       srcseqid_col=[:protein_ac, :protein_code, :organism],
-                                       destseqid_col=[:protein_ac, :protein_code, :organism])
-viral_ptm2ptm_df = vcat(viral_ptm2ptm_df,
-     rename!(copy(viral_ptm2ptm_df, copycols=false),
-            :ptm_pos => :hom_ptm_pos, :ptm_AA_seq => :hom_ptm_AA,
-            :protein_ac => :hom_protein_ac, :protein_code => :hom_protein_code,
-            :organism => :hom_organism, :srcseq_ix => :destseq_ix,
-            :hom_ptm_pos => :ptm_pos, :hom_ptm_AA => :ptm_AA_seq,
-            :hom_protein_ac => :protein_ac, :hom_protein_code => :protein_code,
-            :hom_organism => :organism, :destseq_ix => :srcseq_ix,)) |> unique!
-viral_ptm2ptm_df = leftjoin(viral_ptm2ptm_df, select(viral_ptm2protein_all_df, [:protein_ac, :ptm_pos, :is_observed]), on=[:protein_ac, :ptm_pos])
+viral_agn_df = PTMExtractor.map_aapos(viral_aa_all_df,
+                                      filter(r -> r.is_viral, proteins_df), filter(r -> r.is_viral, proteins_df),
+                                      destmap_prefix=:hom_, obj_prefix=:ptm_, objid_col=[:ptm_pos, :ptm_AA_seq], verbose=true,
+                                      scoremodel=AffineGapScoreModel(BLOSUM80, match=5, mismatch=-4, gap_open=-5, gap_extend=-3),
+                                      seqgroup_col=[:is_viral],
+                                      srcseqid_col=[:protein_ac, :protein_code, :organism],
+                                      destseqid_col=[:protein_ac, :protein_code, :organism])
+viral_agn_df = vcat(viral_agn_df, rename!(copy(viral_agn_df, copycols=false),
+        :ptm_pos => :hom_ptm_pos, :ptm_AA_seq => :hom_ptm_AA,
+        :protein_ac => :hom_protein_ac, :protein_code => :hom_protein_code,
+        :organism => :hom_organism, :srcseq_ix => :destseq_ix,
+        :hom_ptm_pos => :ptm_pos, :hom_ptm_AA => :ptm_AA_seq,
+        :hom_protein_ac => :protein_ac, :hom_protein_code => :protein_code,
+        :hom_organism => :organism, :destseq_ix => :srcseq_ix,)) |> unique!
+filter!(r -> !ismissing(r.hom_ptm_pos) &&
+        (r.organism != r.hom_organism) &&
+        coalesce(r.agn_match_ratio, 0.0) >= 0.5
+        , viral_agn_df)
+CSV.write(joinpath(output_path, "viral_agn_$(proj_info.data_ver).txt"), viral_agn_df, delim='\t')
+
+viral_ptm2ptm_df = leftjoin(viral_agn_df, select(viral_ptm2protein_all_df, [:ptm_type, :protein_ac, :ptm_pos, :is_observed]), on=[:protein_ac, :ptm_pos])
 viral_ptm2ptm_df = leftjoin(viral_ptm2ptm_df, rename!(select(viral_ptm2protein_all_df, [:protein_ac, :ptm_pos, :is_observed]),
                                                       :protein_ac => :hom_protein_ac, :ptm_pos => :hom_ptm_pos, :is_observed => :hom_is_observed),
                             on=[:hom_protein_ac, :hom_ptm_pos])
-filter!(r -> !ismissing(r.hom_ptm_pos) &&
-             (r.ptm_type in ["Phospho", "GlyGly"]) &&
-             (r.organism != r.hom_organism) &&
-             coalesce(r.agn_match_ratio, 0.0) >= 0.5
-             , viral_ptm2ptm_df)
+filter!(r -> !ismissing(r.ptm_type) && (r.ptm_type in ["Phospho", "GlyGly"]), viral_ptm2ptm_df)
 select!(viral_ptm2ptm_df, Not([:is_viral, :srcseq_ix, :destseq_ix]))
-CSV.write(joinpath(output_path, "viral_ptm2ptm_$(proj_info.data_ver)_all.txt"), viral_ptm2ptm_df, delim='\t')
+CSV.write(joinpath(output_path, "viral_ptm2ptm_$(proj_info.data_ver)_all2.txt"), viral_ptm2ptm_df, delim='\t')
 select(viral_ptm2ptm_df, Not([:organism, :hom_organism]))
 filter!(r -> (coalesce(r.is_observed, false) || coalesce(r.hom_is_observed, false)), viral_ptm2ptm_df)
 CSV.write(joinpath(output_path, "viral_ptm2ptm_$(proj_info.data_ver).txt"), viral_ptm2ptm_df, delim='\t')

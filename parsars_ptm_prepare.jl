@@ -1,10 +1,11 @@
+using Pkg
+Pkg.activate(@__DIR__)
+
 proj_info = (id = "cov2",
              data_ver = "20201012",
              msfolder = "snaut_parsars_ptm_20200907",
              ptm_locprob_min = 0.75,
              )
-using Pkg
-Pkg.activate(@__DIR__)
 using Revise
 using StatsBase, DataFrames, CSV, FastaIO, JLD2, CodecZlib, Base.Filesystem
 
@@ -133,14 +134,17 @@ ptm2pms2protein_df.ptm_pos = ptm2pms2protein_df.peptide_pos .+ ptm2pms2protein_d
 ptm2protein_df = leftjoin(unique!(select(ptm2pms2protein_df, [:ptm_type, :ptm_AAs, :ptm_AA_seq, :ptm_pos, :protein_ac])),
                           select(proteins_df, [:protein_ac, :genename, :organism, :is_viral, :is_contaminant], copycols=false),
                           on=:protein_ac)
-#=
-ptm2protgroup_df = PTMExtractor.group_aaobjs(ptm2protein_df, innerjoin(proteins_df, protein2protgroup_df, on=:protein_ac),
-                                             seqgroup_col=[:protgroup_id, :is_viral, :is_contaminant],
-                                             seqid_col=[:protein_ac, :is_viral, :is_contaminant],
-                                             seqrank_col=:protein_ac_isoform,
+
+protregroups_df = CSV.read(joinpath(data_path, "$(proj_info.id)_parsars_ptm_20201018_protregroups_acs.txt"),
+                           delim='\t', missingstring="")
+protein2protregroup_df = DelimDataUtils.expand_delim_column(protregroups_df, list_col=:majority_protein_acs, elem_col=:protein_ac, key_col=:protregroup_id)
+
+ptm2protregroup_df = PTMExtractor.group_aaobjs(ptm2protein_df, innerjoin(proteins_df, protein2protregroup_df, on=:protein_ac),
+                                             seqgroup_col=[:protregroup_id, :is_viral, :is_contaminant],
+                                             seqid_col=:protein_ac, seqrank_col=:protein_ac_isoform,
                                              obj_prefix=:ptm_, objid_col=[:ptm_type, :ptm_pos, :ptm_AA_seq],
                                              force_refseqs=true, verbose=true)
-=#
+
 ptm2gene_df = PTMExtractor.group_aaobjs(ptm2protein_df, proteins_df,
                                         seqgroup_col=[:genename, :is_viral, :is_contaminant],
                                         seqid_col=:protein_ac, seqrank_col=:protein_ac_isoform,
@@ -164,14 +168,10 @@ ptmns_df = unique!(select(ptmn2pms_df, [:ptm_id, :ptm_label, :ptm_type, :nselptm
 sort!(ptmns_df, [:ptm_type, :ptm_id, :nselptms])
 ptmns_df.ptmn_id = 1:nrow(ptmns_df)
 ptmns_df.ptmn_label = categorical(ptmns_df.ptm_label .* "_M" .* string.(ptmns_df.nselptms))
-ptmn2pms_df = innerjoin(ptmn2pms_df, select(ptmns_df, Not(:ptm_label), copycols=false), on=[:ptm_id, :ptm_type, :nselptms])
+ptmn2pms_df = innerjoin(ptmn2pms_df, select(ptmns_df, Not(:ptm_label), copycols=false), on=[:ptm_id, :ptm_type, :nselptms]) # add ptmn_id and label
 sort!(ptmn2pms_df, [:ptmn_id, :pepmodstate_id])
 
 ptm2ptmgroup_df, ptmn2ptmngroup_df, ptmgroup2ptmngroup_df = PTMExtractor.ptmgroups(ptmn2pms_df, verbose=true)
-
-ptmn2pms2protein_df = innerjoin(innerjoin(ptm2pms2protein_df, ptm2protein_df, on=[:protein_ac, :ptm_type, :ptm_pos, :ptm_AAs, :ptm_AA_seq]),
-                                ptmn2pms_df, on=[:pepmodstate_id, :ptm_id])
-ptmn2pms_df = disallowmissing!(unique!(select(ptmn2pms2protein_df, [:ptmn_id, :ptm_id, :pepmodstate_id, :peptide_id, :ptm_offset])))
 
 print(countmap(collect(values(countmap(ptmn2pms_df.pepmodstate_id)))))
 print(countmap(collect(values(countmap(filter(r -> r.nselptms == 1, ptmns_df).ptmn_id)))))
@@ -236,7 +236,7 @@ psitepseqs_df = Fasta.read_phosphositeplus(joinpath(psitep_path, "Phosphosite_PT
 psitepseqs_df.is_ref_isoform = .!occursin.(Ref(r"-\d+$"), psitepseqs_df.protein_ac);
 
 @save(joinpath(scratch_path, "phosphositeplus_annotations_20200828.jld2"), psitep_annot_dfs, psitep_annots_df, psitepseqs_df)
-#@load(joinpath(scratch_path, "phosphositeplus_annotations_20200828.jld2"), psitep_annot_dfs, psitep_annots_df)
+#@load(joinpath(scratch_path, "phosphositeplus_annotations_20200828.jld2"), psitep_annot_dfs, psitep_annots_df, psitepseqs_df)
 
 # map PTMs to PhosphoSitePlus sequences
 ptm2psitep_df = PTMExtractor.map_aapos(ptm2protein_df, proteins_df, psitepseqs_df,
@@ -262,10 +262,22 @@ ptmns_df2 = leftjoin(innerjoin(innerjoin(innerjoin(ptmns_df, ptm2ptmgroup_df, on
 @assert ptmns_df2.ptmn_id == ptmns_df.ptmn_id
 ptmns_df2.protein_rank = get.(Ref(protein_ranks), ptmns_df2.protein_ac, missing)
 ptmns_df2.ptm_is_known = coalesce.(ptmns_df2.ptm_is_known, false)
-ptmns_df2[!, :ptmid_is_reference] .= false
-for ptmgroup_df in groupby(ptmns_df2, :ptmgroup_id)
-    ptmorder = sortperm(ptmgroup_df, [order(:ptm_is_known, rev=true), :protein_rank, :genename, :protein_ac, :ptm_pos])
+ptms_df = combine(groupby(ptmns_df2, [:ptmgroup_id, :ptm_id, :ptm_is_known, :protein_rank, :genename, :protein_ac, :ptm_pos]),
+                  :ptmngroup_id => (x -> length(unique(x))) => :nptmngroups)
+ptms_df[!, :ptmid_is_reference] .= false
+for ptmgroup_df in groupby(ptms_df, :ptmgroup_id)
+    ptmorder = sortperm(ptmgroup_df, [order(:ptm_is_known, rev=true), :protein_rank, :genename, :protein_ac, order(:nptmngroups, rev=true), :ptm_pos])
     ptmgroup_df.ptmid_is_reference[ptmorder[1]] = true
+end
+ptmns_df2.ptmid_is_reference = ptmns_df2.ptm_id .∈ Ref(Set(ptms_df.ptm_id[ptms_df.ptmid_is_reference]))
+for ptmngroup_df in groupby(ptmns_df2, :ptmngroup_id)
+    if !any(ptmngroup_df.ptmid_is_reference)
+        @info "Fixing reference PTM for ptmngroup_id=$(ptmngroup_df.ptmngroup_id[1])"
+        # FIXME in a complex cases (multiple mapping to multiple proteins etc) PTMn may not receive the ptmid reference
+        # for now just force assigning it. abandoning ptm_id (BLAST-based PTM definition) may fix it in the future
+        ptmorder = sortperm(ptmngroup_df, [order(:ptm_is_known, rev=true), :protein_rank, :genename, :protein_ac, :ptm_pos])
+        ptmngroup_df.ptmid_is_reference[ptmorder[1]] = true
+    end
 end
 open(GzipCompressorStream, joinpath(output_path, "ptmns_grouped.txt.gz"), "w") do io
     CSV.write(io, ptmns_df2, delim='\t')
