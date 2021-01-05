@@ -14,6 +14,7 @@ job_info = (project = ARGS[1],
             ntrees_perchunk = parse(Int, ARGS[6]))
 @info "Permuted tree for $(job_info.project) (job '$(job_info.name)' id=$(job_info.id))" *
       " chunk #$(job_info.chunk)"
+flush(stdout); flush(stderr)
 
 proj_info = (id = job_info.project,
              hotnet_ver = job_info.hotnet_ver)
@@ -52,6 +53,7 @@ chunk_treeixs = (chunk_1st_tree - bait_prev_lastree):min(
             chunk_1st_tree - bait_prev_lastree - 1 + job_info.ntrees_perchunk,
             bait2nperms[bait_ix][2])
 @info "Processing bait #$(bait_ix) ($(bait_ids[bait_ix])) permuted trees $(chunk_treeixs)"
+flush(stdout); flush(stderr)
 
 reactomefi_mtx = Matrix(LightGraphs.weights(reactomefi_digraph_rev));
 
@@ -72,6 +74,7 @@ W = HHN.weighttype(eltype(trees))
 
 for (i, permix) in enumerate(chunk_treeixs)
     @info "Growing permuted tree $bait_id-#$permix ($i of $(length(chunk_treeixs)))..."
+    flush(stdout); flush(stderr)
     vertex_weights = convert(Vector{W}, view(perm_vertex_weights, :, permix))
     stepmtx = HHN.stepmatrix(reactomefi_mtx,
                              inedge_weights=vertex_weights .+ randomwalk_params.inedge_weight_min)
@@ -83,6 +86,7 @@ for (i, permix) in enumerate(chunk_treeixs)
     trees[i] = HHN.scctree(walkmtx, #seedling=seedling,
                            verbose=false, method=:bisect)
     @info "Treecut statistics for $bait_id-#$permix"
+    flush(stdout); flush(stderr)
     local treestats_df = HHN.treecut_stats(trees[i], walkmatrix=walkmtx, maxweight=randomwalk_params.flow_weight_max,
                                     sources=findall(>=(randomwalk_params.source_weight_min), vertex_weights),
                                     sinks=sink_ixs,
