@@ -371,20 +371,20 @@ pcomplexes_df, pcomplex_iactors_df, pcomplex_iactor2ac_df =
 pcomplexes_df[!, :coll_id] .= "protein_complexes";
 
 # make complexes collections, keep complexes with at least 2 participants
-pcomplex_coll = FrameUtils.frame2collection(join(pcomplex_iactors_df, pcomplex_iactor2ac_df,
-    on=[:file, :entry_index, :interaction_id, :interactor_id], kind=:inner),
+pcomplex_coll = FrameUtils.frame2collection(innerjoin(pcomplex_iactors_df, pcomplex_iactor2ac_df,
+    on=[:file, :entry_index, :interaction_id, :interactor_id]),
             set_col=:complex_id, obj_col=:protein_ac, min_size=2)
 protac_sets = merge(genesets_coll, pcomplex_coll)
 
 terms_df = vcat(rename(genesets_df[!, [:term_src, :term_id, :name, :descr]],
                        :term_src => :coll_id, :name=>:term_name, :descr=>:term_descr),
-                #rename(goterm_info_df[[:id, :name, :def]], Dict(:onto => :coll_id, :id=>:term_id, :name=>:term_name, :def=>:term_descr)),
+                #rename(goterm_info_df[[:id, :name, :def]], :onto => :coll_id, :id=>:term_id, :name=>:term_name, :def=>:term_descr),
                 rename(pcomplexes_df[!, [:coll_id, :complex_id, :interaction_label, :interaction_name]],
                        :complex_id=>:term_id, :interaction_label=>:term_name, :interaction_name=>:term_descr));
 protac2term_df = FrameUtils.collection2frame(protac_sets, terms_df,
                                              setid_col=:term_id, objid_col=:protein_ac)
 
-obj2term_df = select!(join(obj2protac_df, protac2term_df, on = :protein_ac, kind=:inner),
+obj2term_df = select!(innerjoin(obj2protac_df, protac2term_df, on = :protein_ac),
                       Not([:protein_ac])) |> unique!
 protac_colls = FrameUtils.frame2collections(protac2term_df, obj_col=:protein_ac,
                                             set_col=:term_id, coll_col=:coll_id)
@@ -576,7 +576,7 @@ for term_coll in unique(obj_hit_covers_df.term_collection), signif in (false, tr
     end
 
     for outformat in ("html", "pdf", "svg")
-    coll_heatmap = OptCoverHeatmap.oesc_heatmap(df,
+        coll_heatmap = OptCoverHeatmap.oesc_heatmap(df,
             elements_label="protein",
             mask_axis_title = "contrast",
             mask_cols = [:dataset, :contrast, :treatment_lhs, :timepoint_lhs, :change, :ncontrast],

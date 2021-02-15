@@ -57,8 +57,8 @@ pcomplexes_df, pcomplex_iactors_df, pcomplex_iactor2ac_df =
     OmicsCollections.ppicollection(joinpath(party3rd_data_path, "complexes_20191217.RData"), seqdb=:uniprot);
 pcomplexes_df[!, :coll_id] .= "protein_complexes";
 # make complexes collections, keep complexes with at least 2 participants
-pcomplex_coll = FrameUtils.frame2collection(join(pcomplex_iactors_df, pcomplex_iactor2ac_df,
-            on=[:file, :entry_index, :interaction_id, :interactor_id], kind=:inner),
+pcomplex_coll = FrameUtils.frame2collection(innerjoin(pcomplex_iactors_df, pcomplex_iactor2ac_df,
+            on=[:file, :entry_index, :interaction_id, :interactor_id]),
             set_col=:complex_id, obj_col=:protein_ac, min_size=2)
 protac_sets = merge!(genesets_coll, pcomplex_coll)
 
@@ -71,7 +71,7 @@ protac2term_df = FrameUtils.collection2frame(protac_sets, terms_df,
                                              setid_col=:term_id, objid_col=:protein_ac)
 
 # link protein group IDs to annots and create protgroup collections
-obj2term_df = select!(join(obj2protac_df, protac2term_df, on = :protein_ac, kind=:inner),
+obj2term_df = select!(innerjoin(obj2protac_df, protac2term_df, on = :protein_ac),
                       Not([:protein_ac])) |> unique!
 protac_colls = FrameUtils.frame2collections(protac2term_df, obj_col=:protein_ac,
                                             set_col=:term_id, coll_col=:coll_id)

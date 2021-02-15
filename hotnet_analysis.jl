@@ -453,7 +453,7 @@ bait2cut_threshold = Dict(begin
         (nrow(metric_df) == 0) && continue
         @assert nrow(metric_df) == 1
         delta = metric_df[1, :delta]
-        if !ismissing(delta) && 
+        if !ismissing(delta) &&
            (((stat == "max") && (delta > 0.0)) ||
             ((stat == "min") && (delta < 0.0)))
             thresh_df = metric_df
